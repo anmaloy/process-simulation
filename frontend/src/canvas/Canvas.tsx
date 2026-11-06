@@ -10,7 +10,7 @@
 // edges carry the category color map and leave seams (status, flow) for the P8
 // balance overlay.
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -32,24 +32,28 @@ import type { MachineDef, MachineNode, Pipe, ScopeReport, World } from "../bridg
 import { MachineNodeView } from "./MachineNodeView";
 import { PipeEdgeView } from "./PipeEdgeView";
 import { categoryColor } from "./colors";
-import { parsePortId } from "./ports";
+import { MACHINE_NODE_TYPE, PIPE_EDGE_TYPE, newNode, type RfPipeEdge } from "./graph";
 import {
-  MACHINE_NODE_TYPE,
-  PIPE_EDGE_TYPE,
-  newNode,
+  SYSTEM_NODE_TYPE,
+  SystemActionsContext,
+  SystemNodeView,
+  buildCanvasGraph,
+  collapseState,
+  isSystemRfId,
+  isValidConnection as isValidSystemConnection,
   pipeFromConnection,
-  worldToEdges,
-  worldToNodes,
-  type PipeEdgeData,
-  type RfMachineNode,
-  type RfPipeEdge,
-} from "./graph";
+  systemIdFromRf,
+  type RfAnyNode,
+} from "../systems";
 
-const nodeTypes: NodeTypes = { [MACHINE_NODE_TYPE]: MachineNodeView };
+const nodeTypes: NodeTypes = {
+  [MACHINE_NODE_TYPE]: MachineNodeView,
+  [SYSTEM_NODE_TYPE]: SystemNodeView,
+};
 const edgeTypes: EdgeTypes = { [PIPE_EDGE_TYPE]: PipeEdgeView };
 
-/** What the inspector edits — a single canvas element (node or pipe). */
-export type CanvasSelection = { kind: "node" | "pipe"; id: string } | null;
+/** What the inspector edits — a single canvas element (node, pipe, or system). */
+export type CanvasSelection = { kind: "node" | "pipe" | "system"; id: string } | null;
 
 export interface CanvasProps {
   world: World;
@@ -69,6 +73,16 @@ export interface CanvasProps {
   onSelect: (sel: CanvasSelection) => void;
   /** Latest balance report (P8 seam); per-node status tints the node bar. */
   report?: ScopeReport | null;
+  /** Per-system reports (P9); drive a collapsed system node's aggregate stats. */
+  systemReports?: Record<string, ScopeReport>;
+  /** Group the given member node ids into a new collapsed system. */
+  onGroupNodes: (nodeIds: string[]) => void;
+  /** Toggle a system's collapsed flag (fold ↔ expand). */
+  onToggleCollapse: (systemId: string) => void;
+  /** Persist a collapsed system node's moved position. */
+  onMoveSystem: (systemId: string, x: number, y: number) => void;
+  /** Remove systems (the grouping only; members stay). */
+  onRemoveSystems: (ids: string[]) => void;
 }
 
 function CanvasInner(props: CanvasProps) {
@@ -82,40 +96,52 @@ function CanvasInner(props: CanvasProps) {
     onRemovePipes,
     onSelect,
     report,
+    systemReports,
+    onGroupNodes,
+    onToggleCollapse,
+    onMoveSystem,
+    onRemoveSystems,
   } = props;
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<RfMachineNode>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<RfAnyNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<RfPipeEdge>([]);
+  // Machine node ids the user has box/shift-selected on the canvas (React Flow's
+  // own multi-selection), tracked so ≥2 can be grouped into a system.
+  const [multiSelected, setMultiSelected] = useState<string[]>([]);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
 
-  // Reseed from the World (and the host-controlled selection) whenever either
-  // changes. Selection is controlled — driven by clicks, not React Flow's own
-  // selection state — so picking a library entity in the rail simply clears the
-  // canvas highlight here, with no feedback loop. Per-node balance status (P8)
-  // rides in from the latest report; absent → the node reads neutral.
+  // Reseed from the World whenever it (or the host selection / reports) changes.
+  // `buildCanvasGraph` folds collapsed systems into single nodes and re-points
+  // boundary pipes (P9); status + flow (P8) ride in from the reports. Selection
+  // is host-controlled (click-driven), but a multi-selection the user is
+  // box-dragging is preserved so the "Group" affordance survives a reseed.
   useEffect(() => {
-    const nodeStatus = report?.balances ?? {};
-    const pipeFlows = report?.pipeFlows ?? {};
-    setNodes(
-      worldToNodes(world).map((n) => ({
-        ...n,
-        selected: selection?.kind === "node" && selection.id === n.id,
-        data: { ...n.data, status: nodeStatus[n.id]?.status },
-      })),
+    const { nodes: built, edges: builtEdges } = buildCanvasGraph(
+      world,
+      report ?? null,
+      systemReports ?? {},
     );
-    setEdges(
-      worldToEdges(world).map((e) => {
-        const pf = pipeFlows[e.id];
-        const base = e.data as PipeEdgeData;
-        return {
-          ...e,
-          selected: selection?.kind === "pipe" && selection.id === e.id,
-          data: { ...base, flow: pf?.flow, shortfall: pf?.shortfall },
-        };
+    const multi = new Set(multiSelected);
+    setNodes(
+      built.map((n) => {
+        const isSystem = n.type === SYSTEM_NODE_TYPE;
+        const hostSelected = isSystem
+          ? selection?.kind === "system" && selection.id === systemIdFromRf(n.id)
+          : selection?.kind === "node" && selection.id === n.id;
+        return { ...n, selected: hostSelected || (!isSystem && multi.has(n.id)) };
       }),
     );
-  }, [world, selection, report, setNodes, setEdges]);
+    setEdges(
+      builtEdges.map((e) => ({
+        ...e,
+        selected: selection?.kind === "pipe" && selection.id === e.id,
+      })),
+    );
+    // multiSelected is intentionally excluded: a reseed from it would wipe the
+    // very selection the user is dragging. It is re-applied via onSelectionChange.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [world, selection, report, systemReports, setNodes, setEdges]);
 
   const defs = useMemo(() => world.machineDefs ?? [], [world.machineDefs]);
 
@@ -127,29 +153,31 @@ function CanvasInner(props: CanvasProps) {
     [world, onAddPipe],
   );
 
-  // Only allow out → in connections between matching categories.
-  const isValidConnection = useCallback<IsValidConnection>((conn) => {
-    const from = parsePortId(conn.sourceHandle);
-    const to = parsePortId(conn.targetHandle);
-    return (
-      !!from &&
-      !!to &&
-      from.direction === "out" &&
-      to.direction === "in" &&
-      from.category === to.category
-    );
-  }, []);
+  // Only allow out → in connections between matching categories (decoding
+  // collapsed-system handles back to the member port they stand for).
+  const isValidConnection = useCallback<IsValidConnection>(
+    (conn) => isValidSystemConnection(conn),
+    [],
+  );
 
   const handleNodeDragStop = useCallback(
     (_e: unknown, node: { id: string; position: { x: number; y: number } }) => {
-      onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y));
+      const x = Math.round(node.position.x);
+      const y = Math.round(node.position.y);
+      if (isSystemRfId(node.id)) onMoveSystem(systemIdFromRf(node.id), x, y);
+      else onMoveNode(node.id, x, y);
     },
-    [onMoveNode],
+    [onMoveNode, onMoveSystem],
   );
 
   const handleNodesDelete = useCallback(
-    (deleted: { id: string }[]) => onRemoveNodes(deleted.map((n) => n.id)),
-    [onRemoveNodes],
+    (deleted: { id: string }[]) => {
+      const sys = deleted.filter((n) => isSystemRfId(n.id)).map((n) => systemIdFromRf(n.id));
+      const machines = deleted.filter((n) => !isSystemRfId(n.id)).map((n) => n.id);
+      if (sys.length) onRemoveSystems(sys);
+      if (machines.length) onRemoveNodes(machines);
+    },
+    [onRemoveNodes, onRemoveSystems],
   );
 
   const handleEdgesDelete = useCallback(
@@ -158,7 +186,12 @@ function CanvasInner(props: CanvasProps) {
   );
 
   const handleNodeClick = useCallback(
-    (_e: unknown, node: { id: string }) => onSelect({ kind: "node", id: node.id }),
+    (_e: unknown, node: { id: string }) =>
+      onSelect(
+        isSystemRfId(node.id)
+          ? { kind: "system", id: systemIdFromRf(node.id) }
+          : { kind: "node", id: node.id },
+      ),
     [onSelect],
   );
   const handleEdgeClick = useCallback(
@@ -166,6 +199,26 @@ function CanvasInner(props: CanvasProps) {
     [onSelect],
   );
   const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
+
+  // Track React Flow's own multi-selection of machine nodes for grouping.
+  const handleSelectionChange = useCallback(
+    ({ nodes: sel }: { nodes: { id: string }[] }) => {
+      setMultiSelected(sel.filter((n) => !isSystemRfId(n.id)).map((n) => n.id));
+    },
+    [],
+  );
+
+  const systemActions = useMemo(
+    () => ({ onExpand: onToggleCollapse }),
+    [onToggleCollapse],
+  );
+
+  // Only visible (not folded-away) machine nodes can be grouped, so a stale
+  // multi-selection of nodes that just became members doesn't re-offer "Group".
+  const groupable = useMemo(() => {
+    const hidden = collapseState(world).hiddenNodeIds;
+    return multiSelected.filter((id) => !hidden.has(id));
+  }, [multiSelected, world]);
 
   const addDef = useCallback(
     (def: MachineDef) => {
@@ -198,40 +251,54 @@ function CanvasInner(props: CanvasProps) {
             + {d.name ?? d.id}
           </button>
         ))}
+        {groupable.length >= 2 && (
+          <button
+            type="button"
+            className="tool-btn palette-btn group-btn"
+            onClick={() => onGroupNodes(groupable)}
+            title="Group the selected machines into a system"
+          >
+            ▦ Group {groupable.length}
+          </button>
+        )}
       </div>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={handleConnect}
-        isValidConnection={isValidConnection}
-        onNodeDragStop={handleNodeDragStop}
-        onNodesDelete={handleNodesDelete}
-        onEdgesDelete={handleEdgesDelete}
-        onNodeClick={handleNodeClick}
-        onEdgeClick={handleEdgeClick}
-        onPaneClick={handlePaneClick}
-        fitView
-        minZoom={0.2}
-        maxZoom={2.5}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--line)" />
-        <MiniMap
-          pannable
-          zoomable
-          nodeColor={(n) => {
-            const def = (n.data as { def?: MachineDef }).def;
-            const cat = def?.slots?.[0]?.category;
-            return cat ? categoryColor(cat) : "var(--line-2)";
-          }}
-          maskColor="rgba(11, 15, 23, 0.72)"
-        />
-        <Controls />
-      </ReactFlow>
+      <SystemActionsContext.Provider value={systemActions}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={handleConnect}
+          isValidConnection={isValidConnection}
+          onNodeDragStop={handleNodeDragStop}
+          onNodesDelete={handleNodesDelete}
+          onEdgesDelete={handleEdgesDelete}
+          onNodeClick={handleNodeClick}
+          onEdgeClick={handleEdgeClick}
+          onPaneClick={handlePaneClick}
+          onSelectionChange={handleSelectionChange}
+          fitView
+          minZoom={0.2}
+          maxZoom={2.5}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--line)" />
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(n) => {
+              if (n.type === SYSTEM_NODE_TYPE) return "var(--s-expert)";
+              const def = (n.data as { def?: MachineDef }).def;
+              const cat = def?.slots?.[0]?.category;
+              return cat ? categoryColor(cat) : "var(--line-2)";
+            }}
+            maskColor="rgba(11, 15, 23, 0.72)"
+          />
+          <Controls />
+        </ReactFlow>
+      </SystemActionsContext.Provider>
     </div>
   );
 }

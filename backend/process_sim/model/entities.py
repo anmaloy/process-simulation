@@ -256,7 +256,13 @@ class SystemPort(Serializable):
 
 @dataclass
 class System(Serializable):
-    """A user-defined group of nodes (and nested systems) treated as one unit."""
+    """A user-defined group of nodes (and nested systems) treated as one unit.
+
+    ``x``/``y`` position the collapsed representation on the canvas (absent until
+    the UI places it). ``collapsed`` is a presentation flag only — it never
+    changes the balance, since the engine always aggregates the real member
+    nodes whether the group is drawn folded or expanded.
+    """
 
     id: str
     name: str | None = None
@@ -264,6 +270,8 @@ class System(Serializable):
     member_system_ids: list[str] = field(default_factory=list)
     exposed_ports: list[SystemPort] = field(default_factory=list)
     collapsed: bool = False
+    x: float | None = None
+    y: float | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> System:
@@ -274,6 +282,8 @@ class System(Serializable):
             member_system_ids=list(d.get("memberSystemIds", [])),
             exposed_ports=[SystemPort.from_dict(p) for p in d.get("exposedPorts", [])],
             collapsed=d.get("collapsed", False),
+            x=d.get("x"),
+            y=d.get("y"),
         )
 
 

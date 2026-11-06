@@ -308,6 +308,20 @@ collapsed representation.
 stats; nesting works; expanding restores the members; balances are identical
 collapsed vs expanded.
 
+**Status: done.** The engine already scoped systems (P2d, nesting-safe); P9 adds
+the UI in `frontend/src/systems/`. Collapse is presentation only — pipes always
+reference the real member nodes, so the balance is identical folded or expanded
+(the model's `collapsed` flag is never read by the engine). `collapseState`
+computes which members fold away and which outermost collapsed systems render as
+nodes; `buildCanvasGraph` folds them, re-points boundary pipes to the system
+node (handles encode the member port as `b:<nodeId>:<port>`), and drops internal
+ones. A new pipe drawn to a collapsed system decodes that handle back to a real
+node→node pipe, so a group is genuinely connectable. Multi-select on the canvas
+offers "Group"; the `SystemInspector` edits membership, nesting (cycle-guarded),
+the collapsed flag, and exposed ports; a folded node shows member count + its
+aggregate status/energy (a per-system recompute). The `System` model gained
+optional `x`/`y` for the collapsed node's position.
+
 ---
 
 ## Phase 10 — App shell & packaging

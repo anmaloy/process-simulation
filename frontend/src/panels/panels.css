@@ -306,6 +306,21 @@ select.field-input {
   background: rgba(229, 86, 91, 0.12);
 }
 
+/* --- System inspector: exposed-port rows (P9) --------------------------- */
+.exposed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.exposed-row select.field-input {
+  flex: 1;
+  min-width: 0;
+}
+.exposed-row input.field-input {
+  width: 80px;
+  flex: none;
+}
+
 /* The stage makes room for the docked inspector when something is selected. */
 .shell.has-inspector {
   grid-template-columns: 300px 1fr 344px;

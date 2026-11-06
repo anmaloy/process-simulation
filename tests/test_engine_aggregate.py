@@ -236,3 +236,30 @@ def test_system_scope(powered_process: World) -> None:
     report = compute_system(powered_process, "sys1")
     assert set(report.node_ids) == {"smelter1", "presser1"}
     assert _close(report.net_energy, -90.0)
+
+
+def test_system_scope_collapse_invariant(powered_process: World) -> None:
+    # `collapsed` is a presentation flag the engine never reads, so a system's
+    # report is identical whether it is drawn folded or expanded.
+    powered_process.systems.append(
+        System(id="sys1", member_node_ids=["smelter1", "presser1"], collapsed=False)
+    )
+    expanded = compute_system(powered_process, "sys1").to_dict()
+    powered_process.systems[0].collapsed = True
+    collapsed = compute_system(powered_process, "sys1").to_dict()
+    assert expanded == collapsed
+
+
+def test_nested_system_flattens(powered_process: World) -> None:
+    # An outer system holding an inner system plus a loose node flattens to all
+    # the real member nodes; its report equals the scope over that node set.
+    powered_process.systems.append(
+        System(id="inner", member_node_ids=["smelter1", "presser1"])
+    )
+    powered_process.systems.append(
+        System(id="outer", member_system_ids=["inner"], member_node_ids=["gen1"])
+    )
+    report = compute_system(powered_process, "outer")
+    assert set(report.node_ids) == {"smelter1", "presser1", "gen1"}
+    # Outer = whole world here (all three nodes), so energy matches the world.
+    assert _close(report.net_energy, compute_world(powered_process).net_energy)

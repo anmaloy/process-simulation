@@ -100,6 +100,22 @@ engine's `ScopeReport` gained a **`pipeFlows`** field (per-pipe resolved `flow` 
 a `shortfall` flag) — an additive, documented contract bump mirrored in the TS
 `ScopeReport` type.
 
+Phase 9 is done: systems / grouping (`frontend/src/systems/`). A System groups
+member nodes (and nested systems) and can **collapse** into one canvas node.
+Collapse is presentation only — pipes always reference the real member nodes, so
+the engine's balance is byte-identical folded or expanded (the model's
+`collapsed` flag is never read by the engine; P2d already scoped systems with
+nesting). `collapseState` decides which members fold away and which *outermost*
+collapsed systems render as nodes; `buildCanvasGraph` folds them, re-points a
+pipe crossing a collapsed boundary to the system node (a handle encodes the
+member port as `b:<nodeId>:<port>`), and drops a pipe internal to one collapsed
+system. A new pipe drawn to a collapsed system's handle decodes back to a real
+node→node pipe, so a group stays genuinely connectable. Canvas multi-select
+offers a "Group" action; the `SystemInspector` edits membership, nesting
+(cycle-guarded), the collapsed flag, and exposed ports; a folded node shows its
+member count and aggregate status/energy from a per-system recompute. The
+`System` model gained optional `x`/`y` (the collapsed node's position).
+
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
 payload. A project file nests the whole World under `"world"`; a library file
@@ -199,6 +215,7 @@ frontend/        # web UI (Vite + React + TypeScript)
     canvas/      # React Flow graph: custom nodes, edges, ports, color map (P6)
     panels/      # docked inspector + per-kind editors, sparse-field kit (P7)
     overlay/     # balance overlay: status map, legends, scope readout (P8)
+    systems/     # grouping: collapse/expand, nesting, connectable group node (P9)
 tests/           # pytest for engine/model; frontend tests added later
 ```
 

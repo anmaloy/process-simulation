@@ -23,6 +23,8 @@ import type {
 import { Canvas, categoryColor, type CanvasSelection } from "./canvas";
 import { Inspector, type InspectorSelection } from "./panels";
 import { BalanceReadout, Legends } from "./overlay";
+import { centroidOf, collapseState, freshSystemId } from "./systems";
+import type { System } from "./bridge";
 import "./canvas/canvas.css";
 import "./panels/panels.css";
 import "./overlay/overlay.css";
@@ -40,6 +42,9 @@ export function App() {
   const [world, setWorld] = useState<World | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [report, setReport] = useState<ScopeReport | null>(null);
+  // Per-collapsed-system reports, so a folded system node shows its own
+  // aggregate stats (net energy, status) without expanding it.
+  const [systemReports, setSystemReports] = useState<Record<string, ScopeReport>>({});
   // The scope the balance overlay reports on (default: the whole world). A
   // machine/process scope targets the selected node; a system scope targets a
   // chosen system.
@@ -141,6 +146,52 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, world, reqKey]);
 
+  // Compute a report per collapsed system so its folded node can show its own
+  // aggregate stats. Runs on any World change; keyed on the set of rendered
+  // (outermost) collapsed system ids.
+  const collapsedKey = world
+    ? collapseState(world)
+        .renderedSystems.map((s) => s.id)
+        .sort()
+        .join(",")
+    : "";
+  useEffect(() => {
+    if (!client || !world) {
+      setSystemReports({});
+      return;
+    }
+    const ids = collapseState(world).renderedSystems.map((s) => s.id);
+    if (ids.length === 0) {
+      setSystemReports({});
+      return;
+    }
+    let live = true;
+    Promise.all(
+      ids.map((id) =>
+        client
+          .recompute({ scope: "system", systemId: id })
+          .then((r) => [id, r] as const)
+          .catch(() => null),
+      ),
+    ).then((pairs) => {
+      if (!live) return;
+      const next: Record<string, ScopeReport> = {};
+      for (const pair of pairs) if (pair) next[pair[0]] = pair[1];
+      setSystemReports(next);
+    });
+    return () => {
+      live = false;
+    };
+    // collapsedKey captures which systems need a report; world drives refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, world, collapsedKey]);
+
+  // Selecting a system aims the system scope at it (convenience, so the readout
+  // follows what you clicked without re-picking in the switcher).
+  useEffect(() => {
+    if (selection?.kind === "system") setSystemId(selection.id);
+  }, [selection]);
+
   // Switching scope: default a system scope to the first system if none picked.
   const onScopeChange = useCallback(
     (next: Scope) => {
@@ -195,6 +246,52 @@ export function App() {
     [applyEdits],
   );
 
+  // Group selected machine nodes into a new, collapsed system placed at their
+  // centroid; select it so its inspector opens.
+  const onGroupNodes = useCallback(
+    (nodeIds: string[]) => {
+      if (!world || nodeIds.length === 0) return;
+      const id = freshSystemId(world);
+      const { x, y } = centroidOf(world, nodeIds);
+      const system: System = {
+        id,
+        memberNodeIds: nodeIds,
+        collapsed: true,
+        x,
+        y,
+      };
+      void applyEdits([upsert("system", system)]);
+      setSelection({ kind: "system", id });
+    },
+    [applyEdits, world],
+  );
+
+  const onToggleCollapse = useCallback(
+    (systemId: string) => {
+      const sys = world?.systems?.find((s) => s.id === systemId);
+      if (!sys) return;
+      void applyEdits([upsert("system", { ...sys, collapsed: !sys.collapsed })]);
+    },
+    [applyEdits, world],
+  );
+
+  const onMoveSystem = useCallback(
+    (systemId: string, x: number, y: number) => {
+      const sys = world?.systems?.find((s) => s.id === systemId);
+      if (!sys) return;
+      void applyEdits([upsert("system", { ...sys, x, y })]);
+    },
+    [applyEdits, world],
+  );
+
+  const onRemoveSystems = useCallback(
+    (ids: string[]) => {
+      setSelection((s) => (s?.kind === "system" && ids.includes(s.id) ? null : s));
+      return applyEdits(ids.map((id) => remove("system", id)));
+    },
+    [applyEdits],
+  );
+
   // Inspector edit: upsert the entity and recompute.
   const onEntityChange = useCallback(
     (kind: EntityKind, entity: object) => applyEdits([upsert(kind, entity)]),
@@ -209,9 +306,10 @@ export function App() {
     [applyEdits],
   );
 
-  // The canvas only knows node/pipe selections; narrow for it.
+  // The canvas knows node/pipe/system selections; narrow for it.
   const canvasSelection: CanvasSelection =
-    selection && (selection.kind === "node" || selection.kind === "pipe")
+    selection &&
+    (selection.kind === "node" || selection.kind === "pipe" || selection.kind === "system")
       ? { kind: selection.kind, id: selection.id }
       : null;
 
@@ -237,6 +335,7 @@ export function App() {
           world={world}
           selection={canvasSelection}
           report={report}
+          systemReports={systemReports}
           scope={scope}
           onScopeChange={onScopeChange}
           selectedNodeId={selectedNodeId}
@@ -247,6 +346,10 @@ export function App() {
           onAddPipe={onAddPipe}
           onRemoveNodes={onRemoveNodes}
           onRemovePipes={onRemovePipes}
+          onGroupNodes={onGroupNodes}
+          onToggleCollapse={onToggleCollapse}
+          onMoveSystem={onMoveSystem}
+          onRemoveSystems={onRemoveSystems}
           onSelect={(s) => setSelection(s)}
         />
       </main>
@@ -313,6 +416,19 @@ function Library({
             dot="var(--s-not)"
             selected={isSel("node", n.id)}
             onClick={() => onSelect({ kind: "node", id: n.id })}
+          />
+        ))}
+      </Section>
+
+      <Section title="Systems" empty={(world.systems ?? []).length === 0}>
+        {(world.systems ?? []).map((s) => (
+          <Leaf
+            key={s.id}
+            label={s.name ?? s.id}
+            id={s.id}
+            dot="var(--s-expert)"
+            selected={isSel("system", s.id)}
+            onClick={() => onSelect({ kind: "system", id: s.id })}
           />
         ))}
       </Section>
@@ -403,6 +519,7 @@ interface StageProps {
   world: World | null;
   selection: CanvasSelection;
   report: ScopeReport | null;
+  systemReports: Record<string, ScopeReport>;
   scope: Scope;
   onScopeChange: (scope: Scope) => void;
   selectedNodeId: string | null;
@@ -413,6 +530,10 @@ interface StageProps {
   onAddPipe: (pipe: Pipe) => void;
   onRemoveNodes: (ids: string[]) => void;
   onRemovePipes: (ids: string[]) => void;
+  onGroupNodes: (nodeIds: string[]) => void;
+  onToggleCollapse: (systemId: string) => void;
+  onMoveSystem: (systemId: string, x: number, y: number) => void;
+  onRemoveSystems: (ids: string[]) => void;
   onSelect: (sel: CanvasSelection) => void;
 }
 
@@ -451,11 +572,16 @@ function Stage(props: StageProps) {
         world={world}
         selection={props.selection}
         report={props.report}
+        systemReports={props.systemReports}
         onAddNode={props.onAddNode}
         onMoveNode={props.onMoveNode}
         onAddPipe={props.onAddPipe}
         onRemoveNodes={props.onRemoveNodes}
         onRemovePipes={props.onRemovePipes}
+        onGroupNodes={props.onGroupNodes}
+        onToggleCollapse={props.onToggleCollapse}
+        onMoveSystem={props.onMoveSystem}
+        onRemoveSystems={props.onRemoveSystems}
         onSelect={props.onSelect}
       />
       <BalanceReadout

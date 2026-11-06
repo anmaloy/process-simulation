@@ -12,6 +12,7 @@ import type {
   MachineNode,
   Pipe,
   Recipe,
+  System,
   World,
 } from "../bridge";
 import { ItemInspector } from "./ItemInspector";
@@ -19,6 +20,7 @@ import { RecipeInspector } from "./RecipeInspector";
 import { MachineDefInspector } from "./MachineDefInspector";
 import { NodeInspector } from "./NodeInspector";
 import { PipeInspector } from "./PipeInspector";
+import { SystemInspector } from "./SystemInspector";
 
 export interface InspectorSelection {
   kind: EntityKind;
@@ -135,6 +137,14 @@ function Body({
     case "pipe":
       return (
         <PipeInspector pipe={entity as Pipe} world={world} onChange={(n) => onChange("pipe", n)} />
+      );
+    case "system":
+      return (
+        <SystemInspector
+          system={entity as System}
+          world={world}
+          onChange={(n) => onChange("system", n)}
+        />
       );
     default:
       return (

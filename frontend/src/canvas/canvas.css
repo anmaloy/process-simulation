@@ -151,6 +151,61 @@
   box-shadow: 0 0 0 2px var(--spine);
 }
 
+/* --- System node (collapsed group, P9) ---------------------------------- */
+.palette-btn.group-btn {
+  color: var(--s-expert);
+  border-color: var(--s-expert);
+  background: rgba(139, 92, 246, 0.08);
+}
+.palette-btn.group-btn:hover {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+.machine-node.system-node {
+  border-color: color-mix(in srgb, var(--s-expert) 55%, var(--line-2));
+  background: linear-gradient(180deg, var(--panel), var(--bg-2));
+}
+.machine-node.system-node .node-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.system-glyph {
+  color: var(--s-expert);
+  font-size: 11px;
+}
+.system-expand {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  font-size: 13px;
+  color: var(--ink-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.system-expand:hover {
+  color: var(--ink);
+  border-color: var(--s-expert);
+}
+.machine-node.system-node .node-meta {
+  color: var(--ink-dim);
+}
+.system-count {
+  color: var(--ink-faint);
+}
+.system-energy {
+  color: var(--ink-dim);
+}
+.machine-node.system-node .port-label {
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --- React Flow chrome -------------------------------------------------- */
 .canvas-wrap .react-flow__controls {
   box-shadow: 0 10px 28px -16px #000;

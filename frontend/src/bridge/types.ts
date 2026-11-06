@@ -94,6 +94,8 @@ export interface System {
   memberSystemIds?: string[];
   exposedPorts?: SystemPort[];
   collapsed?: boolean;
+  x?: number;
+  y?: number;
 }
 
 export interface World {
