@@ -33,7 +33,7 @@ the main reason for a web UI over a native toolkit (see `STYLE_GUIDE.md`).
 
 Phases 0–2 are done: the scaffold/toolchain (P0), the domain model with JSON
 round-trip (P1, `model/`), and the headless rate-balance engine (P2, `engine/`:
-per-node rates + EU→steam, per-node balance, asymmetric pipe-priority flow
+per-node rates + fuel→fluid conversion, per-node balance, asymmetric pipe-priority flow
 resolution, and scope aggregation — all covered by pytest). The io, api, and
 frontend UI are still stubs — build them per the phase order in `WORKFLOW.md`.
 
@@ -113,8 +113,10 @@ tests/           # pytest for engine/model; frontend tests added later
   energy production/consumption.
 - **MachineDef** — a template: energy behavior, allowed recipes, slot layout per
   category and direction, stack sizes, overclock bounds. A fuel-burning def is
-  flagged as such and may set a steam-conversion `efficiency` (waste fraction,
-  see "Energy generation"); non-fuel defs omit both.
+  flagged as such and may set a conversion `efficiency` (waste fraction, see
+  "Energy generation") and a `maxFluidRate` (`R`); non-fuel defs omit them.
+  Nothing here names a specific fluid — which fluid a converter outputs is just
+  one of its output items (content), not a model concept.
 - **MachineNode** — a placed machine bound to a recipe, an overclock multiplier,
   and a parallel count.
 - **Pipe** — the graph edge. Carries one category between two machine ports; has
@@ -147,27 +149,29 @@ produce   = (recipe.energyProduction   or  baseEnergyProduction ) * overclock * 
 netEnergy = produce - consume     # omit a side entirely when it has no term
 ```
 
-### Energy generation (fuel → steam)
+### Energy generation (fuel → fluid)
 
-Fuel-burning machines convert an item's stored `eu` into **steam**, a liquid item
-valued at **1 EU/mB** (1000 EU of fuel → 1000 mB of steam, 1:1). Steam then flows
-through pipes like any other fluid — obeying movement capacity and priority — and
-energy consumers draw it. This is how EU is "carried": as a fluid, not a direct
-lossless link.
+Fuel-burning machines convert an item's stored `eu` into an **output fluid** — a
+liquid item that then flows through pipes like any other fluid, obeying movement
+capacity and priority, and energy consumers draw it. This is how EU is
+"carried": as a fluid, not a direct lossless link. Which fluid, and its energy
+density, are content — an `Item` with its own `eu`. (Default content's example
+is steam, a liquid at 1 EU per unit, so 1000 EU of fuel → 1000 units, 1:1 — but
+the engine never names it.)
 
-With max steam rate `R`, steam actually drawn `D` (capped at `R`), fuel energy
-`E`, and efficiency `η` (rates per second; the tick form scales identically):
+With max rate `R`, fluid actually drawn `D` (capped at `R`), fuel energy `E`, and
+efficiency `η` (rates per second; the tick form scales identically):
 
 ```
-steamOut    = D                    # mB, at 1 EU/mB
+fluidOut     = D                   # output-fluid units
 fuelDrain    = D / η               # EU of fuel consumed
 burnTime     = E · η / D           # how long one fuel unit lasts
-usableSteam  = E · η               # total steam from one fuel unit
+usableOutput = E · η               # total output from one fuel unit
 ```
 
 Most machines are lossless: `η = 1`, so `fuelDrain = D` and conversion is exactly
 1:1. A machine may set an **efficiency** parameter — a waste fraction `w` applied
-to the heat it generates but does not deliver when steam isn't fully drawn:
+to the heat it generates but does not deliver when the fluid isn't fully drawn:
 
 ```
 η         = D / (D + w·(R − D))
@@ -175,9 +179,10 @@ fuelDrain = D + w·(R − D)          # = w·R + (1−w)·D, well-defined at D =
 wasted    = w·(R − D)
 ```
 
-Default `w = 0` (no waste, η = 1). The **Large Steam Boiler** sets `w = 0.8` with
-`R = 256`: it burns `0.8·R` fuel even at zero draw (idles hot) and loses 80 % of
-any unused surplus, so η reaches 1 only at full load (`D = R`).
+Default `w = 0` (no waste, η = 1). A lossy converter — the default-content
+**Large Steam Boiler** sets `w = 0.8`, `R = 256` — burns `w·R` fuel even at zero
+draw (idles hot) and loses `w` of any unused surplus, so η reaches 1 only at full
+load (`D = R`).
 
 Pipe throughput: `movementCapacity * overclock` caps sustained flow. Storage
 capacity only buffers transients.
@@ -243,9 +248,11 @@ All of the original open questions are decided. Build to these.
 2. **Recipe energy overrides machine base** — when a node's recipe specifies an
    energy term, it replaces the machine-base term of the same kind (production or
    consumption), rather than adding to it.
-3. **EU is carried as steam** — fuel items store `eu`; a fuel-burning machine
-   converts it into steam (a liquid at 1 EU/mB) that flows through pipes under
-   the normal movement-capacity and priority rules. See "Energy generation".
+3. **EU is carried as a fluid** — fuel items store `eu`; a fuel-burning machine
+   converts it into an output fluid (a liquid item) that flows through pipes
+   under the normal movement-capacity and priority rules. The specific fluid is
+   content, not a model concept (default content uses steam at 1 EU/unit). See
+   "Energy generation".
 4. **Round-robin batch size follows pipe speed** — the equal-priority split is
    batched by the pipe's movement capacity (already a pipe parameter), not a
    separate fixed constant.
@@ -286,8 +293,9 @@ Domain-state palette (the guide doesn't cover these directly):
   reserved for the selected/live element.
 - **Category colors** (solid / liquid / energy edges and ports) — default
   assignment (adjustable): solid → silver (`--s-teach`), liquid → blue
-  (`--s-indep`), energy → gold (`--subedge`). Steam is a liquid, so it rides the
-  liquid color. Cyan stays reserved; red/green/yellow stay reserved for status.
+  (`--s-indep`), energy → gold (`--subedge`). A converter's output fluid is a
+  liquid, so it rides the liquid color. Cyan stays reserved; red/green/yellow
+  stay reserved for status.
 
 ## Out of scope for v1
 

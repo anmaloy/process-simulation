@@ -15,7 +15,8 @@ kind::
     produce   = (recipe.energyProduction  or base) * overclock * count
     netEnergy = produce − produce        # a missing side contributes nothing
 
-A fuel-burning def additionally generates steam; see :mod:`.energy`.
+A fuel-burning def additionally converts fuel into an output fluid; see
+:mod:`.energy`.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..model import MachineDef, MachineNode, Recipe
-from .energy import SteamGeneration, steam_generation
+from .energy import FuelConversion, convert_fuel
 
 __all__ = ["NodeComputation", "compute_node"]
 
@@ -34,7 +35,7 @@ class NodeComputation:
 
     ``outputs`` / ``inputs`` map item id → rate (production) / demand. Energy
     terms are ``None`` when the node has no term of that kind — distinct from a
-    present term of ``0``. ``steam`` is set only for a fuel-burning def.
+    present term of ``0``. ``fuel_conversion`` is set only for a fuel-burning def.
     """
 
     node_id: str
@@ -44,7 +45,7 @@ class NodeComputation:
     energy_produce: float | None = None
     energy_consume: float | None = None
     net_energy: float | None = None
-    steam: SteamGeneration | None = None
+    fuel_conversion: FuelConversion | None = None
 
     def to_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -59,8 +60,8 @@ class NodeComputation:
             out["energyConsume"] = self.energy_consume
         if self.net_energy is not None:
             out["netEnergy"] = self.net_energy
-        if self.steam is not None:
-            out["steam"] = self.steam.to_dict()
+        if self.fuel_conversion is not None:
+            out["fuelConversion"] = self.fuel_conversion.to_dict()
         return out
 
 
@@ -75,15 +76,15 @@ def compute_node(
     machine_def: MachineDef,
     recipe: Recipe | None,
     *,
-    steam_draw: float | None = None,
+    fluid_draw: float | None = None,
 ) -> NodeComputation:
-    """Compute per-node rates, energy terms, and (if applicable) steam output.
+    """Compute per-node rates, energy terms, and (if applicable) fluid output.
 
     ``recipe`` may be ``None`` (an unbound or storage-only node): it then has no
     item rates and no recipe energy terms, but may still carry machine-base
-    energy and, for a fuel-burning def, steam generation. ``steam_draw`` is the
-    steam actually drawn by downstream demand; ``None`` means full draw (the
-    standalone / max case). The flow layer passes the resolved draw.
+    energy and, for a fuel-burning def, fuel→fluid conversion. ``fluid_draw`` is
+    the output fluid actually drawn by downstream demand; ``None`` means full
+    draw (the standalone / max case). The flow layer passes the resolved draw.
     """
 
     overclock = node.overclock
@@ -118,12 +119,12 @@ def compute_node(
     else:
         net_energy = (energy_produce or 0.0) - (energy_consume or 0.0)
 
-    steam: SteamGeneration | None = None
-    if machine_def.fuel_burning and machine_def.max_steam_rate is not None:
-        # Overclock and parallel count scale the generation rate like any other
+    fuel_conversion: FuelConversion | None = None
+    if machine_def.fuel_burning and machine_def.max_fluid_rate is not None:
+        # Overclock and parallel count scale the conversion rate like any other
         # energy production; the draw is likewise against the scaled max.
-        r = machine_def.max_steam_rate * scale
-        steam = steam_generation(r, steam_draw, machine_def.efficiency or 0.0)
+        r = machine_def.max_fluid_rate * scale
+        fuel_conversion = convert_fuel(r, fluid_draw, machine_def.efficiency or 0.0)
 
     return NodeComputation(
         node_id=node.id,
@@ -133,7 +134,7 @@ def compute_node(
         energy_produce=energy_produce,
         energy_consume=energy_consume,
         net_energy=net_energy,
-        steam=steam,
+        fuel_conversion=fuel_conversion,
     )
 
 

@@ -2,7 +2,7 @@
 
 Does not import the UI or pywebview — the whole engine runs headless. Layers:
 
-- :mod:`.energy`    — EU → steam conversion (isolated; resolved decision #3).
+- :mod:`.energy`    — fuel → fluid conversion (isolated; resolved decision #3).
 - :mod:`.node`      — per-node rates and energy (P2a).
 - :mod:`.balance`   — per-node shortfall / overflow (P2b).
 - :mod:`.flow`      — asymmetric pipe-priority resolution (P2c; isolated seam).
@@ -24,7 +24,7 @@ from .balance import (
     Status,
     balance_node,
 )
-from .energy import SteamGeneration, burn_time, steam_generation, usable_steam
+from .energy import FuelConversion, burn_time, convert_fuel, usable_output
 from .flow import (
     Claim,
     pipe_throughput,
@@ -36,9 +36,9 @@ from .node import NodeComputation, compute_node
 
 __all__ = [
     # energy
-    "SteamGeneration",
-    "steam_generation",
-    "usable_steam",
+    "FuelConversion",
+    "convert_fuel",
+    "usable_output",
     "burn_time",
     # node
     "NodeComputation",

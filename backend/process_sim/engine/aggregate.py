@@ -259,8 +259,8 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         ids = [nid for nid in node_ids if nid in index.nodes]
     id_set = set(ids)
 
-    # P2a: per-node computation (full draw for now; a steam draw pass could
-    # refine fuel-burning nodes once steam is modelled as a liquid item).
+    # P2a: per-node computation (full draw for now; a fluid-draw pass could
+    # refine fuel-burning nodes once their output fluid is routed as a liquid).
     computations: dict[str, NodeComputation] = {}
     for nid in ids:
         node = index.nodes[nid]

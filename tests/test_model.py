@@ -63,7 +63,7 @@ def test_slot_group_constructs() -> None:
 def test_machine_def_constructs_minimal() -> None:
     d = MachineDef(id="furnace")
     assert d.fuel_burning is False
-    assert d.efficiency is None and d.max_steam_rate is None
+    assert d.efficiency is None and d.max_fluid_rate is None
     assert d.slots == [] and d.allowed_recipe_ids == []
 
 
@@ -136,7 +136,7 @@ def test_unset_machine_def_energy_and_efficiency_absent() -> None:
         "baseEnergyConsumption",
         "baseEnergyProduction",
         "efficiency",
-        "maxSteamRate",
+        "maxFluidRate",
         "overclockMin",
         "overclockMax",
     ):
@@ -186,7 +186,7 @@ def test_empty_collections_emit_as_lists() -> None:
             name="Large Steam Boiler",
             fuel_burning=True,
             efficiency=0.8,
-            max_steam_rate=256,
+            max_fluid_rate=256,
             allowed_recipe_ids=["burn_coal"],
             slots=[SlotGroup(Category.SOLID, Direction.IN, 1, 64)],
         ),
@@ -262,7 +262,7 @@ def _sample_world() -> World:
                 name="Large Steam Boiler",
                 fuel_burning=True,
                 efficiency=0.8,
-                max_steam_rate=256,
+                max_fluid_rate=256,
                 allowed_recipe_ids=["burn_coal"],
             ),
         ],
