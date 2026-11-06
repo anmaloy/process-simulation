@@ -39,8 +39,18 @@ project save/load and library export/import with id-collision handling), and the
 pywebview JS API surface (P4, `api.py`: the frozen JSON bridge — see "API
 surface" below) — all covered by pytest. This is the end-of-P4 milestone: a
 complete, headless, tested product that loads a project, computes every scope's
-balance, and saves. The frontend UI is still a stub — build it per the phase
-order in `WORKFLOW.md`.
+balance, and saves.
+
+Phase 5 is done too: the frontend shell + bridge (`frontend/src/`). `styles/`
+holds the palette tokens (verbatim from `STYLE_GUIDE.md` §2) and the rail+stage
+shell; IBM Plex Mono and Space Grotesk ship as local `woff2` via `@fontsource`
+(no Google Fonts `@import`, offline-first — the built `dist/` loads nothing from
+a CDN). `bridge/` is a typed TS client (`ApiClient`) over `window.pywebview.api`
+mirroring the P4 method shapes, with a `DevApi` fallback over an in-memory
+fixture so `npm run dev` runs in a plain browser with no Python host; the client
+unwraps the result envelope (throwing `ApiCallError` on `{ok: false}`). `App.tsx`
+boots the bridge and round-trips a `get_world` call. The canvas (P6), panels
+(P7), and balance overlay (P8) layer onto this shell next, per `WORKFLOW.md`.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
@@ -123,8 +133,8 @@ npm run build      # type-check (tsc -b) + production bundle -> dist/
 npm run lint       # tsc --noEmit type check
 ```
 
-Layout (backend/tests/frontend scaffold exists now; the frontend `src/`
-subdirs — `canvas`, `panels`, `styles` — land in Phases 5–7):
+Layout (`styles/` and `bridge/` exist now; the `canvas` and `panels` subdirs
+land in Phases 6–7):
 
 ```
 backend/
@@ -136,9 +146,10 @@ backend/
   app.py         # entry point: starts pywebview, loads the built frontend
 frontend/        # web UI (Vite + React + TypeScript)
   src/
-    canvas/      # React Flow graph: custom nodes, edges, ports
-    panels/      # inspectors and editors (item / recipe / machine / pipe / node)
-    styles/      # edunode tokens + component CSS
+    bridge/      # typed ApiClient over window.pywebview.api + DevApi fallback
+    styles/      # palette tokens + shell CSS + local @font-face (woff2)
+    canvas/      # React Flow graph: custom nodes, edges, ports (P6)
+    panels/      # inspectors and editors (item / recipe / machine / pipe / node) (P7)
 tests/           # pytest for engine/model; frontend tests added later
 ```
 
