@@ -31,12 +31,39 @@ the main reason for a web UI over a native toolkit (see `STYLE_GUIDE.md`).
 
 ## Project state
 
-Nothing is scaffolded yet beyond this file, the README, and the license. There is
-no package layout, no dependency manifest, and no run/test commands wired up. Add
-those as the first development step and document the real commands here once they
-exist — don't invent entry points that aren't there.
+Phase 0 (scaffold & toolchain) is done: the package layout, dependency
+manifests, and run/test commands below are real and wired. The engine, model,
+io, api, and frontend UI are still stubs — build them per the phase order in
+`WORKFLOW.md`.
 
-Intended layout (adjust as it takes shape):
+### Commands
+
+Backend (run from `backend/`):
+
+```bash
+cd backend
+python -m venv .venv && . .venv/bin/activate   # Python 3.11+
+pip install -e '.[dev]'                         # install + dev tools
+pytest                                          # run the test suite
+ruff check . && ruff format --check .           # lint + format check
+```
+
+`pyproject.toml` sets `pythonpath = ["."]` and `testpaths = ["../tests"]`, so
+`pytest` from `backend/` finds both the package and the `tests/` tree with no
+extra flags.
+
+Frontend (run from `frontend/`):
+
+```bash
+cd frontend
+npm install        # install deps (Vite + React + TS + @xyflow/react)
+npm run dev        # Vite dev server
+npm run build      # type-check (tsc -b) + production bundle -> dist/
+npm run lint       # tsc --noEmit type check
+```
+
+Layout (backend/tests/frontend scaffold exists now; the frontend `src/`
+subdirs — `canvas`, `panels`, `styles` — land in Phases 5–7):
 
 ```
 backend/

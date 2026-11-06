@@ -225,3 +225,6 @@ frontend/dist/
 frontend/.vite/
 *.local
 .env.local
+
+# TypeScript incremental build info
+*.tsbuildinfo
