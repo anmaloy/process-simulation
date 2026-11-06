@@ -6,9 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "process-sim"
 version = "0.0.0"
 description = "Production chain planner — rate-balance engine and data model."
-readme = "../README.md"
 requires-python = ">=3.11"
-license = { file = "../LICENSE" }
+license = "MIT"
 dependencies = [
     "pywebview>=5.0",
 ]
