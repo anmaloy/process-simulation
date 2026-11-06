@@ -120,8 +120,27 @@ class Api:
     pywebview binds it once and routes every ``window.pywebview.api`` call to it.
     """
 
-    def __init__(self, world: World | None = None) -> None:
+    def __init__(
+        self, world: World | None = None, autosave_path: Path | None = None
+    ) -> None:
         self._world: World = world if world is not None else World()
+        #: When set, the current World is written here after every change, so the
+        #: app restores its last state on the next launch (persistence).
+        self._autosave_path: Path | None = autosave_path
+
+    def _persist(self) -> None:
+        """Write the current World to the autosave path, if one is configured.
+
+        Failures are swallowed: a disk hiccup must not break an in-memory edit
+        (the next successful change re-persists the whole World anyway).
+        """
+
+        if self._autosave_path is None:
+            return
+        try:
+            save_project(self._world, self._autosave_path)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------ #
     # World state — read / replace / edit.
@@ -139,6 +158,7 @@ class Api:
             self._world = World.from_dict(world)
         except _EXPECTED_ERRORS as exc:
             return _err(exc)
+        self._persist()
         return _ok(self._world.to_dict())
 
     def apply_edit(self, edit: dict[str, Any]) -> dict[str, Any]:
@@ -153,6 +173,7 @@ class Api:
             self._mutate(edit)
         except _EXPECTED_ERRORS as exc:
             return _err(exc)
+        self._persist()
         return _ok(self._world.to_dict())
 
     def _mutate(self, edit: dict[str, Any]) -> None:
@@ -190,6 +211,7 @@ class Api:
             self._world = load_project(Path(path))
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)
+        self._persist()
         return _ok(self._world.to_dict())
 
     def save_project(self, path: str) -> dict[str, Any]:
@@ -289,6 +311,7 @@ class Api:
         except _EXPECTED_ERRORS as exc:
             return _err(exc)
         self._world = result.world
+        self._persist()
         return _ok(self._import_payload(result))
 
     def import_library_file(
@@ -304,6 +327,7 @@ class Api:
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)
         self._world = result.world
+        self._persist()
         return _ok(self._import_payload(result))
 
     @staticmethod

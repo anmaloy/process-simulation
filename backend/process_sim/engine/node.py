@@ -8,20 +8,21 @@ rates per second)::
     inputDemand(s) = s.quantity * cyclesPerSec * count
 
 Energy is a **machine** property, not a recipe one: a machine draws
-``base_energy_consumption`` EU/s while it runs (scaled by overclock × count),
-accounted as a scalar ``energy_consume``. How that energy is sourced is the
-machine's ``energy_source``:
+``base_energy_consumption`` EU/s while it runs (scaled by overclock × count).
+How that energy is sourced is the machine's ``energy_source``, and every carrier
+— fuel, steam, **and electricity** — flows as a routed item so pipe throughput
+caps it (electric connections give electricity its transfer limit):
 
-- ``electric`` — the draw is pure grid electricity (scalar; not routed).
+- ``electric`` with a ``source_item_id`` routes the draw as that energy-category
+  carrier; with none it falls back to a scalar grid draw (an abstract mains).
 - ``liquid`` / ``fuel`` on a **converter** (one with ``output_item_id`` +
-  ``max_fluid_rate``) turns its source carrier into an output carrier. The
-  source is consumed as a routed item (a fuel item by its ``eu``, or a liquid
-  like steam 1:1); the output is a routed liquid/solid carrier, **or**, when the
-  output item is ``energy``-category (electricity), a scalar ``energy_produce``.
+  ``max_fluid_rate``) consumes its source (a fuel item by its ``eu``, or a
+  liquid like steam 1:1) and emits its output carrier as a routed item.
 
-So steam and fuel flow as ordinary items through pipes, while electricity stays
-the scalar grid balance (``netEnergy = produce − consume``). See :mod:`.energy`
-for the fuel→fluid conversion math, which is unchanged.
+The scalar energy terms (``energy_produce`` / ``energy_consume`` / ``net_energy``)
+are **derived** from the energy-category carriers that flow as items (plus any
+scalar grid draw), so "net energy" stays the electricity balance. See
+:mod:`.energy` for the fuel→fluid conversion math, which is unchanged.
 """
 
 from __future__ import annotations
@@ -111,13 +112,35 @@ def compute_node(
         for s in recipe.inputs:
             _accumulate(inputs, s.item_id, s.quantity * rate)
 
-    # A machine draws base energy while it runs (scaled by overclock × count).
-    # This is the grid-electricity consume term; a converter earns its own
-    # produce term below.
-    base = machine_def.base_energy_consumption
-    energy_consume = base * scale if base is not None else None
-    energy_produce: float | None = None
+    src_id = machine_def.source_item_id
 
+    def _consume_source(amount: float) -> None:
+        """Route a carrier draw onto ``inputs`` (a fuel by its eu, else 1:1)."""
+
+        if src_id is None:
+            return
+        src = items.get(src_id)
+        is_fuel = machine_def.energy_source is EnergySource.FUEL
+        if is_fuel and src is not None and src.eu:
+            _accumulate(inputs, src_id, amount / src.eu)
+        else:
+            _accumulate(inputs, src_id, amount)
+
+    # A machine draws base energy while it runs. With a source carrier chosen it
+    # is *routed* (and therefore transfer-limited by its pipes); without one it
+    # falls back to a scalar grid draw (an abstract mains supply).
+    base = machine_def.base_energy_consumption
+    scalar_consume = 0.0
+    if base is not None:
+        draw = base * scale
+        if src_id is not None:
+            _consume_source(draw)
+        else:
+            scalar_consume = draw
+
+    # A converter turns its source carrier into its output carrier; both ride as
+    # routed items (electricity included — it is a routed energy-category item,
+    # capped by its electric connections).
     fuel_conversion: FuelConversion | None = None
     is_converter = (
         machine_def.energy_source in (EnergySource.FUEL, EnergySource.LIQUID)
@@ -128,29 +151,27 @@ def compute_node(
         r = machine_def.max_fluid_rate * scale  # type: ignore[operator]
         conv = convert_fuel(r, fluid_draw, machine_def.efficiency or 0.0)
         fuel_conversion = conv
+        _consume_source(conv.fuel_drain)
+        _accumulate(outputs, machine_def.output_item_id, conv.fluid_out)  # type: ignore[arg-type]
 
-        # Consume the source carrier as a routed item: a fuel by its eu, else
-        # (a liquid such as steam) one-to-one with the energy drawn.
-        src_id = machine_def.source_item_id
-        if src_id is not None:
-            src = items.get(src_id)
-            if (
-                machine_def.energy_source is EnergySource.FUEL
-                and src is not None
-                and src.eu
-            ):
-                _accumulate(inputs, src_id, conv.fuel_drain / src.eu)
-            else:
-                _accumulate(inputs, src_id, conv.fuel_drain)
+    # Energy terms are *derived* from the energy-category carriers that now flow
+    # as items, plus any scalar grid draw. "Net energy" stays the electricity
+    # balance while electricity itself routes like any other carrier.
+    def _energy_cat_total(flows: dict[str, float]) -> float:
+        total = 0.0
+        for iid, rate in flows.items():
+            it = items.get(iid)
+            if it is not None and it.category is Category.ENERGY:
+                total += rate
+        return total
 
-        # Emit the output carrier: electricity (energy category) is scalar grid
-        # power; any other carrier (steam, …) is a routed item.
-        out_id = machine_def.output_item_id
-        out_item = items.get(out_id) if out_id is not None else None
-        if out_item is not None and out_item.category is Category.ENERGY:
-            energy_produce = conv.fluid_out
-        elif out_id is not None:
-            _accumulate(outputs, out_id, conv.fluid_out)
+    produce_items = _energy_cat_total(outputs)
+    consume_items = _energy_cat_total(inputs)
+    energy_produce = produce_items if produce_items > 1e-12 else None
+    total_consume = consume_items + scalar_consume
+    energy_consume = (
+        total_consume if (scalar_consume > 0.0 or consume_items > 1e-12) else None
+    )
 
     if energy_produce is None and energy_consume is None:
         net_energy = None

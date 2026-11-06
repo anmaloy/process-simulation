@@ -118,8 +118,9 @@ def test_energy_scales_with_overclock_count() -> None:
     assert comp.energy_consume == 40.0  # 10 * 2 * 2
 
 
-def test_converter_produces_electricity_scalar() -> None:
-    # A turbine: consumes steam (routed liquid), produces electricity (scalar).
+def test_turbine_routes_electricity_as_item() -> None:
+    # A turbine: consumes steam (routed liquid), produces electricity — which is
+    # itself a routed energy-category item (so pipes can cap its transfer).
     md = MachineDef(
         id="turbine",
         energy_source=EnergySource.LIQUID,
@@ -128,10 +129,37 @@ def test_converter_produces_electricity_scalar() -> None:
         max_fluid_rate=200,
     )
     comp = compute_node(_node(machine_def_id="turbine"), md, None, items=ITEMS)
-    assert comp.energy_produce == 200.0  # electricity is scalar, not an item
-    assert "eu" not in comp.outputs
+    assert comp.outputs["eu"] == 200.0  # electricity flows as an item
     assert comp.inputs["steam"] == 200.0  # steam drawn 1:1
+    # Net energy is derived from the energy-category carrier.
+    assert comp.energy_produce == 200.0
     assert comp.net_energy == 200.0
+
+
+def test_electric_consumer_routes_power_when_carrier_set() -> None:
+    # An electric machine with a power carrier demands it as a routed item.
+    md = MachineDef(
+        id="furnace",
+        energy_source=EnergySource.ELECTRIC,
+        source_item_id="eu",
+        base_energy_consumption=30,
+    )
+    recipe = Recipe(id="r", time_seconds=1.0, outputs=[Stack("x", 1)])
+    comp = compute_node(_node(recipe_id="r", machine_def_id="furnace"), md, recipe, items=ITEMS)
+    assert comp.inputs["eu"] == 30.0  # routed electricity demand
+    assert comp.energy_consume == 30.0
+    assert comp.net_energy == -30.0
+
+
+def test_electric_consumer_without_carrier_is_scalar() -> None:
+    # No carrier chosen ⇒ an abstract mains draw (scalar; not routed).
+    md = MachineDef(
+        id="furnace", energy_source=EnergySource.ELECTRIC, base_energy_consumption=30
+    )
+    comp = compute_node(_node(machine_def_id="furnace"), md, None, items=ITEMS)
+    assert "eu" not in comp.inputs
+    assert comp.energy_consume == 30.0
+    assert comp.net_energy == -30.0
 
 
 # --------------------------------------------------------------------------- #

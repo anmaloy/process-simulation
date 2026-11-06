@@ -18,6 +18,7 @@ from process_sim.engine.aggregate import compute_system
 from process_sim.model import (
     Category,
     Direction,
+    EnergySource,
     Item,
     MachineDef,
     MachineNode,
@@ -296,6 +297,70 @@ def test_duty_cascade_reduces_downstream_yield() -> None:
     # Two bottlenecks: mid short of a, sink short of b.
     short = {(b.node_id, b.item_id) for b in report.bottlenecks}
     assert short == {("mid", "a"), ("sink", "b")}
+
+
+def _power_world(wire_capacity: float) -> World:
+    """A generator wired to one electric machine over an energy pipe.
+
+    The generator makes 100 EU/s of electricity; the machine wants 80 EU/s to run
+    at full rate. The energy pipe's movement capacity throttles delivery.
+    """
+
+    en_out = SlotGroup(Category.ENERGY, Direction.OUT, 1, 1)
+    en_in = SlotGroup(Category.ENERGY, Direction.IN, 1, 1)
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    gen = MachineDef(
+        id="gen",
+        energy_source=EnergySource.FUEL,
+        source_item_id="coal",
+        output_item_id="eu",
+        max_fluid_rate=100,
+        slots=[en_out],
+    )
+    mach = MachineDef(
+        id="mach",
+        energy_source=EnergySource.ELECTRIC,
+        source_item_id="eu",
+        base_energy_consumption=80,
+        slots=[en_in, out_s],
+    )
+    make = Recipe(id="make", time_seconds=1.0, outputs=[Stack("widget", 1)])
+    return World(
+        items=[
+            Item("coal", "Coal", Category.SOLID, eu=1000),
+            Item("eu", "Electricity", Category.ENERGY),
+            Item("widget", "Widget", Category.SOLID),
+        ],
+        recipes=[make],
+        machine_defs=[gen, mach],
+        nodes=[
+            MachineNode(id="gen1", machine_def_id="gen"),
+            MachineNode(id="mach1", machine_def_id="mach", recipe_id="make"),
+        ],
+        pipes=[
+            Pipe(
+                id="wire",
+                category=Category.ENERGY,
+                movement_capacity=wire_capacity,
+                a=PipeEnd(node_id="gen1", role=PipeEndRole.OUT),
+                b=PipeEnd(node_id="mach1", role=PipeEndRole.IN),
+            )
+        ],
+    )
+
+
+def test_electricity_transfer_limit_throttles_consumer() -> None:
+    # Ample wire: the machine gets its full 80 EU and runs at 100%.
+    full = compute_world(_power_world(1000))
+    assert _close(full.node_duty["mach1"], 1.0)
+    assert _close(full.external_outputs["widget"], 1.0)
+    # A thin wire (40 EU/s) delivers only half the power → the machine runs at
+    # 50% duty and its widget yield halves. Electricity is not a feedstock/yield.
+    thin = compute_world(_power_world(40))
+    assert _close(thin.node_duty["mach1"], 0.5)
+    assert _close(thin.external_outputs["widget"], 0.5)
+    assert "eu" not in thin.external_inputs and "eu" not in thin.external_outputs
+    assert any(b.item_id == "eu" and b.node_id == "mach1" for b in thin.bottlenecks)
 
 
 def test_storage_node_is_transparent() -> None:

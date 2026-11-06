@@ -35,13 +35,14 @@ import sys
 from pathlib import Path
 
 from process_sim.api import Api
-from process_sim.io import load_project
+from process_sim.io import ProcessSimIOError, load_project
 
 __all__ = [
     "WINDOW_TITLE",
     "dist_dir",
     "dist_index",
     "find_external_refs",
+    "default_autosave_path",
     "build_api",
     "main",
 ]
@@ -130,11 +131,37 @@ def _snippet(text: str, at: int, span: int = 60) -> str:
     return chunk.strip()
 
 
-def build_api(project: Path | None = None) -> Api:
-    """Build the JS-API instance, optionally preloaded with a project file."""
+def default_autosave_path() -> Path:
+    """Where the app auto-persists the working World between launches.
 
-    world = load_project(project) if project is not None else None
-    return Api(world)
+    ``PROCESS_SIM_HOME`` overrides the base directory; otherwise it lives under
+    the user's home (``~/.process_sim/autosave.psim.json``).
+    """
+
+    base = os.environ.get("PROCESS_SIM_HOME")
+    root = Path(base) if base else Path.home() / ".process_sim"
+    return root / "autosave.psim.json"
+
+
+def build_api(project: Path | None = None, autosave_path: Path | None = None) -> Api:
+    """Build the JS-API instance, restoring/persisting the working World.
+
+    Load order: an explicit ``project`` file wins; otherwise the autosave file is
+    restored if it exists and is readable (a corrupt autosave is ignored so the
+    app still launches). When ``autosave_path`` is set the :class:`Api` writes the
+    World back to it after every change, so the next launch resumes where it left
+    off.
+    """
+
+    world = None
+    if project is not None:
+        world = load_project(project)
+    elif autosave_path is not None and autosave_path.is_file():
+        try:
+            world = load_project(autosave_path)
+        except (ProcessSimIOError, OSError):
+            world = None  # ignore a corrupt/unreadable autosave
+    return Api(world, autosave_path=autosave_path)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -183,7 +210,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     index = dist_index()
-    api = build_api(args.project)
+    autosave = default_autosave_path()
+    autosave.parent.mkdir(parents=True, exist_ok=True)
+    api = build_api(args.project, autosave)
 
     # Imported lazily so the module (and its tests) load without a GUI backend.
     import webview

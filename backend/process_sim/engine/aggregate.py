@@ -458,6 +458,10 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     external_inputs: dict[str, float] = {}
     external_outputs: dict[str, float] = {}
     for item_id in all_items:
+        # Electricity (energy category) is the grid balance, reported as
+        # ``netEnergy`` — keep it out of the material feedstock/yield lists.
+        if _category_of(index, item_id) is Category.ENERGY:
+            continue
         # Feedstock: an item with no internal producer that the running scope
         # still demands must be supplied from outside.
         if item_id not in producible:
