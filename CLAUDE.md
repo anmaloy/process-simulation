@@ -49,8 +49,23 @@ a CDN). `bridge/` is a typed TS client (`ApiClient`) over `window.pywebview.api`
 mirroring the P4 method shapes, with a `DevApi` fallback over an in-memory
 fixture so `npm run dev` runs in a plain browser with no Python host; the client
 unwraps the result envelope (throwing `ApiCallError` on `{ok: false}`). `App.tsx`
-boots the bridge and round-trips a `get_world` call. The canvas (P6), panels
-(P7), and balance overlay (P8) layer onto this shell next, per `WORKFLOW.md`.
+boots the bridge and round-trips a `get_world` call.
+
+Phase 6 is done: the node-graph canvas (`frontend/src/canvas/`). React Flow
+(`@xyflow/react`) renders the World — custom machine nodes (`div` bodies) with
+ports as handles (one per category×direction from the MachineDef slot layout),
+and pipes as edges colored by category. The World is the single source of truth:
+placing a machine, wiring a pipe, moving a node, or deleting either bubbles up as
+a P4 `apply_edit` call whose returned World reseeds the graph, so a laid-out
+graph round-trips through the API into a loadable project (positions persist on
+`MachineNode.x/y`). The category color map (`colors.ts`: solid→silver,
+liquid→blue, energy→gold) is the single seam; `graph.ts` holds the World↔React
+Flow mapping and the connection validation (out→in, matching category). Edge
+`data` leaves seams (`status`, `flow`, `shortfall`) for the P8 balance overlay —
+absent until a recompute fills them, so nothing is fabricated. Pan/zoom, the
+minimap, and controls are React Flow defaults, re-skinned with the style tokens.
+The panels/inspectors (P7) and balance overlay (P8) layer onto this next, per
+`WORKFLOW.md`.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
@@ -133,8 +148,8 @@ npm run build      # type-check (tsc -b) + production bundle -> dist/
 npm run lint       # tsc --noEmit type check
 ```
 
-Layout (`styles/` and `bridge/` exist now; the `canvas` and `panels` subdirs
-land in Phases 6–7):
+Layout (`styles/`, `bridge/`, and `canvas/` exist now; the `panels` subdir
+lands in Phase 7):
 
 ```
 backend/
@@ -148,7 +163,7 @@ frontend/        # web UI (Vite + React + TypeScript)
   src/
     bridge/      # typed ApiClient over window.pywebview.api + DevApi fallback
     styles/      # palette tokens + shell CSS + local @font-face (woff2)
-    canvas/      # React Flow graph: custom nodes, edges, ports (P6)
+    canvas/      # React Flow graph: custom nodes, edges, ports, color map (P6)
     panels/      # inspectors and editors (item / recipe / machine / pipe / node) (P7)
 tests/           # pytest for engine/model; frontend tests added later
 ```

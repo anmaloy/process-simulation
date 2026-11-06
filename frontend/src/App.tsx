@@ -1,34 +1,41 @@
-// App shell (WORKFLOW.md P5) — rail + stage wearing the style tokens, booting
-// the bridge and round-tripping one real `load World` call. The canvas (P6),
-// panels (P7), and balance overlay (P8) layer onto this shell later; for now
-// the stage is an instrument-style readout proving the bridge works against
-// both the pywebview host and the dev fixture.
+// App shell (WORKFLOW.md P5) now hosting the node-graph canvas (P6).
+//
+// The bridge connects once; the World it returns is the single source of truth.
+// The canvas renders it and raises structural edits — place a machine, wire a
+// pipe, move or delete a node — which go through the P4 `apply_edit` API. That
+// call returns the updated World, which we store and the canvas reseeds from,
+// so a moved/wired layout round-trips through the API into a loadable project.
+// Panels/inspectors (P7) and the balance overlay (P8) layer on next.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiClient, type ApiSource } from "./bridge";
-import type { World } from "./bridge";
+import type { Edit, EntityKind, MachineNode, Pipe, World } from "./bridge";
+import { Canvas, categoryColor } from "./canvas";
+import "./canvas/canvas.css";
 
 type Conn =
   | { phase: "connecting" }
-  | { phase: "ready"; source: ApiSource; world: World }
+  | { phase: "ready"; source: ApiSource }
   | { phase: "error"; message: string };
 
-const CATEGORY_DOT: Record<string, string> = {
-  solid: "var(--s-teach)",
-  liquid: "var(--s-indep)",
-  energy: "var(--subedge)",
-};
+type Selection = { kind: "node" | "pipe"; id: string } | null;
 
 export function App() {
   const [conn, setConn] = useState<Conn>({ phase: "connecting" });
+  const [client, setClient] = useState<ApiClient | null>(null);
+  const [world, setWorld] = useState<World | null>(null);
+  const [selection, setSelection] = useState<Selection>(null);
 
   useEffect(() => {
     let live = true;
     (async () => {
       try {
-        const client = await ApiClient.connect();
-        const world = await client.getWorld();
-        if (live) setConn({ phase: "ready", source: client.source, world });
+        const c = await ApiClient.connect();
+        const w = await c.getWorld();
+        if (!live) return;
+        setClient(c);
+        setWorld(w);
+        setConn({ phase: "ready", source: c.source });
       } catch (e) {
         if (live) {
           setConn({
@@ -43,6 +50,60 @@ export function App() {
     };
   }, []);
 
+  // Apply a sequence of edits through the API; store the final World.
+  const applyEdits = useCallback(
+    async (edits: Edit[]) => {
+      if (!client || edits.length === 0) return;
+      try {
+        let next: World | null = null;
+        for (const edit of edits) next = await client.applyEdit(edit);
+        if (next) setWorld(next);
+      } catch (e) {
+        setConn({
+          phase: "error",
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    },
+    [client],
+  );
+
+  const upsert = (kind: EntityKind, entity: object): Edit => ({
+    op: "upsert",
+    kind,
+    entity: entity as Record<string, unknown>,
+  });
+  const remove = (kind: EntityKind, id: string): Edit => ({ op: "remove", kind, id });
+
+  const onAddNode = useCallback(
+    (node: MachineNode) => applyEdits([upsert("node", node)]),
+    [applyEdits],
+  );
+
+  const onMoveNode = useCallback(
+    (id: string, x: number, y: number) => {
+      const current = world?.nodes?.find((n) => n.id === id);
+      if (!current) return;
+      void applyEdits([upsert("node", { ...current, x, y })]);
+    },
+    [applyEdits, world],
+  );
+
+  const onAddPipe = useCallback(
+    (pipe: Pipe) => applyEdits([upsert("pipe", pipe)]),
+    [applyEdits],
+  );
+
+  const onRemoveNodes = useCallback(
+    (ids: string[]) => applyEdits(ids.map((id) => remove("node", id))),
+    [applyEdits],
+  );
+
+  const onRemovePipes = useCallback(
+    (ids: string[]) => applyEdits(ids.map((id) => remove("pipe", id))),
+    [applyEdits],
+  );
+
   return (
     <div className="shell">
       <aside className="rail">
@@ -52,19 +113,42 @@ export function App() {
           <div className="subtitle">rate-balance · node graph</div>
         </div>
         <div className="rail-section">
-          <p className="eyebrow quiet">Nodes</p>
-          <NodeList conn={conn} />
+          <div className="row" style={{ padding: "0 22px", margin: "0 0 12px" }}>
+            <p className="eyebrow quiet" style={{ margin: 0 }}>
+              Nodes
+            </p>
+            <SourcePill conn={conn} />
+          </div>
+          <NodeList world={world} selection={selection} />
         </div>
       </aside>
       <main className="stage">
-        <Readout conn={conn} />
+        <Stage
+          conn={conn}
+          world={world}
+          onAddNode={onAddNode}
+          onMoveNode={onMoveNode}
+          onAddPipe={onAddPipe}
+          onRemoveNodes={onRemoveNodes}
+          onRemovePipes={onRemovePipes}
+          onSelect={setSelection}
+        />
       </main>
     </div>
   );
 }
 
-function NodeList({ conn }: { conn: Conn }) {
-  const world = conn.phase === "ready" ? conn.world : null;
+function SourcePill({ conn }: { conn: Conn }) {
+  if (conn.phase !== "ready") return null;
+  const dev = conn.source === "dev";
+  return (
+    <span className={`pill ${dev ? "dev" : "live"}`} style={{ marginLeft: "auto" }}>
+      {dev ? "dev fixture" : "pywebview"}
+    </span>
+  );
+}
+
+function NodeList({ world, selection }: { world: World | null; selection: Selection }) {
   const defName = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of world?.machineDefs ?? []) m.set(d.id, d.name ?? d.id);
@@ -76,18 +160,42 @@ function NodeList({ conn }: { conn: Conn }) {
   if (nodes.length === 0) return <div className="leaf">no nodes</div>;
   return (
     <>
-      {nodes.map((n) => (
-        <div className="leaf" key={n.id}>
-          <span className="dot" style={{ background: "var(--s-not)" }} />
-          <span>{defName.get(n.machineDefId) ?? n.machineDefId}</span>
-          <span className="leaf-id">{n.id}</span>
-        </div>
-      ))}
+      {nodes.map((n) => {
+        const active = selection?.kind === "node" && selection.id === n.id;
+        return (
+          <div
+            className="leaf"
+            key={n.id}
+            style={
+              active
+                ? { borderLeftColor: "var(--spine)", background: "var(--panel)" }
+                : undefined
+            }
+          >
+            <span className="dot" style={{ background: "var(--s-not)" }} />
+            <span>{defName.get(n.machineDefId) ?? n.machineDefId}</span>
+            <span className="leaf-id">{n.id}</span>
+          </div>
+        );
+      })}
     </>
   );
 }
 
-function Readout({ conn }: { conn: Conn }) {
+interface StageProps {
+  conn: Conn;
+  world: World | null;
+  onAddNode: (node: MachineNode) => void;
+  onMoveNode: (id: string, x: number, y: number) => void;
+  onAddPipe: (pipe: Pipe) => void;
+  onRemoveNodes: (ids: string[]) => void;
+  onRemovePipes: (ids: string[]) => void;
+  onSelect: (sel: Selection) => void;
+}
+
+function Stage(props: StageProps) {
+  const { conn, world } = props;
+
   if (conn.phase === "connecting") {
     return (
       <section className="panel-glass readout">
@@ -97,7 +205,6 @@ function Readout({ conn }: { conn: Conn }) {
       </section>
     );
   }
-
   if (conn.phase === "error") {
     return (
       <section className="panel-glass readout">
@@ -107,76 +214,43 @@ function Readout({ conn }: { conn: Conn }) {
           </p>
           <span className="pill bad">error</span>
         </div>
-        <h2>Could not load the World</h2>
+        <h2>Could not reach the World</h2>
         <p className="lede mono">{conn.message}</p>
       </section>
     );
   }
-
-  const { world, source } = conn;
-  const counts: [string, number][] = [
-    ["Items", world.items?.length ?? 0],
-    ["Recipes", world.recipes?.length ?? 0],
-    ["Machine defs", world.machineDefs?.length ?? 0],
-    ["Nodes", world.nodes?.length ?? 0],
-    ["Pipes", world.pipes?.length ?? 0],
-    ["Systems", world.systems?.length ?? 0],
-  ];
+  if (!world) return null;
 
   return (
-    <section className="panel-glass readout">
-      <div className="row">
-        <p className="eyebrow" style={{ margin: 0 }}>
-          World loaded
-        </p>
-        <span className={`pill ${source === "pywebview" ? "live" : "dev"}`}>
-          {source === "pywebview" ? "pywebview host" : "dev fixture"}
+    <>
+      <CategoryLegend />
+      <Canvas
+        world={world}
+        onAddNode={props.onAddNode}
+        onMoveNode={props.onMoveNode}
+        onAddPipe={props.onAddPipe}
+        onRemoveNodes={props.onRemoveNodes}
+        onRemovePipes={props.onRemovePipes}
+        onSelect={props.onSelect}
+      />
+    </>
+  );
+}
+
+function CategoryLegend() {
+  const cats: { c: "solid" | "liquid" | "energy"; label: string }[] = [
+    { c: "solid", label: "solid" },
+    { c: "liquid", label: "liquid" },
+    { c: "energy", label: "energy" },
+  ];
+  return (
+    <div className="category-legend">
+      {cats.map(({ c, label }) => (
+        <span className="legend-item mono" key={c}>
+          <span className="legend-dot" style={{ background: categoryColor(c) }} />
+          {label}
         </span>
-      </div>
-      <h2>{world.name ?? "Untitled World"}</h2>
-      <p className="lede">
-        The bridge round-tripped a <span className="mono">get_world</span> call
-        over the P4 API contract. The categorized item palette and node list come
-        straight from that payload.
-      </p>
-
-      <div className="metrics">
-        {counts.map(([label, value]) => (
-          <div className="metric" key={label}>
-            <div className="label">{label}</div>
-            <div className="value">{value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ marginTop: 18 }}>
-        <p className="eyebrow quiet">Items</p>
-        <div className="row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 0 }}>
-          {(world.items ?? []).map((it) => (
-            <span className="pill" key={it.id}>
-              <span
-                className="dot"
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: CATEGORY_DOT[it.category] ?? "var(--ink-faint)",
-                  display: "inline-block",
-                }}
-              />
-              {it.name}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {source === "dev" && (
-        <div className="note warning" style={{ marginTop: 18 }}>
-          Running against the dev fixture — the rate engine and file IO live in
-          the Python host, so recompute and library calls return stand-ins until
-          the app runs in the webview.
-        </div>
-      )}
-    </section>
+      ))}
+    </div>
   );
 }
