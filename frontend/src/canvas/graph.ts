@@ -26,6 +26,8 @@ export interface MachineNodeData extends Record<string, unknown> {
   def: MachineDef | undefined;
   /** Balance status (P8); omitted until a recompute supplies it. */
   status?: Status;
+  /** Running fraction in [0,1]; <1 means throttled by a starved input. */
+  duty?: number;
 }
 
 /** What a rendered pipe edge carries for its custom view. */

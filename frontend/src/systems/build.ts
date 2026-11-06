@@ -80,11 +80,15 @@ export function buildCanvasGraph(
   const cs = collapseState(world);
   const status = report?.balances ?? {};
   const pipeFlows = report?.pipeFlows ?? {};
+  const duty = report?.nodeDuty ?? {};
 
   // Visible machine nodes (members hidden under a collapsed system drop out).
   const machineNodes: RfAnyNode[] = worldToNodes(world)
     .filter((n) => !cs.hiddenNodeIds.has(n.id))
-    .map((n) => ({ ...n, data: { ...n.data, status: status[n.id]?.status } }));
+    .map((n) => ({
+      ...n,
+      data: { ...n.data, status: status[n.id]?.status, duty: duty[n.id] },
+    }));
 
   // Accumulate the handles each rendered system needs, from the pipes that
   // cross its boundary plus any explicitly exposed ports.

@@ -68,11 +68,33 @@ const KIND_FIELD = {
  * and the filesystem live in the Python host. The UI flags the "dev fixture"
  * source so these stand-ins are never mistaken for authoritative analysis.
  */
+const DEV_STORAGE_KEY = "process-sim.dev-world";
+
 export class DevApi implements RawApi {
   private world: World;
 
   constructor(world: World = DEV_WORLD) {
-    this.world = structuredClone(world);
+    // Persist across reloads in the browser so the dev app doesn't reset. The
+    // real app persists via the Python host (autosave); this mirrors that for
+    // `npm run dev` / a bundle opened without a host.
+    this.world = structuredClone(DevApi.restore() ?? world);
+  }
+
+  private static restore(): World | null {
+    try {
+      const raw = localStorage.getItem(DEV_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as World) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private persist(): void {
+    try {
+      localStorage.setItem(DEV_STORAGE_KEY, JSON.stringify(this.world));
+    } catch {
+      // Private mode / blocked storage: fine, the in-memory World still works.
+    }
   }
 
   async get_world(): Promise<Envelope<World>> {
@@ -81,6 +103,7 @@ export class DevApi implements RawApi {
 
   async set_world(world: World): Promise<Envelope<World>> {
     this.world = structuredClone(world);
+    this.persist();
     return ok(structuredClone(this.world));
   }
 
@@ -102,6 +125,7 @@ export class DevApi implements RawApi {
       return err("ValueError", `unknown edit op`);
     }
     (this.world[field] as unknown) = list;
+    this.persist();
     return ok(structuredClone(this.world));
   }
 

@@ -199,11 +199,14 @@ export function MachineDefInspector({
   const source = def.energySource;
   const isConverter = def.outputItemId != null || def.maxFluidRate != null;
 
+  const energyItems = items.filter((i) => i.category === "energy");
   // Items valid as a source for the current energy kind.
   const sourceItems =
     source === "fuel"
       ? items.filter((i) => i.eu != null)
-      : items.filter((i) => i.category === "liquid");
+      : source === "electric"
+        ? energyItems
+        : items.filter((i) => i.category === "liquid");
   // A converter's output is a liquid (steam) or energy (electricity) carrier.
   const outputItems = items.filter((i) => i.category === "liquid" || i.category === "energy");
 
@@ -223,6 +226,9 @@ export function MachineDefInspector({
     if (next === "electric") {
       d = withField(d, "energySource", "electric");
       d = withField(d, "baseEnergyConsumption", 20);
+      // Default the power carrier to the first energy item, so the draw routes
+      // through electric connections (and is transfer-limited) out of the box.
+      if (energyItems[0]) d = withField(d, "sourceItemId", energyItems[0].id);
     } else if (next === "liquid" || next === "fuel") {
       d = withField(d, "energySource", next as EnergySource);
       d = withField(d, "baseEnergyConsumption", 20);
@@ -272,15 +278,25 @@ export function MachineDefInspector({
       </Field>
 
       {source === "electric" && (
-        <OptionalNumber
-          label="energy draw (EU/s)"
-          value={def.baseEnergyConsumption}
-          onSet={(v) => onChange(withField(def, "baseEnergyConsumption", v))}
-          onClear={() => onChange(withoutField(def, "baseEnergyConsumption"))}
-          fallback={20}
-          min={0}
-          hint="drawn from the electric grid while running"
-        />
+        <>
+          <Field label="power carrier" hint="routed over electric connections (transfer-limited)">
+            <Combobox
+              value={def.sourceItemId ?? ""}
+              onChange={(v) => onChange(withField(def, "sourceItemId", v))}
+              options={itemOpts(energyItems)}
+              placeholder={energyItems.length ? "pick electricity…" : "create an energy item"}
+            />
+          </Field>
+          <OptionalNumber
+            label="energy draw (EU/s)"
+            value={def.baseEnergyConsumption}
+            onSet={(v) => onChange(withField(def, "baseEnergyConsumption", v))}
+            onClear={() => onChange(withoutField(def, "baseEnergyConsumption"))}
+            fallback={20}
+            min={0}
+            hint="drawn while running"
+          />
+        </>
       )}
 
       {(source === "liquid" || source === "fuel") && (

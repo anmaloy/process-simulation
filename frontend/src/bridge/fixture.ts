@@ -53,6 +53,7 @@ export const DEV_WORLD: World = {
       id: "electric_furnace",
       name: "Electric Furnace",
       energySource: "electric",
+      sourceItemId: "electricity",
       baseEnergyConsumption: 30,
       allowedRecipeIds: ["smelt_iron"],
       slots: [
@@ -97,6 +98,13 @@ export const DEV_WORLD: World = {
       movementCapacity: 1000000000,
       a: { nodeId: "steam_tank_1", role: "out", extractPriority: 0 },
       b: { nodeId: "turbine_1", role: "in", insertPriority: 0 },
+    },
+    {
+      id: "pipe_power_1",
+      category: "energy",
+      movementCapacity: 5120,
+      a: { nodeId: "turbine_1", role: "out", extractPriority: 0 },
+      b: { nodeId: "electric_furnace_1", role: "in", insertPriority: 0 },
     },
     {
       id: "pipe_ingot_1",
