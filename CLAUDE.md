@@ -141,7 +141,16 @@ buffers (`nodeDuty` + reframed `externalInputs`/`externalOutputs` in
 `ScopeReport`). On the UI side: searchable/alphabetised combo pickers everywhere
 (`frontend/src/ui/Combobox.tsx`), name-derived ids with reference-rewriting
 rename (`ui/ids.ts`), undo (Ctrl+Z), per-category display units (items/mB/EU),
-palette-matched checkboxes, and category pipe-speed defaults.
+palette-matched checkboxes, category pipe-speed defaults, and storage/duty
+badges on the node body.
+
+A later pass made **electricity a routed, transfer-limited carrier** (it flows
+over energy pipes like steam, no longer a scalar link) and added **persistence**:
+`Api(world, autosave_path)` writes the World after every change and `app.py`
+restores it on launch (`~/.process_sim/autosave.psim.json`, `PROCESS_SIM_HOME`
+override; a corrupt autosave is ignored, an explicit project file wins), so the
+app no longer resets on reopen. `DevApi` mirrors this with `localStorage` for the
+browser build.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
@@ -326,31 +335,37 @@ outputRate(s)  = s.quantity * cyclesPerSec * count   # per output stack
 inputDemand(s) = s.quantity * cyclesPerSec * count   # per input stack
 ```
 
-Energy per node — a machine draws its `baseEnergyConsumption` while running (the
-grid-electricity term); a converter earns a `produce` term by making an
-energy-category output. An absent term stays absent (not zero):
+Energy per node — a machine draws its `baseEnergyConsumption` while running; a
+converter earns a `produce` term by making an energy-category output. Both the
+draw and the output are **routed carriers** (items), and the scalar energy terms
+are *derived* from those energy-category flows. An absent term stays absent (not
+zero):
 
 ```
-consume   = baseEnergyConsumption * overclock * count   # electric draw, scalar
-produce   = (converter electricity output)              # see "Energy generation"
-netEnergy = produce - consume     # omit a side entirely when it has no term
+consume   = baseEnergyConsumption * overclock * count   # routed as its carrier
+produce   = (converter energy-carrier output)           # see "Carrier tiers"
+netEnergy = produce - consume     # derived from energy-category carriers
 ```
 
 ### Carrier tiers (fuel → steam → electricity)
 
 Energy flows as a chain of carriers: a **fuel** item (stored `eu`) is burned by a
-boiler into **steam** (a liquid that flows through pipes like any other liquid);
-a turbine consumes steam and produces **electricity** (the `energy` category).
-Steam and fuel are routed items subject to movement capacity and priority;
-electricity is the scalar grid balance (`netEnergy`), reserved for the energy
-category and not routed as an item. A machine's `energySource` picks which
-carrier it consumes to run.
+boiler into **steam** (a liquid); a turbine consumes steam and produces
+**electricity** (the `energy` category). **All three carriers route as items**
+through pipes, subject to movement capacity and priority — so electricity has a
+transfer limit from its electric connections (default 5120 EU/s = 256 EU/t ×
+20 t/s), exactly like steam or a solid. A machine's `energySource` picks the
+carrier it consumes; `sourceItemId` names it. An electric machine with no carrier
+chosen falls back to a scalar mains draw (no transfer limit). Electricity is kept
+out of the material feedstock/yield lists (it is the grid, reported as
+`netEnergy`), but a power shortage still shows as a throttled duty + a bottleneck.
 
 The fuel→output conversion math is unchanged (see `engine/energy.py`): with max
 rate `R`, draw `D`, waste `w`, the converter consumes its source (a fuel by its
-`eu`, else a liquid 1:1) and emits its output carrier. When the output item is
-energy-category (electricity) it is accounted as the scalar `produce` term; any
-other output (steam) is a routed item.
+`eu`, else a liquid 1:1) and emits its output carrier as a routed item.
+
+Pipes are **pure transfer vehicles** — only `movementCapacity × overclock` caps
+sustained flow; pipe storage is ignored in the steady-state balance.
 
 With max rate `R`, fluid actually drawn `D` (capped at `R`), fuel energy `E`, and
 efficiency `η` (rates per second; the tick form scales identically):
@@ -447,12 +462,15 @@ All of the original open questions are decided. Build to these.
 2. **Energy is a machine property** — recipes carry no energy term; a machine
    draws `baseEnergyConsumption` while running. A machine's `energySource`
    (electric / liquid / fuel) picks the carrier it consumes.
-3. **Carriers are routed items; electricity is scalar** — fuel items store `eu`;
-   a boiler burns fuel into steam (a routed liquid), a turbine turns steam into
-   electricity. Steam and fuel flow through pipes under the normal
-   movement-capacity and priority rules; electricity (the `energy` category) is
-   the scalar grid balance, reserved and not routed as an item. The specific
-   carriers are content (default content uses steam). See "Carrier tiers".
+3. **All carriers are routed items (electricity included)** — fuel items store
+   `eu`; a boiler burns fuel into steam, a turbine turns steam into electricity.
+   Fuel, steam, **and** electricity flow through pipes under the normal
+   movement-capacity and priority rules, so electricity is transfer-limited by
+   its electric connections (default 5120 EU/s). `netEnergy` is derived from the
+   energy-category carriers and electricity is excluded from the feedstock/yield
+   lists. Pipes are pure transfer vehicles — pipe storage is ignored. The
+   specific carriers are content (default content uses steam). See "Carrier
+   tiers".
 4. **Round-robin batch size follows pipe speed** — the equal-priority split is
    batched by the pipe's movement capacity (already a pipe parameter), not a
    separate fixed constant.
