@@ -73,13 +73,25 @@ h3 {
   margin-top: 6px;
 }
 
-.rail-section {
-  padding: 16px 0 8px;
+/* Scroll container holding the source pill + all library sections. */
+.rail-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding-bottom: 12px;
+}
+.rail-head {
+  padding: 12px 22px 2px;
+  margin: 0;
+}
+
+.rail-section {
+  padding: 14px 0 6px;
   min-height: 0;
 }
 .rail-section > .eyebrow {
   padding: 0 22px;
+  margin-bottom: 8px;
 }
 
 /* List leaf — left-border accent selection pattern (§6). */

@@ -1,0 +1,339 @@
+/* Inspector panel styling (WORKFLOW.md P7) — the docked editor and its field
+   kit, wearing the style tokens. No new hues: ids/metrics are mono, inputs sit
+   on --panel-2 wells, the unset affordance is a quiet dashed chip. */
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.inspector-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.inspector-head .eyebrow {
+  margin: 0 0 4px;
+}
+.inspector-id {
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.icon-btn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  font-size: 16px;
+  color: var(--ink-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  color: var(--ink);
+  border-color: var(--line-2);
+}
+
+.inspector-body {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 16px 18px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.inspector-foot {
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* --- Fields -------------------------------------------------------------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.field-hint {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  line-height: 1.4;
+}
+
+.field-input {
+  width: 100%;
+  font-family: var(--disp);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.field-input.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.field-input:focus {
+  outline: none;
+  border-color: var(--spine);
+  box-shadow: 0 0 0 1px var(--spine-glow);
+}
+select.field-input {
+  cursor: pointer;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-faint) 50%),
+    linear-gradient(135deg, var(--ink-faint) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 51%,
+    calc(100% - 10px) 51%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 26px;
+}
+
+.field-static {
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-all;
+}
+.field-static.dim {
+  color: var(--ink-dim);
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.field-check input {
+  accent-color: var(--spine);
+  width: 14px;
+  height: 14px;
+}
+
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+/* Clear (unset) control on a present optional field. */
+.clear-btn {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+  font-size: 13px;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.clear-btn:hover {
+  color: var(--s-bad);
+  border-color: var(--s-bad);
+}
+
+/* Unset affordance for an absent optional field. */
+.field-optional-empty {
+  gap: 5px;
+}
+.unset-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px dashed var(--line-2);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink-dim);
+}
+.unset-btn:hover {
+  border-color: var(--spine);
+}
+.unset-tag {
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.unset-add {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--spine);
+}
+
+/* --- Stack / slot list rows --------------------------------------------- */
+.stack-list {
+  gap: 7px;
+}
+.stack-empty {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.stack-row,
+.slot-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stack-row .field-input {
+  min-width: 0;
+}
+.stack-row select.field-input {
+  flex: 1;
+}
+.stack-row input.field-input {
+  width: 72px;
+  flex: none;
+}
+.slot-row select.field-input {
+  flex: 1;
+  min-width: 0;
+}
+.slot-row input.field-input {
+  width: 56px;
+  flex: none;
+}
+.slot-x {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.row-del {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.row-del:hover {
+  color: var(--s-bad);
+  border-color: var(--s-bad);
+}
+.row-add {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--spine);
+  background: transparent;
+  border: 1px dashed var(--line-2);
+  border-radius: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.row-add:hover {
+  border-color: var(--spine);
+}
+.row-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+  color: var(--ink-faint);
+}
+
+/* --- Pipe-end block ------------------------------------------------------ */
+.pipe-end {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.pipe-end-head {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.pipe-end-head .dim {
+  color: var(--ink-faint);
+}
+
+.cat-static {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cat-static .legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.tool-btn.danger {
+  width: 100%;
+  color: var(--s-bad);
+  border-color: var(--f-bad);
+  background: rgba(229, 86, 91, 0.06);
+}
+.tool-btn.danger:hover {
+  border-color: var(--s-bad);
+  background: rgba(229, 86, 91, 0.12);
+}
+
+/* The stage makes room for the docked inspector when something is selected. */
+.shell.has-inspector {
+  grid-template-columns: 300px 1fr 344px;
+}
+.inspector-dock {
+  padding: 16px 16px 16px 0;
+  min-height: 0;
+  overflow: hidden;
+}
+@media (max-width: 820px) {
+  .shell.has-inspector {
+    grid-template-columns: 1fr;
+  }
+  .inspector-dock {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(360px, 92vw);
+    padding: 12px;
+    z-index: 50;
+    background: var(--bg);
+  }
+}
+
+/* Rail entries become clickable for library selection (P7). */
+.leaf.clickable {
+  cursor: pointer;
+}
+.leaf.selected {
+  border-left-color: var(--spine);
+  background: var(--panel);
+}

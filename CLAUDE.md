@@ -49,8 +49,37 @@ a CDN). `bridge/` is a typed TS client (`ApiClient`) over `window.pywebview.api`
 mirroring the P4 method shapes, with a `DevApi` fallback over an in-memory
 fixture so `npm run dev` runs in a plain browser with no Python host; the client
 unwraps the result envelope (throwing `ApiCallError` on `{ok: false}`). `App.tsx`
-boots the bridge and round-trips a `get_world` call. The canvas (P6), panels
-(P7), and balance overlay (P8) layer onto this shell next, per `WORKFLOW.md`.
+boots the bridge and round-trips a `get_world` call.
+
+Phase 6 is done: the node-graph canvas (`frontend/src/canvas/`). React Flow
+(`@xyflow/react`) renders the World — custom machine nodes (`div` bodies) with
+ports as handles (one per category×direction from the MachineDef slot layout),
+and pipes as edges colored by category. The World is the single source of truth:
+placing a machine, wiring a pipe, moving a node, or deleting either bubbles up as
+a P4 `apply_edit` call whose returned World reseeds the graph, so a laid-out
+graph round-trips through the API into a loadable project (positions persist on
+`MachineNode.x/y`). The category color map (`colors.ts`: solid→silver,
+liquid→blue, energy→gold) is the single seam; `graph.ts` holds the World↔React
+Flow mapping and the connection validation (out→in, matching category). Edge
+`data` leaves seams (`status`, `flow`, `shortfall`) for the P8 balance overlay —
+absent until a recompute fills them, so nothing is fabricated. Pan/zoom, the
+minimap, and controls are React Flow defaults, re-skinned with the style tokens.
+
+Phase 7 is done: the inspector panels (`frontend/src/panels/`). A docked panel
+edits the current selection — canvas clicks pick a node or pipe, rail lists pick
+a library entity (item / recipe / machine def) — through one `Inspector` that
+dispatches to a per-kind editor (`ItemInspector`, `RecipeInspector`,
+`MachineDefInspector`, `NodeInspector`, `PipeInspector`). Selection is controlled
+by the host (click-driven, not React Flow's own), so the two surfaces share one
+inspector with no feedback loop. The load-bearing rule is sparse-field
+discipline, built into the `fields.tsx` kit: an *optional* field that is absent
+renders as "unset / + set" (never a populated 0) and clearing it removes the key;
+a genuinely *inapplicable* field isn't mounted at all — a non-fuel def shows no
+efficiency/`maxFluidRate`, an `in`-only pipe end shows no extract priority, and
+flipping a role or the fuel flag clears the now-inapplicable terms. Every field
+edit routes through the P4 `apply_edit` upsert and is followed by a `recompute`,
+so edits persist and the balance refreshes; the returned World reseeds the
+canvas. The balance overlay (P8) layers onto this next, per `WORKFLOW.md`.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
@@ -133,8 +162,7 @@ npm run build      # type-check (tsc -b) + production bundle -> dist/
 npm run lint       # tsc --noEmit type check
 ```
 
-Layout (`styles/` and `bridge/` exist now; the `canvas` and `panels` subdirs
-land in Phases 6–7):
+Layout (`styles/`, `bridge/`, `canvas/`, and `panels/` exist now):
 
 ```
 backend/
@@ -148,8 +176,8 @@ frontend/        # web UI (Vite + React + TypeScript)
   src/
     bridge/      # typed ApiClient over window.pywebview.api + DevApi fallback
     styles/      # palette tokens + shell CSS + local @font-face (woff2)
-    canvas/      # React Flow graph: custom nodes, edges, ports (P6)
-    panels/      # inspectors and editors (item / recipe / machine / pipe / node) (P7)
+    canvas/      # React Flow graph: custom nodes, edges, ports, color map (P6)
+    panels/      # docked inspector + per-kind editors, sparse-field kit (P7)
 tests/           # pytest for engine/model; frontend tests added later
 ```
 
