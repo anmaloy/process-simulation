@@ -341,6 +341,21 @@ target OS.
 load offline, and the glass effects either work or degrade cleanly on each target
 webview.
 
+**Status: done.** `backend/app.py` is the shell: it builds the thin `Api`,
+loads `frontend/dist/index.html` from disk via a `file://` URI (Vite `base:
+"./"` keeps asset paths relative), and binds the API to a pywebview window
+(deep-slate `background_color` so there's no white flash). All non-GUI logic is
+import-safe and unit-tested headless (`webview` is imported lazily inside
+`main`): `dist_dir` resolves the bundle (``PROCESS_SIM_DIST`` → PyInstaller
+`_MEIPASS` → repo layout), `build_api` optionally preloads a project file, and
+`find_external_refs` machine-checks the offline guarantee — scanning the built
+HTML/CSS for any `http(s)://` or protocol-relative load. `python app.py --check`
+runs that scan in CI (exit 0 clean / 1 external refs / 2 unbuilt); the built
+bundle passes. `backdrop-filter` has a solid `--panel` `@supports` fallback on
+every glass surface and font smoothing is set, so the glass degrades cleanly on
+a weak webview. Packaging per OS is a documented PyInstaller recipe
+(`--add-data frontend/dist`) plus a `process-sim` console-script entry point.
+
 ---
 
 ## Phase 11 — Polish

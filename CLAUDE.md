@@ -116,6 +116,20 @@ offers a "Group" action; the `SystemInspector` edits membership, nesting
 member count and aggregate status/energy from a per-system recompute. The
 `System` model gained optional `x`/`y` (the collapsed node's position).
 
+Phase 10 is done: the app shell & packaging (`app.py`). The whole app runs as a
+single Python process — `app.py` builds the thin `Api`, binds it to a pywebview
+window, and loads the **built** `frontend/dist/index.html` from disk via a
+`file://` URI (Vite `base: "./"` keeps asset paths relative; no dev server, no
+network). All non-GUI logic is import-safe and unit-tested headless (`webview`
+is imported lazily inside `main`): `dist_dir` resolves the bundle
+(`PROCESS_SIM_DIST` env → PyInstaller `_MEIPASS` → repo layout), `build_api`
+optionally preloads a project file, and `find_external_refs` enforces the
+offline guarantee by scanning the built HTML/CSS for any external load.
+`python app.py --check` runs that scan (exit 0/1/2) and the built bundle passes;
+`backdrop-filter` degrades to a solid `--panel` fill via `@supports` on every
+glass surface. Packaging is a documented PyInstaller recipe plus a `process-sim`
+console-script entry point.
+
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
 payload. A project file nests the whole World under `"world"`; a library file
@@ -187,6 +201,24 @@ ruff check . && ruff format --check .           # lint + format check
 `pyproject.toml` sets `pythonpath = ["."]` and `testpaths = ["../tests"]`, so
 `pytest` from `backend/` finds both the package and the `tests/` tree with no
 extra flags.
+
+Run the desktop app (needs the frontend built first, and a GUI):
+
+```bash
+cd frontend && npm run build      # produce frontend/dist/
+cd ../backend
+python app.py                     # open the pywebview window
+python app.py path/to/project.json  # open with a project loaded
+python app.py --check             # verify the bundle loads nothing external (CI)
+```
+
+Package per OS with PyInstaller, bundling the built frontend beside the binary
+(`process-sim` is also the installed console-script entry point):
+
+```bash
+pyinstaller --name process-sim --windowed \
+    --add-data "../frontend/dist:frontend/dist" app.py
+```
 
 Frontend (run from `frontend/`):
 

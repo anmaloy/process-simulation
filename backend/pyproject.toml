@@ -19,6 +19,12 @@ dev = [
     "ruff>=0.6",
 ]
 
+[project.scripts]
+process-sim = "app:main"
+
+[tool.setuptools]
+py-modules = ["app"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["process_sim*"]
