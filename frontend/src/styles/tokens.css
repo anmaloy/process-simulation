@@ -1,0 +1,46 @@
+/* Palette — pasted verbatim from STYLE_GUIDE.md §2. This :root is the WHOLE
+   palette for the app. Do not introduce new hues; extend by reusing roles. */
+:root {
+  /* field — four stacked dark surfaces, each ~1 step lighter */
+  --bg: #0b0f17; /* page base (also PWA theme-color) */
+  --bg-2: #10151f; /* inset wells: code blocks, sidebar top */
+  --panel: #141b27; /* raised surface 1 */
+  --panel-2: #1a2331; /* raised surface 2 (chips, inputs, inner rows) */
+
+  /* hairlines — borders only, two weights */
+  --line: #26303f; /* default divider / border */
+  --line-2: #33425a; /* stronger border, hover edges, scrollbar thumb */
+
+  /* ink — text, three dim levels */
+  --ink: #e8edf5; /* primary text */
+  --ink-dim: #9aa7ba; /* secondary / body copy */
+  --ink-faint: #5f6e85; /* captions, ids, disabled */
+
+  /* the one accent — "signal cyan", the active spine */
+  --spine: #34d3e0;
+  --spine-glow: rgba(52, 211, 224, 0.35);
+
+  /* status phosphors — bright, for dots/accents/legend */
+  --s-not: #566072; /* grey   — not started */
+  --s-learn: #e3b53e; /* yellow — learning / warning */
+  --s-ref: #2f9e6b; /* green  — done / go */
+  --s-indep: #3d6fd6; /* blue   — answer / independent */
+  --s-expert: #8b5cf6; /* violet */
+  --s-teach: #d9e0ec; /* silver — top / mastery */
+  --s-bad: #e5565b; /* red    — shortfall / error (added for this app) */
+
+  /* status FILLS — darker twins, sit behind white label text */
+  --f-not: #1c2433;
+  --f-learn: #5e4a16;
+  --f-ref: #16513a;
+  --f-indep: #1d3a78;
+  --f-expert: #3a2a6b;
+  --f-teach: #6c7585;
+  --f-bad: #5a1e21;
+
+  --subedge: #d9a93a; /* secondary accent — gold, for a second line type */
+
+  --radius: 10px;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --disp: "Space Grotesk", system-ui, sans-serif;
+}
