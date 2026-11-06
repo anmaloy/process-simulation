@@ -77,11 +77,16 @@ tests/           # pytest for engine/model; frontend tests added later
 
 - **Item** — a tracked resource. Category is `solid`, `liquid`, or `energy`.
   Energy (unit EU) is a normal item so it can appear in recipes and balances.
+  An item may optionally carry a stored-energy value `eu` — its fuel content in
+  EU. A fuel with `eu = 1000` consumed at 2 EU/s lasts 500 s. Optional and
+  selectable at item construction: items without `eu` are not fuels.
 - **Stack** — an `{item, quantity}` pair, per recipe cycle unless noted.
 - **Recipe** — input stacks → output stacks over a production time, with optional
   energy production/consumption.
 - **MachineDef** — a template: energy behavior, allowed recipes, slot layout per
-  category and direction, stack sizes, overclock bounds.
+  category and direction, stack sizes, overclock bounds. A fuel-burning def is
+  flagged as such and may set a steam-conversion `efficiency` (waste fraction,
+  see "Energy generation"); non-fuel defs omit both.
 - **MachineNode** — a placed machine bound to a recipe, an overclock multiplier,
   and a parallel count.
 - **Pipe** — the graph edge. Carries one category between two machine ports; has
@@ -104,16 +109,47 @@ outputRate(s)  = s.quantity * cyclesPerSec * count   # per output stack
 inputDemand(s) = s.quantity * cyclesPerSec * count   # per input stack
 ```
 
-Energy per node (omit terms whose fields are unset):
+Energy per node — a recipe energy term, if set, **overrides** (replaces) the
+machine-base term of the same kind; if neither is set, the term is absent (not
+zero):
 
 ```
-energyConsumption = baseEnergyConsumption * overclock * count  (+ recipe.energyConsumption term if set)
-energyProduction  = baseEnergyProduction  * overclock * count  (+ recipe.energyProduction  term if set)
-netEnergy         = energyProduction - energyConsumption
+consume   = (recipe.energyConsumption  or  baseEnergyConsumption) * overclock * count
+produce   = (recipe.energyProduction   or  baseEnergyProduction ) * overclock * count
+netEnergy = produce - consume     # omit a side entirely when it has no term
 ```
 
-Machine-base and recipe-specified energy are additive by default (open question —
-see below).
+### Energy generation (fuel → steam)
+
+Fuel-burning machines convert an item's stored `eu` into **steam**, a liquid item
+valued at **1 EU/mB** (1000 EU of fuel → 1000 mB of steam, 1:1). Steam then flows
+through pipes like any other fluid — obeying movement capacity and priority — and
+energy consumers draw it. This is how EU is "carried": as a fluid, not a direct
+lossless link.
+
+With max steam rate `R`, steam actually drawn `D` (capped at `R`), fuel energy
+`E`, and efficiency `η` (rates per second; the tick form scales identically):
+
+```
+steamOut    = D                    # mB, at 1 EU/mB
+fuelDrain    = D / η               # EU of fuel consumed
+burnTime     = E · η / D           # how long one fuel unit lasts
+usableSteam  = E · η               # total steam from one fuel unit
+```
+
+Most machines are lossless: `η = 1`, so `fuelDrain = D` and conversion is exactly
+1:1. A machine may set an **efficiency** parameter — a waste fraction `w` applied
+to the heat it generates but does not deliver when steam isn't fully drawn:
+
+```
+η         = D / (D + w·(R − D))
+fuelDrain = D + w·(R − D)          # = w·R + (1−w)·D, well-defined at D = 0
+wasted    = w·(R − D)
+```
+
+Default `w = 0` (no waste, η = 1). The **Large Steam Boiler** sets `w = 0.8` with
+`R = 256`: it burns `0.8·R` fuel even at zero draw (idles hot) and loses 80 % of
+any unused surplus, so η reaches 1 only at full load (`D = R`).
 
 Pipe throughput: `movementCapacity * overclock` caps sustained flow. Storage
 capacity only buffers transients.
@@ -142,7 +178,7 @@ signed scalar from −128 to 127, default 0, set independently. The resolution i
 
 - **Insert contention** (one source feeding several destinations): fill in order
   of **descending** insert priority — higher fills first. Equal priority splits
-  evenly, round-robin in stack-sized batches.
+  evenly, round-robin in batches sized by pipe speed (movement capacity).
 - **Extract contention** (several sources feeding one destination): drain in order
   of **ascending** extract priority — lower drains first. Equal priority splits
   evenly.
@@ -170,17 +206,23 @@ cycles/sec, energy consumption, and energy production together. On pipes it scal
 movement capacity. Optional min/max bounds per definition for UI clamping. No
 non-linear curve.
 
-## Open questions (not yet decided)
+## Resolved decisions
 
-1. Confirm the insert-higher / extract-lower asymmetry above is what we want.
-2. When a machine has base energy *and* its recipe specifies energy — additive
-   (current assumption) or does the recipe override?
-3. Model EU as a pipe-carried resource (obeys movement capacity and priority) or
-   as a direct lossless link? Default assumption: treat it like any carried
-   resource.
-4. Equal-priority round-robin batch size — stack size, a fixed batch, or purely
-   proportional?
-5. Canonical units per category and whether display auto-scales.
+All of the original open questions are decided. Build to these.
+
+1. **Pipe priority asymmetry is final** — insert favors higher, extract favors
+   lower, exactly as specified above and in the five cases. Not up for revision.
+2. **Recipe energy overrides machine base** — when a node's recipe specifies an
+   energy term, it replaces the machine-base term of the same kind (production or
+   consumption), rather than adding to it.
+3. **EU is carried as steam** — fuel items store `eu`; a fuel-burning machine
+   converts it into steam (a liquid at 1 EU/mB) that flows through pipes under
+   the normal movement-capacity and priority rules. See "Energy generation".
+4. **Round-robin batch size follows pipe speed** — the equal-priority split is
+   batched by the pipe's movement capacity (already a pipe parameter), not a
+   separate fixed constant.
+5. **Display units auto-scale per category** — store canonical units internally;
+   the UI auto-scales values for readability.
 
 ## Visual style
 
@@ -208,18 +250,16 @@ elements styled with the same tokens — node bodies are `div`s, edges are SVG p
 (color by category, thickness by flow, dashed for shortfall). Apply the cyan glow
 to the selected/live element only.
 
-Still to decide before the palette is complete (the guide doesn't cover our
-domain states directly):
+Domain-state palette (the guide doesn't cover these directly):
 
-- **Category colors** (solid / liquid / energy edges and ports) — the guide
-  reserves cyan for "active/selected" and gold as the single secondary accent, so
-  categories should come from the phosphor set (`--s-*`). Assignments aren't fixed
-  yet.
-- **Status colors** (OK / shortfall / overflow / stalled / unpowered) — OK → green
-  (`--s-ref`), stalled/unpowered → grey (`--s-not`) map cleanly. Shortfall is the
-  problem state and the spec wanted red, but this palette has **no red**; either
-  add one deliberately or map shortfall to yellow (`--s-learn`). Overflow is
-  open too. Decide these together.
+- **Status colors** — decided: OK → green (`--s-ref`), shortfall → red
+  (`--s-bad`, a red added to the palette for this app), overflow → yellow
+  (`--s-learn`), stalled / unpowered → grey (`--s-not`). Cyan (`--spine`) stays
+  reserved for the selected/live element.
+- **Category colors** (solid / liquid / energy edges and ports) — default
+  assignment (adjustable): solid → silver (`--s-teach`), liquid → blue
+  (`--s-indep`), energy → gold (`--subedge`). Steam is a liquid, so it rides the
+  liquid color. Cyan stays reserved; red/green/yellow stay reserved for status.
 
 ## Out of scope for v1
 

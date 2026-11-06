@@ -62,10 +62,11 @@ hues; extend by reusing roles.
   --s-indep:#3d6fd6;   /* blue   — answer / independent */
   --s-expert:#8b5cf6;  /* violet */
   --s-teach:#d9e0ec;   /* silver — top / mastery */
+  --s-bad:#e5565b;     /* red    — shortfall / error (added for this app) */
 
   /* status FILLS — darker twins, sit behind white label text */
   --f-not:#1c2433; --f-learn:#5e4a16; --f-ref:#16513a;
-  --f-indep:#1d3a78; --f-expert:#3a2a6b; --f-teach:#6c7585;
+  --f-indep:#1d3a78; --f-expert:#3a2a6b; --f-teach:#6c7585; --f-bad:#5a1e21;
 
   --subedge:#d9a93a;   /* secondary accent — gold, for a second line type */
 
@@ -84,7 +85,8 @@ hues; extend by reusing roles.
   the bright one for a 6–9px dot or colored text; the fill for a filled shape with a
   label inside.
 - **Semantic reuse:** green = success/go, yellow = in-progress/warning, blue = a
-  secondary reveal, cyan = the primary interactive accent.
+  secondary reveal, cyan = the primary interactive accent, red (`--s-bad`) =
+  shortfall / error (added for this app's domain states).
 
 ---
 

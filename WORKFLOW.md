@@ -15,10 +15,10 @@ The architecture rules dictate the order, not preference:
 - **The frontend only reaches logic through the thin JS API.** The API surface
   is frozen (name + JSON shape per call) before the frontend consumes it, so UI
   work never reaches around it into engine internals.
-- **Build to the documented default assumptions for the open questions**, but
-  keep the code that depends on them (flow resolution, energy summing, EU
-  transport) isolated behind small seams so a decision reversal is a local edit,
-  not a rewrite. See [Open-question gates](#open-question-gates).
+- **The domain decisions are settled** (see [Decisions](#decisions-resolved)),
+  but keep the code that depends on them (flow resolution, the EU/steam
+  conversion, color maps) isolated behind small seams so any later tweak is a
+  local edit, not a rewrite.
 - **Vertical slice early.** Phases 0–4 produce a headless, fully-tested engine
   that loads a project, computes balances, and saves — provable value with zero
   UI. Phases 5+ put a face on it.
@@ -67,10 +67,12 @@ has nothing to host until P4/P5.
 vocabulary every later layer speaks.
 
 **Builds (`model/`):**
-- `Item` (category: `solid|liquid|energy`), `Stack` (`{item, quantity}`),
+- `Item` (category: `solid|liquid|energy`, optional stored-energy `eu` fuel
+  value), `Stack` (`{item, quantity}`),
   `Recipe` (input/output stacks, `timeSeconds`, optional energy prod/consume),
-  `MachineDef` (energy behavior, allowed recipes, slot layout per
-  category×direction, stack sizes, overclock bounds), `MachineNode` (recipe,
+  `MachineDef` (energy behavior, fuel-burning flag + `efficiency`/waste for
+  converters, allowed recipes, slot layout per category×direction, stack sizes,
+  overclock bounds), `MachineNode` (recipe,
   overclock, parallel count), `Pipe` (category, two ports, storage cap, movement
   cap, overclock, per-end role + insert/extract priority), `System` (member
   nodes, exposed ports), `World` (items, recipes, defs, nodes, pipes, systems).
@@ -98,13 +100,21 @@ landed and tested before the next. All rates per second.
 
 **P2a — Per-node computation.**
 `cyclesPerSec = overclock / R.timeSeconds`;
-`outputRate(s) = s.quantity * cyclesPerSec * count`;
-`inputDemand(s)` likewise. Energy per node, **omitting unset terms**:
-`energyConsumption = baseConsumption*overclock*count (+ recipe term if set)`,
-`energyProduction` likewise, `netEnergy = production − consumption`. Overclock is
-one linear scalar; clamp to def bounds for validation only.
-*Done when:* given a node + recipe, rates and net energy are correct, and a node
-with no base-energy field contributes no energy term (not zero-substituted).
+`outputRate(s) = s.quantity * cyclesPerSec * count`; `inputDemand(s)` likewise.
+Energy per node, **omitting unset terms**: a recipe energy term, if set,
+**overrides** the machine-base term of the same kind (not additive) —
+`consume = (recipe.energyConsumption or base) * overclock * count`, `produce`
+likewise, `netEnergy = produce − consume`. **Fuel → steam generation:** a
+fuel-burning node converts an input item's stored `eu` into steam (liquid,
+1 EU/mB). With max rate `R`, drawn steam `D` (capped at `R`) and waste fraction
+`w` (the machine's `efficiency`, default 0): `steamOut = D`,
+`fuelDrain = D + w·(R − D)`, `η = D / (D + w·(R − D))`. Default `w = 0` is
+lossless 1:1; the Large Steam Boiler uses `w = 0.8`, `R = 256`. Overclock is one
+linear scalar; clamp to def bounds for validation only.
+*Done when:* rates and net energy are correct; a node with no base-energy field
+contributes no energy term (not zero-substituted); a recipe term overrides base;
+and boiler fuelDrain/steam/η match hand calcs at `D = 0`, `D = R`, and a mid
+load.
 
 **P2b — Per-node balance.**
 Per item: `shortfall = max(0, inputDemand − supplied)`,
@@ -118,10 +128,11 @@ it.* Each pipe flow is `min(upstream available, downstream demand, movementCap *
 overclock)`; storage only buffers transients. Resolve contention per the
 **asymmetric** priority rules (do not collapse into one rule):
 - Insert contention: fill **descending** insert priority (higher first); equal →
-  even round-robin in stack-sized batches.
+  even split, batched by pipe movement capacity (speed).
 - Extract contention: drain **ascending** extract priority (lower first); equal →
   even split.
 - Self-loop guard: an `io` end won't re-insert what it pulled when insert < extract.
+Steam is just a liquid here — it flows under these same rules, no special path.
 *Done when:* all five canonical cases in `CLAUDE.md` pass as named tests
 (furnace→two chests, triple even split, io filter no-reinsert, A-before-B drain,
 chest@127 always first). Keep the comparator/batcher behind a seam (see gates).
@@ -138,8 +149,9 @@ bottleneck ranking; scope results compose (a world = sum of its processes).
 
 **Depends on:** P1.
 
-**Risks:** P2c is where the spec's open questions bite. Build to defaults, keep
-it swappable. This phase is the product — budget accordingly and over-test it.
+**Risks:** P2c (priority resolution) is the subtlest module — keep it swappable
+and drive it entirely by the five canonical cases. This phase is the product —
+budget accordingly and over-test it.
 
 ---
 
@@ -222,9 +234,9 @@ connect/delete, and persistence of positions into the World.
 **Done when:** a user can place machines, wire pipes, move/zoom, and the graph
 state serializes through the API into a loadable project.
 
-**Notes:** category and status colors come from the phosphor set (`--s-*`) — see
-[Open-question gates](#open-question-gates); don't hardcode until decided, read
-from a single color-map constant.
+**Notes:** category colors (default, adjustable): solid → silver (`--s-teach`),
+liquid → blue (`--s-indep`), energy → gold (`--subedge`); steam rides the liquid
+color. Read from a single color-map constant, not hardcoded per element.
 
 ---
 
@@ -261,8 +273,9 @@ I/O, energy balance, bottleneck list from P2d). Scope switcher: machine / proces
 **Done when:** editing a chain updates status colors and the scope readout live;
 the four scopes each display their aggregated stats correctly.
 
-**Gate:** shortfall/overflow colors need a decision first — the palette has **no
-red** (see gates).
+**Status colors (decided):** OK → green (`--s-ref`), shortfall → red (`--s-bad`,
+added to the palette), overflow → yellow (`--s-learn`), stalled/unpowered → grey
+(`--s-not`). Read them from a single color-map constant.
 
 ---
 
@@ -302,32 +315,31 @@ webview.
 
 ---
 
-## Phase 11 — Resolve open questions & polish
+## Phase 11 — Polish
 
-Confirm or change the default assumptions, update `CLAUDE.md` + this file, and
-adjust the isolated seams. Then: motion polish (§7), responsive breakpoint
-(820px drawer), app icon (§9), error states, and perf on large graphs.
+Motion polish (§7), responsive breakpoint (820px drawer), app icon (§9), error
+states, and perf on large graphs. Fold in any domain tweaks that surfaced during
+the build via the isolated seams, updating `CLAUDE.md` + this file.
 
 ---
 
-## Open-question gates
+## Decisions (resolved)
 
-These `CLAUDE.md` open questions gate specific phases. Build to the stated
-default, isolate it, and resolve before the gated phase finalizes.
+The original open questions are all decided. Build to these. The seams still
+matter so the EU model and color maps each live in one place.
 
-| # | Question | Default built to | Isolate in | Gates |
-|---|----------|------------------|------------|-------|
-| 1 | Insert-higher / extract-lower asymmetry correct? | Yes, as written | P2c comparator | P2c |
-| 2 | Machine base energy + recipe energy: additive or override? | Additive | P2a energy term | P2a |
-| 3 | EU as pipe-carried resource vs lossless link? | Carried resource (obeys cap + priority) | P2c flow / P2d | P2c, P2d |
-| 4 | Equal-priority round-robin batch size? | Stack size | P2c batcher | P2c |
-| 5 | Canonical units per category + display auto-scale? | — | P8 formatting | P8 |
-| — | Category colors (solid/liquid/energy) from `--s-*` | undecided | single color-map const | P6 |
-| — | Status colors (shortfall/overflow — palette has no red) | undecided | same color-map | P8 |
+| # | Question | Decision | Lands in |
+|---|----------|----------|----------|
+| 1 | Insert/extract priority asymmetry | Final as written — not revisable | P2c |
+| 2 | Machine base vs recipe energy | Recipe term **overrides** base (per kind) | P2a |
+| 3 | How EU is carried | Fuel item `eu` → **steam** (liquid, 1 EU/mB) → pipes under normal cap/priority | P1, P2a, P2c |
+| 4 | Equal-priority round-robin batch | Batched by pipe movement capacity (existing param) | P2c |
+| 5 | Units / display scaling | Store canonical units; UI auto-scales | P8 |
+| — | Status colors | OK green, shortfall **red (`--s-bad`, added)**, overflow yellow, stalled/unpowered grey | P8 |
+| — | Category colors | solid silver, liquid blue, energy gold — steam = liquid (adjustable) | P6 |
 
-Decide #2 before P2a, #1/#3/#4 before P2c closes, and the color maps before
-P6/P8 render status. Each lives behind one small seam so a reversal is a local
-edit.
+Isolate the EU/steam conversion (η, waste `w`) in one engine module, and both
+color maps in one constant, so any later tweak stays local.
 
 ## Testing strategy
 
