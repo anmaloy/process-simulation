@@ -1,22 +1,19 @@
-// Recipe inspector (WORKFLOW.md P7). Input/output stacks over a production
-// time, with optional energy production/consumption. Stacks, name, and both
-// energy terms are optional — absent stays absent (an empty stack list drops
-// the key; an unset energy term shows as addable, never 0).
+// Recipe inspector (WORKFLOW.md P7). Input/output stacks over a production time.
+// Recipes carry no energy term — energy is a machine property now (the machine
+// draws a defined amount while running). Item pickers are searchable combos.
 
 import type { Recipe, Stack, World } from "../bridge";
-import {
-  Field,
-  NumberInput,
-  OptionalNumber,
-  Select,
-  StaticValue,
-  TextInput,
-  withField,
-  withoutField,
-} from "./fields";
+import { Field, NumberInput, StaticValue, TextInput, withField, withoutField } from "./fields";
+import { Combobox, EditableId, type ComboOption } from "../ui";
+import { categoryColor } from "../canvas";
 
-function itemOptions(world: World) {
-  return (world.items ?? []).map((i) => ({ value: i.id, label: i.name ?? i.id }));
+function itemOptions(world: World): ComboOption[] {
+  return (world.items ?? []).map((i) => ({
+    value: i.id,
+    label: i.name ?? i.id,
+    hint: i.id,
+    dot: categoryColor(i.category),
+  }));
 }
 
 function StackList({
@@ -50,11 +47,12 @@ function StackList({
       {rows.length === 0 && <span className="stack-empty mono">none</span>}
       {rows.map((s, i) => (
         <div className="stack-row" key={i}>
-          <Select
+          <Combobox
             value={s.itemId}
             onChange={(v) => setRow(i, { itemId: v })}
             options={opts}
-            placeholder={opts.length ? undefined : "no items"}
+            placeholder={opts.length ? "item…" : "no items"}
+            dense
           />
           <NumberInput value={s.quantity} onChange={(v) => setRow(i, { quantity: v })} min={0} />
           <button type="button" className="row-del" title="Remove" onClick={() => removeRow(i)}>
@@ -73,18 +71,28 @@ export function RecipeInspector({
   recipe,
   world,
   onChange,
+  onRename,
 }: {
   recipe: Recipe;
   world: World;
   onChange: (next: Recipe) => void;
+  onRename: (newId: string) => void;
 }) {
   const setName = (v: string) =>
     onChange(v.trim() === "" ? withoutField(recipe, "name") : withField(recipe, "name", v));
 
+  const cycles = recipe.timeSeconds > 0 ? 1 / recipe.timeSeconds : 0;
+
   return (
     <div className="inspector-body">
-      <Field label="id">
-        <StaticValue value={recipe.id} />
+      <Field label="id" hint="derived from the name; edit to rename everywhere">
+        <EditableId
+          id={recipe.id}
+          name={recipe.name}
+          kind="recipe"
+          world={world}
+          onRename={onRename}
+        />
       </Field>
       <Field label="name">
         <TextInput value={recipe.name ?? ""} onChange={setName} placeholder="(unnamed)" />
@@ -95,6 +103,9 @@ export function RecipeInspector({
           onChange={(v) => onChange(withField(recipe, "timeSeconds", v))}
           min={0}
         />
+      </Field>
+      <Field label="rate">
+        <StaticValue value={`${cycles ? cycles.toPrecision(3) : "0"} cycles/s`} dim />
       </Field>
       <StackList
         label="inputs"
@@ -111,22 +122,6 @@ export function RecipeInspector({
         onChange={(v) =>
           onChange(v ? withField(recipe, "outputs", v) : withoutField(recipe, "outputs"))
         }
-      />
-      <OptionalNumber
-        label="energy consumption"
-        value={recipe.energyConsumption}
-        onSet={(v) => onChange(withField(recipe, "energyConsumption", v))}
-        onClear={() => onChange(withoutField(recipe, "energyConsumption"))}
-        min={0}
-        hint="overrides the machine base when set"
-      />
-      <OptionalNumber
-        label="energy production"
-        value={recipe.energyProduction}
-        onSet={(v) => onChange(withField(recipe, "energyProduction", v))}
-        onClear={() => onChange(withoutField(recipe, "energyProduction"))}
-        min={0}
-        hint="overrides the machine base when set"
       />
     </div>
   );

@@ -352,3 +352,294 @@ select.field-input {
   border-left-color: var(--spine);
   background: var(--panel);
 }
+
+/* --- Undo button (rail head) -------------------------------------------- */
+.undo-btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 5px 10px;
+}
+.undo-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* --- Custom checkbox (#6: no white native boxes) ------------------------ */
+.field-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin: 0;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  background: var(--panel-2);
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition: border-color 0.12s, background 0.12s;
+}
+.field-check input[type="checkbox"]::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  transform: scale(0);
+  transition: transform 0.12s;
+  box-shadow: inset 1em 1em var(--spine);
+}
+.field-check input[type="checkbox"]:checked {
+  border-color: var(--spine);
+  background: var(--spine-glow);
+}
+.field-check input[type="checkbox"]:checked::before {
+  transform: scale(1);
+}
+.field-check input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--spine-glow);
+}
+
+/* --- Searchable combobox (#2) ------------------------------------------- */
+.combo {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.combo-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.combo-trigger.dense {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 11.5px;
+}
+.combo-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.combo-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-value.placeholder {
+  color: var(--ink-faint);
+}
+.combo-caret {
+  flex: none;
+  font-size: 9px;
+  color: var(--ink-faint);
+}
+.combo-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+.combo-pop {
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.combo-search {
+  margin: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.combo-search:focus {
+  outline: none;
+  border-color: var(--spine);
+  box-shadow: 0 0 0 1px var(--spine-glow);
+}
+.combo-list {
+  overflow-y: auto;
+  padding: 0 6px 6px;
+  min-height: 0;
+}
+.combo-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.combo-opt.active {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+.combo-opt.selected {
+  color: var(--spine);
+}
+.combo-opt-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-opt-hint {
+  flex: none;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+.combo-empty {
+  padding: 10px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* --- Chips (multi-select members / allowed recipes) --------------------- */
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 9px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.chip-x:hover {
+  color: var(--s-bad);
+  background: rgba(229, 86, 91, 0.12);
+}
+
+/* --- Editable id (#3) --------------------------------------------------- */
+.editable-id {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.editable-id .id-input {
+  flex: 1;
+  min-width: 0;
+}
+.id-sync {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--spine);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.id-sync:hover {
+  border-color: var(--spine);
+}
+.id-sync:disabled {
+  opacity: 0.4;
+  cursor: default;
+  color: var(--ink-faint);
+}
+
+/* --- Slot groups, legible (#4) ------------------------------------------ */
+.slot-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.slot-cat-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.slot-size-row {
+  padding-left: 18px;
+}
+.slot-size-row input.field-input {
+  width: 64px;
+  flex: none;
+}
+.slot-unit {
+  color: var(--ink-dim);
+  font-size: 11px;
+}
+.slot-total {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+}
+
+.storage-fields {
+  display: flex;
+  gap: 10px;
+}
+.storage-fields .field {
+  flex: 1;
+}
+
+/* --- Row + / × buttons: center their glyphs (#1) ------------------------ */
+.row-del,
+.rail-add,
+.clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.row-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The "Add machine" picker in the canvas palette. */
+.palette-combo {
+  width: 220px;
+}

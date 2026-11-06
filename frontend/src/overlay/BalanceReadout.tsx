@@ -6,8 +6,8 @@
 // nothing is fabricated — an absent report reads as a prompt, not zeros.
 
 import { useMemo } from "react";
-import type { Scope, ScopeReport, World } from "../bridge";
-import { formatEnergy, formatRate } from "./units";
+import type { Category, Scope, ScopeReport, World } from "../bridge";
+import { formatEnergy, formatRateFor } from "./units";
 import { STATUS_COLOR } from "./status";
 
 /** The scope options, in switcher order. `node` is labelled "machine". */
@@ -36,6 +36,11 @@ export function BalanceReadout(props: BalanceReadoutProps) {
   const itemName = useMemo(() => {
     const m = new Map<string, string>();
     for (const it of world.items ?? []) m.set(it.id, it.name ?? it.id);
+    return m;
+  }, [world.items]);
+  const itemCat = useMemo(() => {
+    const m = new Map<string, Category>();
+    for (const it of world.items ?? []) m.set(it.id, it.category);
     return m;
   }, [world.items]);
   const defName = useMemo(() => {
@@ -111,6 +116,7 @@ export function BalanceReadout(props: BalanceReadoutProps) {
         <ReadoutBody
           report={report}
           itemName={itemName}
+          itemCat={itemCat}
           nodeDefName={nodeDefName}
         />
       )}
@@ -121,15 +127,23 @@ export function BalanceReadout(props: BalanceReadoutProps) {
 function ReadoutBody({
   report,
   itemName,
+  itemCat,
   nodeDefName,
 }: {
   report: ScopeReport;
   itemName: Map<string, string>;
+  itemCat: Map<string, Category>;
   nodeDefName: Map<string, string>;
 }) {
   const inputs = Object.entries(report.externalInputs);
   const outputs = Object.entries(report.externalOutputs);
   const name = (id: string) => itemName.get(id) ?? id;
+  const cat = (id: string) => itemCat.get(id);
+
+  // Lowest running fraction across the scope's nodes (yield headroom).
+  const duties = Object.values(report.nodeDuty ?? {});
+  const minDuty = duties.length ? Math.min(...duties) : 1;
+  const throttled = duties.filter((d) => d < 0.999).length;
 
   return (
     <div className="readout-body">
@@ -153,9 +167,17 @@ function ReadoutBody({
           {report.netEnergy == null ? "—" : formatEnergy(report.netEnergy)}
         </span>
       </div>
+      {throttled > 0 && (
+        <div className="readout-row">
+          <span className="readout-metric-label">Throughput</span>
+          <span className="readout-metric mono" style={{ color: "var(--s-bad)" }}>
+            {Math.round(minDuty * 100)}% · {throttled} throttled
+          </span>
+        </div>
+      )}
 
-      <ItemList title="External inputs" entries={inputs} name={name} />
-      <ItemList title="External outputs" entries={outputs} name={name} />
+      <ItemList title="Feedstock in" entries={inputs} name={name} cat={cat} />
+      <ItemList title="Actual yield" entries={outputs} name={name} cat={cat} />
 
       <div className="readout-section">
         <span className="eyebrow quiet">Bottlenecks</span>
@@ -174,7 +196,7 @@ function ReadoutBody({
                   <span className="readout-leaf-sub mono"> · {name(b.itemId)}</span>
                 </span>
                 <span className="readout-leaf-val mono">
-                  −{formatRate(b.shortfall)}
+                  −{formatRateFor(cat(b.itemId), b.shortfall)}
                 </span>
               </li>
             ))}
@@ -189,10 +211,12 @@ function ItemList({
   title,
   entries,
   name,
+  cat,
 }: {
   title: string;
   entries: [string, number][];
   name: (id: string) => string;
+  cat: (id: string) => Category | undefined;
 }) {
   return (
     <div className="readout-section">
@@ -204,7 +228,7 @@ function ItemList({
           {entries.map(([itemId, rate]) => (
             <li key={itemId} className="readout-leaf">
               <span className="readout-leaf-main">{name(itemId)}</span>
-              <span className="readout-leaf-val mono">{formatRate(rate)}</span>
+              <span className="readout-leaf-val mono">{formatRateFor(cat(itemId), rate)}</span>
             </li>
           ))}
         </ul>

@@ -9,11 +9,11 @@ import {
   Field,
   Optional,
   OptionalNumber,
-  Select,
   StaticValue,
   withField,
   withoutField,
 } from "./fields";
+import { Combobox } from "../ui";
 
 export function NodeInspector({
   node,
@@ -30,7 +30,11 @@ export function NodeInspector({
     def?.allowedRecipeIds && def.allowedRecipeIds.length > 0
       ? (world.recipes ?? []).filter((r) => def.allowedRecipeIds!.includes(r.id))
       : world.recipes ?? [];
-  const recipeOptions = recipePool.map((r) => ({ value: r.id, label: r.name ?? r.id }));
+  const recipeOptions = recipePool.map((r) => ({
+    value: r.id,
+    label: r.name ?? r.id,
+    hint: r.id,
+  }));
 
   const bounds: string[] = [];
   if (def?.overclockMin != null) bounds.push(`min ${def.overclockMin}`);
@@ -52,11 +56,11 @@ export function NodeInspector({
         onClear={() => onChange(withoutField(node, "recipeId"))}
         hint={recipeOptions.length === 0 ? "no recipes available for this def" : undefined}
       >
-        <Select
+        <Combobox
           value={node.recipeId ?? ""}
           onChange={(v) => onChange(withField(node, "recipeId", v))}
           options={recipeOptions}
-          placeholder={recipeOptions.length ? undefined : "none"}
+          placeholder={recipeOptions.length ? "pick a recipe…" : "none"}
         />
       </Optional>
 

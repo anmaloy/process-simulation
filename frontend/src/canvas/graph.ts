@@ -131,9 +131,25 @@ export function pipeFromConnection(
   return {
     id,
     category: from.category,
-    movementCapacity: 10,
+    movementCapacity: defaultMovementCapacity(from.category),
     overclock: 1,
     a: { nodeId: conn.source, role: "out", port: conn.sourceHandle ?? undefined },
     b: { nodeId: conn.target, role: "in", port: conn.targetHandle ?? undefined },
   };
+}
+
+/**
+ * Default sustained throughput by category (#10): solids move at 16/s and can be
+ * raised; liquids are effectively instantaneous; electric connections start at
+ * 256 EU/tick = 5120 EU/s (20 ticks/s).
+ */
+export function defaultMovementCapacity(category: Category): number {
+  switch (category) {
+    case "solid":
+      return 16;
+    case "liquid":
+      return 1e9; // instantaneous (buffered by pipe storage, not throttled)
+    case "energy":
+      return 5120; // 256 EU/t × 20 t/s
+  }
 }

@@ -9,6 +9,7 @@ import type { MachineDef, System, SystemPort, World } from "../bridge";
 import { flattenSystem } from "../systems";
 import { portsForDef } from "../canvas/ports";
 import { Checkbox, Field, Select, StaticValue, TextInput, withField } from "./fields";
+import { Combobox, type ComboOption } from "../ui";
 
 export function SystemInspector({
   system,
@@ -110,16 +111,40 @@ export function SystemInspector({
         {nodes.length === 0 ? (
           <span className="stack-empty">no nodes in the world</span>
         ) : (
-          <div className="check-list">
-            {nodes.map((n) => (
-              <Checkbox
-                key={n.id}
-                checked={members.has(n.id)}
-                onChange={(on) => toggleMember(n.id, on)}
-                label={`${nodeLabel(n.id)}  ·  ${n.id}`}
-              />
-            ))}
-          </div>
+          <>
+            {members.size > 0 && (
+              <div className="chip-list">
+                {[...members].map((id) => (
+                  <span key={id} className="chip mono">
+                    {nodeLabel(id)}
+                    <button
+                      type="button"
+                      className="chip-x"
+                      title="Remove member"
+                      onClick={() => toggleMember(id, false)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <Combobox
+              value=""
+              onChange={(id) => toggleMember(id, true)}
+              options={
+                nodes
+                  .filter((n) => !members.has(n.id))
+                  .map((n) => ({
+                    value: n.id,
+                    label: nodeLabel(n.id),
+                    hint: n.id,
+                  })) as ComboOption[]
+              }
+              placeholder="+ add a member node…"
+              dense
+            />
+          </>
         )}
       </Field>
 
