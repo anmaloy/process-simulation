@@ -20,6 +20,7 @@ from typing import Any
 __all__ = [
     "Category",
     "Direction",
+    "EnergySource",
     "PipeEndRole",
     "Serializable",
     "to_camel",
@@ -32,6 +33,27 @@ class Category(StrEnum):
     SOLID = "solid"
     LIQUID = "liquid"
     ENERGY = "energy"
+
+
+class EnergySource(StrEnum):
+    """How a machine is powered while it runs (replaces the fuel-burning flag).
+
+    - ``electric``: draws electricity (an ``energy``-category carrier) off the
+      grid — accounted as a scalar energy term, not routed as an item.
+    - ``liquid``: consumes a liquid carrier (e.g. steam) that flows as a normal
+      liquid item through pipes.
+    - ``fuel``: burns a fuel *item* (one carrying stored ``eu``), consuming it by
+      its energy content.
+
+    A machine with a converter output (``output_item_id`` + ``max_fluid_rate``)
+    turns its ``fuel``/``liquid`` source into that output carrier (fuel→steam, or
+    steam→electricity); a machine with only ``base_energy_consumption`` draws its
+    source to run its recipe. Absent = passive (no power needed).
+    """
+
+    ELECTRIC = "electric"
+    LIQUID = "liquid"
+    FUEL = "fuel"
 
 
 class Direction(StrEnum):

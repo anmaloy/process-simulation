@@ -10,7 +10,20 @@ import math
 
 from process_sim.engine import compute_node, convert_fuel
 from process_sim.engine.energy import burn_time, usable_output
-from process_sim.model import MachineDef, MachineNode, Recipe, Stack
+from process_sim.model import (
+    Category,
+    EnergySource,
+    Item,
+    MachineDef,
+    MachineNode,
+    Recipe,
+    Stack,
+)
+
+STEAM = Item(id="steam", name="Steam", category=Category.LIQUID)
+ELECTRICITY = Item(id="eu", name="Electricity", category=Category.ENERGY)
+COAL = Item(id="coal", name="Coal", category=Category.SOLID, eu=1000)
+ITEMS = {i.id: i for i in (STEAM, ELECTRICITY, COAL)}
 
 
 def _node(**kw) -> MachineNode:
@@ -64,14 +77,15 @@ def test_repeated_item_accumulates() -> None:
 
 
 def test_no_recipe_has_no_rates() -> None:
-    comp = compute_node(_node(), MachineDef(id="d1", base_energy_production=100), None)
+    comp = compute_node(_node(), MachineDef(id="d1", base_energy_consumption=100), None)
     assert comp.cycles_per_sec == 0.0
     assert comp.outputs == {} and comp.inputs == {}
-    assert comp.energy_produce == 100.0  # base energy still contributes
+    assert comp.energy_consume == 100.0  # base draw still contributes
+    assert comp.net_energy == -100.0
 
 
 # --------------------------------------------------------------------------- #
-# Energy — absence, override, net.
+# Energy — machine-level draw (recipes carry no energy term now).
 # --------------------------------------------------------------------------- #
 
 
@@ -83,39 +97,41 @@ def test_absent_energy_is_none_not_zero() -> None:
     assert comp.net_energy is None  # not 0 — the term is absent
 
 
-def test_machine_base_energy_used_when_recipe_silent() -> None:
+def test_machine_base_energy_consumed_while_running() -> None:
     recipe = Recipe(id="r", time_seconds=1.0, outputs=[Stack("x", 1)])
-    md = MachineDef(id="d1", base_energy_consumption=20)
+    md = MachineDef(
+        id="d1", energy_source=EnergySource.ELECTRIC, base_energy_consumption=20
+    )
     comp = compute_node(_node(recipe_id="r"), md, recipe)
     assert comp.energy_consume == 20.0
     assert comp.net_energy == -20.0
 
 
-def test_recipe_energy_overrides_base() -> None:
-    recipe = Recipe(id="r", time_seconds=1.0, energy_consumption=30)
-    md = MachineDef(id="d1", base_energy_consumption=20)
-    comp = compute_node(_node(recipe_id="r"), md, recipe)
-    assert comp.energy_consume == 30.0  # recipe replaces base, not 50
-
-
 def test_energy_scales_with_overclock_count() -> None:
-    recipe = Recipe(
-        id="r", time_seconds=1.0, energy_consumption=10, energy_production=50
+    recipe = Recipe(id="r", time_seconds=1.0, outputs=[Stack("x", 1)])
+    md = MachineDef(
+        id="d1", energy_source=EnergySource.ELECTRIC, base_energy_consumption=10
     )
     comp = compute_node(
-        _node(recipe_id="r", overclock=2.0, count=2), MachineDef(id="d1"), recipe
+        _node(recipe_id="r", overclock=2.0, count=2), md, recipe
     )
     assert comp.energy_consume == 40.0  # 10 * 2 * 2
-    assert comp.energy_produce == 200.0  # 50 * 2 * 2
-    assert comp.net_energy == 160.0
 
 
-def test_net_energy_one_sided() -> None:
-    recipe = Recipe(id="r", time_seconds=1.0, energy_production=200)
-    comp = compute_node(_node(recipe_id="r"), MachineDef(id="d1"), recipe)
-    assert comp.energy_produce == 200.0
-    assert comp.energy_consume is None
-    assert comp.net_energy == 200.0  # missing consume side contributes nothing
+def test_converter_produces_electricity_scalar() -> None:
+    # A turbine: consumes steam (routed liquid), produces electricity (scalar).
+    md = MachineDef(
+        id="turbine",
+        energy_source=EnergySource.LIQUID,
+        source_item_id="steam",
+        output_item_id="eu",
+        max_fluid_rate=200,
+    )
+    comp = compute_node(_node(machine_def_id="turbine"), md, None, items=ITEMS)
+    assert comp.energy_produce == 200.0  # electricity is scalar, not an item
+    assert "eu" not in comp.outputs
+    assert comp.inputs["steam"] == 200.0  # steam drawn 1:1
+    assert comp.net_energy == 200.0
 
 
 # --------------------------------------------------------------------------- #
@@ -187,26 +203,41 @@ def test_usable_output_and_burn_time() -> None:
     assert burn_time(1000, 1.0, 0) is None
 
 
+def _boiler(**kw) -> MachineDef:
+    """A fuel→steam converter (burns coal, outputs the steam liquid)."""
+
+    kw.setdefault("id", "boiler")
+    kw.setdefault("energy_source", EnergySource.FUEL)
+    kw.setdefault("source_item_id", "coal")
+    kw.setdefault("output_item_id", "steam")
+    return MachineDef(**kw)
+
+
 def test_fuel_burning_node_converts_fuel() -> None:
-    md = MachineDef(id="boiler", fuel_burning=True, efficiency=0.8, max_fluid_rate=256)
-    comp = compute_node(_node(machine_def_id="boiler"), md, None)
+    md = _boiler(efficiency=0.8, max_fluid_rate=256)
+    comp = compute_node(_node(machine_def_id="boiler"), md, None, items=ITEMS)
     assert comp.fuel_conversion is not None
     assert comp.fuel_conversion.fluid_out == 256  # full draw by default
+    assert comp.outputs["steam"] == 256  # steam flows as a routed liquid item
+    # Coal is drawn by its stored eu: fuelDrain 256 / coal.eu 1000.
+    assert math.isclose(comp.inputs["coal"], 256 / 1000)
 
 
 def test_fluid_output_scales_with_overclock() -> None:
-    md = MachineDef(id="boiler", fuel_burning=True, max_fluid_rate=100)
+    md = _boiler(max_fluid_rate=100)
     comp = compute_node(
-        _node(machine_def_id="boiler", overclock=2.0), md, None, fluid_draw=50
+        _node(machine_def_id="boiler", overclock=2.0), md, None, items=ITEMS, fluid_draw=50
     )
     assert comp.fuel_conversion is not None
     assert comp.fuel_conversion.max_rate == 200  # 100 * overclock 2
     assert comp.fuel_conversion.fluid_out == 50
+    assert comp.outputs["steam"] == 50
 
 
-def test_non_fuel_node_has_no_conversion() -> None:
+def test_non_converter_node_has_no_conversion() -> None:
+    # No output item ⇒ not a converter, even with a max fluid rate present.
     comp = compute_node(_node(), MachineDef(id="d1", max_fluid_rate=256), None)
-    assert comp.fuel_conversion is None  # not flagged fuel_burning
+    assert comp.fuel_conversion is None
 
 
 # --------------------------------------------------------------------------- #
@@ -223,10 +254,16 @@ def test_to_dict_omits_absent_energy() -> None:
 
 
 def test_to_dict_includes_present_terms_and_conversion() -> None:
-    md = MachineDef(id="boiler", fuel_burning=True, efficiency=0.8, max_fluid_rate=256)
-    recipe = Recipe(id="r", time_seconds=1.0, energy_production=200)
-    node = _node(machine_def_id="boiler", recipe_id="r")
-    d = compute_node(node, md, recipe).to_dict()
+    # A turbine: steam → electricity, so energyProduce + conversion both appear.
+    md = MachineDef(
+        id="turbine",
+        energy_source=EnergySource.LIQUID,
+        source_item_id="steam",
+        output_item_id="eu",
+        efficiency=0.0,
+        max_fluid_rate=200,
+    )
+    d = compute_node(_node(machine_def_id="turbine"), md, None, items=ITEMS).to_dict()
     assert d["energyProduce"] == 200.0
     assert d["netEnergy"] == 200.0
-    assert d["fuelConversion"]["fluidOut"] == 256
+    assert d["fuelConversion"]["fluidOut"] == 200

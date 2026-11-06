@@ -27,6 +27,7 @@ from process_sim.model import (
     Recipe,
     SlotGroup,
     Stack,
+    StorageSpec,
     System,
     World,
 )
@@ -43,12 +44,13 @@ def _close(a: float, b: float) -> bool:
 
 def test_furnace_chest_external_io(furnace_chest: World) -> None:
     report = compute_world(furnace_chest)
-    # Ore has no internal producer → external input at the furnace's demand rate.
+    # Ore has no internal producer → feedstock input at the furnace's demand rate.
     assert _close(report.external_inputs["ore"], 0.5)
-    # The chest doesn't consume, so the furnace's ingots overflow out of scope.
+    # The chest doesn't consume, so the furnace's ingots are the scope's yield.
     assert _close(report.external_outputs["ingot"], 0.5)
-    # Recipe energy (30) overrides the furnace base (20).
-    assert _close(report.net_energy, -30.0)
+    # Energy is a machine property now: the furnace draws its base 20 EU/s.
+    assert _close(report.net_energy, -20.0)
+    assert _close(report.node_duty["furnace1"], 1.0)  # fully supplied
 
 
 def test_furnace_chest_overflow_status(furnace_chest: World) -> None:
@@ -74,10 +76,11 @@ def test_powered_process_chain_flow(powered_process: World) -> None:
     # Leftover ingot (0.25) and all plate (0.25) leave the scope.
     assert _close(report.external_outputs["ingot"], 0.25)
     assert _close(report.external_outputs["plate"], 0.25)
-    # Ore is the only external input.
+    # Ore and the generator's coal are the feedstock inputs.
     assert _close(report.external_inputs["ore"], 0.5)
+    assert _close(report.external_inputs["coal"], 200 / 1000)  # gen burns coal by eu
     assert "ingot" not in report.external_inputs  # demand met internally
-    # Energy: 200 produced − 30 − 60 consumed.
+    # Energy: generator makes 200 electricity, smelter/presser draw 30 + 60.
     assert _close(report.net_energy, 110.0)
     assert report.bottlenecks == []
 
@@ -91,8 +94,11 @@ def test_powered_process_bottleneck_ranked(powered_process: World) -> None:
     bn = report.bottlenecks[0]
     assert bn.node_id == "presser1" and bn.item_id == "ingot"
     assert _close(bn.shortfall, 0.5)
-    # Still produced internally but under-supplied → also an external input.
-    assert _close(report.external_inputs["ingot"], 0.5)
+    # An internally-produced shortfall is downtime, not a feedstock input: the
+    # press runs at half duty and its plate yield halves accordingly.
+    assert "ingot" not in report.external_inputs
+    assert _close(report.node_duty["presser1"], 0.5)
+    assert _close(report.external_outputs["plate"], 0.5)  # 1.0 nominal × 0.5 duty
 
 
 def test_scopes_compose(powered_process: World) -> None:
@@ -222,6 +228,83 @@ def test_aggregate_insert_contention_even_split() -> None:
     supplied = [report.balances[f"c{i}"].inputs["x"].supplied for i in range(3)]
     assert all(_close(s, 30.0) for s in supplied)  # 90 split evenly three ways
     assert _close(report.external_outputs.get("x", 0.0), 0.0)  # all 90 routed
+
+
+# --------------------------------------------------------------------------- #
+# Yield / duty-cycle cascade and storage passthrough.
+# --------------------------------------------------------------------------- #
+
+
+def _chain_world(src_qty: float, buffer: bool = False) -> World:
+    """src → (buffer?) → mid → sink, each wanting 1/s; src makes `src_qty`/s."""
+
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    recipes = [
+        Recipe(id="mk", time_seconds=1.0, outputs=[Stack("a", src_qty)]),
+        Recipe(id="mid", time_seconds=1.0, inputs=[Stack("a", 1)], outputs=[Stack("b", 1)]),
+        Recipe(id="use", time_seconds=1.0, inputs=[Stack("b", 1)], outputs=[Stack("c", 1)]),
+    ]
+    defs = [
+        MachineDef(id="dsrc", slots=[out_s]),
+        MachineDef(id="dmid", slots=[in_s, out_s]),
+        MachineDef(id="dsink", slots=[in_s, out_s]),
+        MachineDef(id="dbuf", storage=StorageSpec(Category.SOLID, 1000), slots=[in_s, out_s]),
+    ]
+    nodes = [
+        MachineNode(id="src", machine_def_id="dsrc", recipe_id="mk"),
+        MachineNode(id="mid", machine_def_id="dmid", recipe_id="mid"),
+        MachineNode(id="sink", machine_def_id="dsink", recipe_id="use"),
+    ]
+    pipes: list[Pipe] = []
+
+    def pipe(pid, a, b, cat="solid"):
+        return Pipe(
+            id=pid,
+            category=Category(cat),
+            movement_capacity=1000,
+            a=PipeEnd(node_id=a, role=PipeEndRole.OUT),
+            b=PipeEnd(node_id=b, role=PipeEndRole.IN),
+        )
+
+    if buffer:
+        nodes.append(MachineNode(id="buf", machine_def_id="dbuf"))
+        pipes.append(pipe("p_sb", "src", "buf"))
+        pipes.append(pipe("p_bm", "buf", "mid"))
+    else:
+        pipes.append(pipe("p_sm", "src", "mid"))
+    pipes.append(pipe("p_ms", "mid", "sink"))
+
+    return World(
+        items=[Item(i, i.upper(), Category.SOLID) for i in ("a", "b", "c")],
+        recipes=recipes,
+        machine_defs=defs,
+        nodes=nodes,
+        pipes=pipes,
+    )
+
+
+def test_duty_cascade_reduces_downstream_yield() -> None:
+    # src makes only 0.5 a/s; mid wants 1 → runs at 50% → sink starves to 50% too.
+    report = compute_world(_chain_world(0.5))
+    assert _close(report.node_duty["src"], 1.0)
+    assert _close(report.node_duty["mid"], 0.5)
+    assert _close(report.node_duty["sink"], 0.5)
+    # Final yield (c) is halved; nothing is reported as a feedstock top-up.
+    assert _close(report.external_outputs["c"], 0.5)
+    assert "a" not in report.external_inputs and "b" not in report.external_inputs
+    # Two bottlenecks: mid short of a, sink short of b.
+    short = {(b.node_id, b.item_id) for b in report.bottlenecks}
+    assert short == {("mid", "a"), ("sink", "b")}
+
+
+def test_storage_node_is_transparent() -> None:
+    # A buffer between src and mid must not change the steady-state balance.
+    plain = compute_world(_chain_world(0.5, buffer=False))
+    buffered = compute_world(_chain_world(0.5, buffer=True))
+    assert _close(buffered.external_outputs["c"], plain.external_outputs["c"])
+    assert _close(buffered.node_duty["mid"], plain.node_duty["mid"])
+    assert _close(buffered.node_duty["sink"], plain.node_duty["sink"])
 
 
 # --------------------------------------------------------------------------- #

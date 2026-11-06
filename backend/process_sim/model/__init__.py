@@ -6,7 +6,14 @@ stable ids and reference one another by id, so a :class:`World` serializes flat.
 Sparse optional fields survive the round-trip as *absent*, never as ``0``.
 """
 
-from .common import Category, Direction, PipeEndRole, Serializable, to_camel
+from .common import (
+    Category,
+    Direction,
+    EnergySource,
+    PipeEndRole,
+    Serializable,
+    to_camel,
+)
 from .entities import (
     Item,
     MachineDef,
@@ -16,6 +23,7 @@ from .entities import (
     Recipe,
     SlotGroup,
     Stack,
+    StorageSpec,
     System,
     SystemPort,
     World,
@@ -24,6 +32,7 @@ from .entities import (
 __all__ = [
     "Category",
     "Direction",
+    "EnergySource",
     "PipeEndRole",
     "Serializable",
     "to_camel",
@@ -31,6 +40,7 @@ __all__ = [
     "Stack",
     "Recipe",
     "SlotGroup",
+    "StorageSpec",
     "MachineDef",
     "MachineNode",
     "PipeEnd",

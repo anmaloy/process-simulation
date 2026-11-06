@@ -7,23 +7,29 @@ rates per second)::
     outputRate(s)  = s.quantity * cyclesPerSec * count
     inputDemand(s) = s.quantity * cyclesPerSec * count
 
-Energy terms, each **omitted when unset** (never zero-substituted): a recipe
-energy term, if set, **overrides** (replaces) the machine-base term of the same
-kind::
+Energy is a **machine** property, not a recipe one: a machine draws
+``base_energy_consumption`` EU/s while it runs (scaled by overclock × count),
+accounted as a scalar ``energy_consume``. How that energy is sourced is the
+machine's ``energy_source``:
 
-    consume   = (recipe.energyConsumption or base) * overclock * count
-    produce   = (recipe.energyProduction  or base) * overclock * count
-    netEnergy = produce − produce        # a missing side contributes nothing
+- ``electric`` — the draw is pure grid electricity (scalar; not routed).
+- ``liquid`` / ``fuel`` on a **converter** (one with ``output_item_id`` +
+  ``max_fluid_rate``) turns its source carrier into an output carrier. The
+  source is consumed as a routed item (a fuel item by its ``eu``, or a liquid
+  like steam 1:1); the output is a routed liquid/solid carrier, **or**, when the
+  output item is ``energy``-category (electricity), a scalar ``energy_produce``.
 
-A fuel-burning def additionally converts fuel into an output fluid; see
-:mod:`.energy`.
+So steam and fuel flow as ordinary items through pipes, while electricity stays
+the scalar grid balance (``netEnergy = produce − consume``). See :mod:`.energy`
+for the fuel→fluid conversion math, which is unchanged.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from ..model import MachineDef, MachineNode, Recipe
+from ..model import Category, EnergySource, Item, MachineDef, MachineNode, Recipe
 from .energy import FuelConversion, convert_fuel
 
 __all__ = ["NodeComputation", "compute_node"]
@@ -33,9 +39,10 @@ __all__ = ["NodeComputation", "compute_node"]
 class NodeComputation:
     """Steady-state per-second rates and energy for one placed node.
 
-    ``outputs`` / ``inputs`` map item id → rate (production) / demand. Energy
-    terms are ``None`` when the node has no term of that kind — distinct from a
-    present term of ``0``. ``fuel_conversion`` is set only for a fuel-burning def.
+    ``outputs`` / ``inputs`` map item id → rate (production) / demand — this
+    includes routed energy carriers (steam, fuel). Scalar energy terms are
+    ``None`` when the node has no term of that kind (distinct from ``0``);
+    ``fuel_conversion`` is set only for a converter.
     """
 
     node_id: str
@@ -76,17 +83,19 @@ def compute_node(
     machine_def: MachineDef,
     recipe: Recipe | None,
     *,
+    items: Mapping[str, Item] | None = None,
     fluid_draw: float | None = None,
 ) -> NodeComputation:
-    """Compute per-node rates, energy terms, and (if applicable) fluid output.
+    """Compute per-node rates, energy terms, and (if applicable) conversion.
 
-    ``recipe`` may be ``None`` (an unbound or storage-only node): it then has no
-    item rates and no recipe energy terms, but may still carry machine-base
-    energy and, for a fuel-burning def, fuel→fluid conversion. ``fluid_draw`` is
-    the output fluid actually drawn by downstream demand; ``None`` means full
-    draw (the standalone / max case). The flow layer passes the resolved draw.
+    ``recipe`` may be ``None`` (an unbound, storage, or converter-only node): it
+    then has no item rates, but the machine may still draw base energy and, for a
+    converter, consume its source / emit its output. ``items`` maps item id →
+    :class:`Item` (for a fuel's ``eu`` and a carrier's category); ``fluid_draw``
+    is the output drawn by downstream demand, ``None`` = full draw.
     """
 
+    items = items or {}
     overclock = node.overclock
     count = node.count
     scale = overclock * count
@@ -102,29 +111,51 @@ def compute_node(
         for s in recipe.inputs:
             _accumulate(inputs, s.item_id, s.quantity * rate)
 
-    # Energy: recipe term overrides machine base; an absent term stays absent.
-    consume_term = _override(
-        recipe.energy_consumption if recipe else None,
-        machine_def.base_energy_consumption,
+    # A machine draws base energy while it runs (scaled by overclock × count).
+    # This is the grid-electricity consume term; a converter earns its own
+    # produce term below.
+    base = machine_def.base_energy_consumption
+    energy_consume = base * scale if base is not None else None
+    energy_produce: float | None = None
+
+    fuel_conversion: FuelConversion | None = None
+    is_converter = (
+        machine_def.energy_source in (EnergySource.FUEL, EnergySource.LIQUID)
+        and machine_def.max_fluid_rate is not None
+        and machine_def.output_item_id is not None
     )
-    produce_term = _override(
-        recipe.energy_production if recipe else None,
-        machine_def.base_energy_production,
-    )
-    energy_consume = consume_term * scale if consume_term is not None else None
-    energy_produce = produce_term * scale if produce_term is not None else None
+    if is_converter:
+        r = machine_def.max_fluid_rate * scale  # type: ignore[operator]
+        conv = convert_fuel(r, fluid_draw, machine_def.efficiency or 0.0)
+        fuel_conversion = conv
+
+        # Consume the source carrier as a routed item: a fuel by its eu, else
+        # (a liquid such as steam) one-to-one with the energy drawn.
+        src_id = machine_def.source_item_id
+        if src_id is not None:
+            src = items.get(src_id)
+            if (
+                machine_def.energy_source is EnergySource.FUEL
+                and src is not None
+                and src.eu
+            ):
+                _accumulate(inputs, src_id, conv.fuel_drain / src.eu)
+            else:
+                _accumulate(inputs, src_id, conv.fuel_drain)
+
+        # Emit the output carrier: electricity (energy category) is scalar grid
+        # power; any other carrier (steam, …) is a routed item.
+        out_id = machine_def.output_item_id
+        out_item = items.get(out_id) if out_id is not None else None
+        if out_item is not None and out_item.category is Category.ENERGY:
+            energy_produce = conv.fluid_out
+        elif out_id is not None:
+            _accumulate(outputs, out_id, conv.fluid_out)
 
     if energy_produce is None and energy_consume is None:
         net_energy = None
     else:
         net_energy = (energy_produce or 0.0) - (energy_consume or 0.0)
-
-    fuel_conversion: FuelConversion | None = None
-    if machine_def.fuel_burning and machine_def.max_fluid_rate is not None:
-        # Overclock and parallel count scale the conversion rate like any other
-        # energy production; the draw is likewise against the scaled max.
-        r = machine_def.max_fluid_rate * scale
-        fuel_conversion = convert_fuel(r, fluid_draw, machine_def.efficiency or 0.0)
 
     return NodeComputation(
         node_id=node.id,
@@ -136,9 +167,3 @@ def compute_node(
         net_energy=net_energy,
         fuel_conversion=fuel_conversion,
     )
-
-
-def _override(recipe_term: float | None, base_term: float | None) -> float | None:
-    """Recipe term replaces base when present; else base; else absent."""
-
-    return recipe_term if recipe_term is not None else base_term
