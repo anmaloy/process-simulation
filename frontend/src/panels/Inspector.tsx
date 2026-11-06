@@ -54,11 +54,19 @@ export interface InspectorProps {
   world: World;
   selection: InspectorSelection;
   onChange: (kind: EntityKind, entity: object) => void;
+  onRename: (kind: EntityKind, oldId: string, newId: string) => void;
   onDelete: (kind: EntityKind, id: string) => void;
   onClose: () => void;
 }
 
-export function Inspector({ world, selection, onChange, onDelete, onClose }: InspectorProps) {
+export function Inspector({
+  world,
+  selection,
+  onChange,
+  onRename,
+  onDelete,
+  onClose,
+}: InspectorProps) {
   const entity = findEntity(world, selection);
 
   return (
@@ -78,7 +86,13 @@ export function Inspector({ world, selection, onChange, onDelete, onClose }: Ins
           <p className="lede mono">This entity is no longer in the World.</p>
         </div>
       ) : (
-        <Body world={world} selection={selection} entity={entity} onChange={onChange} />
+        <Body
+          world={world}
+          selection={selection}
+          entity={entity}
+          onChange={onChange}
+          onRename={onRename}
+        />
       )}
 
       {entity && (
@@ -101,21 +115,31 @@ function Body({
   selection,
   entity,
   onChange,
+  onRename,
 }: {
   world: World;
   selection: InspectorSelection;
   entity: { id: string };
   onChange: (kind: EntityKind, entity: object) => void;
+  onRename: (kind: EntityKind, oldId: string, newId: string) => void;
 }) {
   switch (selection.kind) {
     case "item":
-      return <ItemInspector item={entity as Item} onChange={(n) => onChange("item", n)} />;
+      return (
+        <ItemInspector
+          item={entity as Item}
+          world={world}
+          onChange={(n) => onChange("item", n)}
+          onRename={(newId) => onRename("item", entity.id, newId)}
+        />
+      );
     case "recipe":
       return (
         <RecipeInspector
           recipe={entity as Recipe}
           world={world}
           onChange={(n) => onChange("recipe", n)}
+          onRename={(newId) => onRename("recipe", entity.id, newId)}
         />
       );
     case "machineDef":
@@ -124,6 +148,7 @@ function Body({
           def={entity as MachineDef}
           world={world}
           onChange={(n) => onChange("machineDef", n)}
+          onRename={(newId) => onRename("machineDef", entity.id, newId)}
         />
       );
     case "node":

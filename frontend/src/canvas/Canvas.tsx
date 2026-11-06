@@ -29,6 +29,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import type { MachineDef, MachineNode, Pipe, ScopeReport, World } from "../bridge";
+import { Combobox } from "../ui";
 import { MachineNodeView } from "./MachineNodeView";
 import { PipeEdgeView } from "./PipeEdgeView";
 import { categoryColor } from "./colors";
@@ -239,18 +240,26 @@ function CanvasInner(props: CanvasProps) {
     <div className="canvas-wrap" ref={wrapperRef}>
       <div className="canvas-palette">
         <span className="eyebrow quiet palette-label">Add machine</span>
-        {defs.length === 0 && <span className="palette-empty mono">no machine defs</span>}
-        {defs.map((d) => (
-          <button
-            key={d.id}
-            type="button"
-            className="tool-btn palette-btn"
-            onClick={() => addDef(d)}
-            title={`Place ${d.name ?? d.id}`}
-          >
-            + {d.name ?? d.id}
-          </button>
-        ))}
+        {defs.length === 0 ? (
+          <span className="palette-empty mono">no machine defs</span>
+        ) : (
+          <div className="palette-combo">
+            <Combobox
+              value=""
+              onChange={(id) => {
+                const d = defs.find((x) => x.id === id);
+                if (d) addDef(d);
+              }}
+              options={defs.map((d) => ({
+                value: d.id,
+                label: d.name ?? d.id,
+                hint: d.storage ? "buffer" : d.id,
+              }))}
+              placeholder="+ place a machine…"
+              dense
+            />
+          </div>
+        )}
         {groupable.length >= 2 && (
           <button
             type="button"

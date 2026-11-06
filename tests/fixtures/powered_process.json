@@ -4,7 +4,8 @@
     {"id": "ore", "name": "Iron Ore", "category": "solid"},
     {"id": "ingot", "name": "Iron Ingot", "category": "solid"},
     {"id": "plate", "name": "Iron Plate", "category": "solid"},
-    {"id": "eu", "name": "Energy", "category": "energy"}
+    {"id": "coal", "name": "Coal", "category": "solid", "eu": 1000},
+    {"id": "eu", "name": "Electricity", "category": "energy"}
   ],
   "recipes": [
     {
@@ -12,22 +13,22 @@
       "name": "Smelt Iron",
       "timeSeconds": 2,
       "inputs": [{"itemId": "ore", "quantity": 1}],
-      "outputs": [{"itemId": "ingot", "quantity": 1}],
-      "energyConsumption": 30
+      "outputs": [{"itemId": "ingot", "quantity": 1}]
     },
     {
       "id": "press",
       "name": "Press Plate",
       "timeSeconds": 4,
       "inputs": [{"itemId": "ingot", "quantity": 1}],
-      "outputs": [{"itemId": "plate", "quantity": 1}],
-      "energyConsumption": 60
+      "outputs": [{"itemId": "plate", "quantity": 1}]
     }
   ],
   "machineDefs": [
     {
       "id": "smelter",
       "name": "Smelter",
+      "energySource": "electric",
+      "baseEnergyConsumption": 30,
       "allowedRecipeIds": ["smelt"],
       "slots": [
         {"category": "solid", "direction": "in", "slots": 1, "stackSize": 64},
@@ -37,6 +38,8 @@
     {
       "id": "presser",
       "name": "Plate Press",
+      "energySource": "electric",
+      "baseEnergyConsumption": 60,
       "allowedRecipeIds": ["press"],
       "slots": [
         {"category": "solid", "direction": "in", "slots": 1, "stackSize": 64},
@@ -46,7 +49,14 @@
     {
       "id": "generator",
       "name": "Generator",
-      "baseEnergyProduction": 200
+      "energySource": "fuel",
+      "sourceItemId": "coal",
+      "outputItemId": "eu",
+      "maxFluidRate": 200,
+      "slots": [
+        {"category": "solid", "direction": "in", "slots": 1, "stackSize": 64},
+        {"category": "energy", "direction": "out", "slots": 1, "stackSize": 1}
+      ]
     }
   ],
   "nodes": [

@@ -240,6 +240,26 @@
   white-space: nowrap;
 }
 
+/* Duty badge — a machine running below full rate (starved input). */
+.machine-node .node-duty-chip {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 10px;
+  color: var(--s-bad);
+  background: var(--f-bad);
+  white-space: nowrap;
+}
+
+/* Storage capacity line on a buffer node. */
+.machine-node .node-storage {
+  margin-top: 4px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--s-indep);
+}
+
 @media (max-width: 820px) {
   .readout-panel {
     width: calc(100% - 32px);

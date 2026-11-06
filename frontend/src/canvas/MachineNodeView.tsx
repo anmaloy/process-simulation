@@ -54,8 +54,20 @@ function PortRow({
   );
 }
 
+const UNIT: Record<string, string> = { solid: "", liquid: " mB", energy: " EU" };
+
+/** Short human form of a capacity, e.g. 64000 → "64k mB". */
+function fmtCapacity(value: number, category: string): string {
+  const unit = UNIT[category] ?? "";
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `${+(value / 1e9).toPrecision(3)}G${unit}`;
+  if (abs >= 1e6) return `${+(value / 1e6).toPrecision(3)}M${unit}`;
+  if (abs >= 1e3) return `${+(value / 1e3).toPrecision(3)}k${unit}`;
+  return `${+value.toPrecision(3)}${unit}`;
+}
+
 export function MachineNodeView({ data }: NodeProps<RfMachineNode>) {
-  const { node, def, status } = data as MachineNodeData;
+  const { node, def, status, duty } = data as MachineNodeData;
   const ports = portsForDef(def);
   const ins = ports.filter((p) => p.direction === "in");
   const outs = ports.filter((p) => p.direction === "out");
@@ -67,6 +79,7 @@ export function MachineNodeView({ data }: NodeProps<RfMachineNode>) {
   if (node.count != null && node.count !== 1) meta.push(`∥${node.count}`);
 
   const rows = Math.max(ins.length, outs.length, 1);
+  const throttled = duty != null && duty < 0.999;
 
   return (
     <div className="machine-node" data-status={status ?? "stalled"}>
@@ -75,7 +88,12 @@ export function MachineNodeView({ data }: NodeProps<RfMachineNode>) {
         <span className="node-title">{title}</span>
         <span className="node-id mono">{node.id}</span>
       </div>
-      {(meta.length > 0 || status) && (
+      {def?.storage && (
+        <div className="node-storage mono" title="buffer capacity">
+          ▭ {fmtCapacity(def.storage.capacity, def.storage.category)}
+        </div>
+      )}
+      {(meta.length > 0 || status || throttled) && (
         <div className="node-meta mono">
           {status && (
             <span
@@ -84,6 +102,14 @@ export function MachineNodeView({ data }: NodeProps<RfMachineNode>) {
               title={`balance: ${STATUS_LABEL[status]}`}
             >
               {STATUS_LABEL[status]}
+            </span>
+          )}
+          {throttled && (
+            <span
+              className="node-duty-chip"
+              title="running below full rate (starved input)"
+            >
+              {Math.round((duty ?? 0) * 100)}%
             </span>
           )}
           {meta.length > 0 && <span>{meta.join("  ")}</span>}

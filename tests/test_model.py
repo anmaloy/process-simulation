@@ -12,6 +12,7 @@ import pytest
 from process_sim.model import (
     Category,
     Direction,
+    EnergySource,
     Item,
     MachineDef,
     MachineNode,
@@ -21,6 +22,7 @@ from process_sim.model import (
     Recipe,
     SlotGroup,
     Stack,
+    StorageSpec,
     System,
     SystemPort,
     World,
@@ -50,7 +52,6 @@ def test_stack_constructs() -> None:
 def test_recipe_constructs_minimal() -> None:
     r = Recipe(id="smelt", time_seconds=10)
     assert r.inputs == [] and r.outputs == []
-    assert r.energy_consumption is None and r.energy_production is None
 
 
 def test_slot_group_constructs() -> None:
@@ -62,9 +63,16 @@ def test_slot_group_constructs() -> None:
 
 def test_machine_def_constructs_minimal() -> None:
     d = MachineDef(id="furnace")
-    assert d.fuel_burning is False
+    assert d.energy_source is None and d.source_item_id is None
+    assert d.output_item_id is None and d.storage is None
     assert d.efficiency is None and d.max_fluid_rate is None
     assert d.slots == [] and d.allowed_recipe_ids == []
+
+
+def test_storage_spec_constructs() -> None:
+    s = StorageSpec(category=Category.LIQUID, capacity=16000)
+    d = MachineDef(id="tank", storage=s)
+    assert d.storage is not None and d.storage.capacity == 16000
 
 
 def test_machine_node_constructs_minimal() -> None:
@@ -124,7 +132,7 @@ def test_zero_eu_is_distinct_from_unset() -> None:
     assert Item.from_dict(d).eu == 0
 
 
-def test_unset_recipe_energy_terms_absent() -> None:
+def test_recipe_has_no_energy_keys() -> None:
     d = Recipe(id="r", time_seconds=5).to_dict()
     assert "energyConsumption" not in d
     assert "energyProduction" not in d
@@ -132,17 +140,19 @@ def test_unset_recipe_energy_terms_absent() -> None:
 
 def test_unset_machine_def_energy_and_efficiency_absent() -> None:
     d = MachineDef(id="furnace").to_dict()
+    # A passive def has no energy/converter/storage keys at all (unset ≠ 0).
     for key in (
+        "energySource",
+        "sourceItemId",
         "baseEnergyConsumption",
-        "baseEnergyProduction",
+        "outputItemId",
         "efficiency",
         "maxFluidRate",
+        "storage",
         "overclockMin",
         "overclockMax",
     ):
         assert key not in d
-    # The fuel flag is an explicit boolean, emitted even when False.
-    assert d["fuelBurning"] is False
 
 
 def test_unset_pipe_end_priorities_absent() -> None:
@@ -176,19 +186,27 @@ def test_empty_collections_emit_as_lists() -> None:
             name="Smelt Iron",
             inputs=[Stack("ore", 1)],
             outputs=[Stack("iron", 1)],
-            energy_consumption=2,
         ),
         SlotGroup(
             category=Category.LIQUID, direction=Direction.OUT, slots=2, stack_size=16000
         ),
+        StorageSpec(category=Category.LIQUID, capacity=64000),
         MachineDef(
             id="boiler",
             name="Large Steam Boiler",
-            fuel_burning=True,
+            energy_source=EnergySource.FUEL,
+            source_item_id="coal",
+            output_item_id="steam",
             efficiency=0.8,
             max_fluid_rate=256,
             allowed_recipe_ids=["burn_coal"],
             slots=[SlotGroup(Category.SOLID, Direction.IN, 1, 64)],
+        ),
+        MachineDef(
+            id="tank",
+            name="Steam Tank",
+            storage=StorageSpec(category=Category.LIQUID, capacity=64000),
+            slots=[SlotGroup(Category.LIQUID, Direction.IN, 1, 16000)],
         ),
         MachineNode(id="n1", machine_def_id="boiler", recipe_id="burn_coal", x=10, y=20),
         PipeEnd(node_id="n1", role=PipeEndRole.IO, insert_priority=0, extract_priority=5),
@@ -228,7 +246,7 @@ def _sample_world() -> World:
             Item(id="coal", name="Coal", category=Category.SOLID, eu=1600),
             Item(id="ore", name="Iron Ore", category=Category.SOLID),
             Item(id="iron", name="Iron", category=Category.SOLID),
-            Item(id="steam", name="Steam", category=Category.LIQUID, eu=1),
+            Item(id="steam", name="Steam", category=Category.LIQUID),
         ],
         recipes=[
             Recipe(
@@ -237,19 +255,14 @@ def _sample_world() -> World:
                 name="Smelt",
                 inputs=[Stack("ore", 1)],
                 outputs=[Stack("iron", 1)],
-                energy_consumption=2,
-            ),
-            Recipe(
-                id="burn_coal",
-                time_seconds=1,
-                inputs=[Stack("coal", 1)],
-                outputs=[Stack("steam", 1600)],
             ),
         ],
         machine_defs=[
             MachineDef(
                 id="furnace",
                 name="Furnace",
+                energy_source=EnergySource.LIQUID,
+                source_item_id="steam",
                 base_energy_consumption=2,
                 allowed_recipe_ids=["smelt"],
                 slots=[
@@ -262,10 +275,11 @@ def _sample_world() -> World:
             MachineDef(
                 id="boiler",
                 name="Large Steam Boiler",
-                fuel_burning=True,
+                energy_source=EnergySource.FUEL,
+                source_item_id="coal",
+                output_item_id="steam",
                 efficiency=0.8,
                 max_fluid_rate=256,
-                allowed_recipe_ids=["burn_coal"],
             ),
         ],
         nodes=[
@@ -273,7 +287,6 @@ def _sample_world() -> World:
             MachineNode(
                 id="n_boiler",
                 machine_def_id="boiler",
-                recipe_id="burn_coal",
                 overclock=1,
                 x=200,
                 y=0,
@@ -321,16 +334,18 @@ def test_world_serialization_is_idempotent() -> None:
 def test_world_round_trip_preserves_absent_fields() -> None:
     world = _sample_world()
     d = world.to_dict()
-    # The furnace has no energy production and no efficiency; must stay absent.
+    # The furnace is a consumer, not a converter: no efficiency / output / storage.
     furnace = next(m for m in d["machineDefs"] if m["id"] == "furnace")
-    assert "baseEnergyProduction" not in furnace
     assert "efficiency" not in furnace
-    # Plain iron item is not a fuel.
+    assert "outputItemId" not in furnace
+    assert "storage" not in furnace
+    # Plain iron item is not a fuel; steam is a liquid, not a fuel either.
     iron = next(i for i in d["items"] if i["id"] == "iron")
     assert "eu" not in iron
+    steam = next(i for i in d["items"] if i["id"] == "steam")
+    assert "eu" not in steam
     # And those absences survive reconstruction.
     restored = World.from_dict(d)
     furnace_def = next(m for m in restored.machine_defs if m.id == "furnace")
-    assert furnace_def.base_energy_production is None
-    assert furnace_def.efficiency is None
+    assert furnace_def.efficiency is None and furnace_def.output_item_id is None
     assert next(i for i in restored.items if i.id == "iron").eu is None

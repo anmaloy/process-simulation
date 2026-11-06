@@ -11,13 +11,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .common import Category, Direction, PipeEndRole, Serializable
+from .common import Category, Direction, EnergySource, PipeEndRole, Serializable
 
 __all__ = [
     "Item",
     "Stack",
     "Recipe",
     "SlotGroup",
+    "StorageSpec",
     "MachineDef",
     "MachineNode",
     "PipeEnd",
@@ -67,8 +68,9 @@ class Stack(Serializable):
 class Recipe(Serializable):
     """Input stacks → output stacks over ``time_seconds``.
 
-    A set energy term here *overrides* (replaces) the machine-base term of the
-    same kind per the resolved decisions; unset terms stay absent.
+    Recipes carry no energy term: a machine draws a defined amount while running
+    (``MachineDef.base_energy_consumption``), so energy lives on the machine, not
+    the recipe (resolved: energy is a machine property).
     """
 
     id: str
@@ -76,8 +78,6 @@ class Recipe(Serializable):
     name: str | None = None
     inputs: list[Stack] = field(default_factory=list)
     outputs: list[Stack] = field(default_factory=list)
-    energy_consumption: float | None = None
-    energy_production: float | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Recipe:
@@ -87,8 +87,6 @@ class Recipe(Serializable):
             name=d.get("name"),
             inputs=[Stack.from_dict(s) for s in d.get("inputs", [])],
             outputs=[Stack.from_dict(s) for s in d.get("outputs", [])],
-            energy_consumption=d.get("energyConsumption"),
-            energy_production=d.get("energyProduction"),
         )
 
 
@@ -115,23 +113,47 @@ class SlotGroup(Serializable):
 
 
 @dataclass
-class MachineDef(Serializable):
-    """A machine template: energy behavior, fuel-burning, slots, overclock bounds.
+class StorageSpec(Serializable):
+    """A buffer's capacity for one category (makes the def a storage node).
 
-    A fuel-burning converter sets ``fuel_burning`` and may set ``efficiency``
-    (the waste fraction ``w``, default 0 = lossless) and ``max_fluid_rate``
-    (``R``, the peak output-fluid rate). Which fluid it produces is content, not
-    a model concept. Non-fuel defs omit those. Base energy terms are absent
-    unless set.
+    ``capacity`` is in the category's canonical unit — item count (``slots ×
+    stack_size``) for solids, mB for liquids, EU for energy. A storage node is a
+    transparent passthrough in the steady-state balance (buffers only absorb
+    transients); the capacity is a display/annotation figure.
+    """
+
+    category: Category
+    capacity: float
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> StorageSpec:
+        return cls(category=Category(d["category"]), capacity=d["capacity"])
+
+
+@dataclass
+class MachineDef(Serializable):
+    """A machine template: energy source, slots, overclock bounds, optional storage.
+
+    ``energy_source`` (replacing the old fuel-burning flag) says how the machine
+    is powered while it runs; ``source_item_id`` names the carrier it consumes
+    (a fuel item, or a liquid like steam). A **converter** additionally sets
+    ``output_item_id`` + ``max_fluid_rate`` (``R``) and optional ``efficiency``
+    (``w``, waste fraction, default 0 = lossless): it turns its source into that
+    output carrier (fuel→steam, or steam→electricity). A plain **consumer** sets
+    only ``base_energy_consumption`` — the EU/s it draws while running its recipe.
+    A **storage** def sets ``storage`` and acts as a buffer. All energy fields are
+    absent on a passive machine.
     """
 
     id: str
     name: str | None = None
+    energy_source: EnergySource | None = None
+    source_item_id: str | None = None
     base_energy_consumption: float | None = None
-    base_energy_production: float | None = None
-    fuel_burning: bool = False
+    output_item_id: str | None = None
     efficiency: float | None = None
     max_fluid_rate: float | None = None
+    storage: StorageSpec | None = None
     allowed_recipe_ids: list[str] = field(default_factory=list)
     slots: list[SlotGroup] = field(default_factory=list)
     overclock_min: float | None = None
@@ -139,14 +161,18 @@ class MachineDef(Serializable):
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> MachineDef:
+        source = d.get("energySource")
+        storage = d.get("storage")
         return cls(
             id=d["id"],
             name=d.get("name"),
+            energy_source=EnergySource(source) if source is not None else None,
+            source_item_id=d.get("sourceItemId"),
             base_energy_consumption=d.get("baseEnergyConsumption"),
-            base_energy_production=d.get("baseEnergyProduction"),
-            fuel_burning=d.get("fuelBurning", False),
+            output_item_id=d.get("outputItemId"),
             efficiency=d.get("efficiency"),
             max_fluid_rate=d.get("maxFluidRate"),
+            storage=StorageSpec.from_dict(storage) if storage is not None else None,
             allowed_recipe_ids=list(d.get("allowedRecipeIds", [])),
             slots=[SlotGroup.from_dict(s) for s in d.get("slots", [])],
             overclock_min=d.get("overclockMin"),

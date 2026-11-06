@@ -80,7 +80,7 @@ def test_project_preserves_absent_fields_on_disk(furnace_chest, tmp_path):
     restored = load_project(path)
     chest = next(d for d in restored.machine_defs if d.id == "chest")
     assert chest.base_energy_consumption is None
-    assert chest.base_energy_production is None
+    assert chest.energy_source is None
     assert chest.efficiency is None
 
 
@@ -159,7 +159,7 @@ def test_import_into_different_world_no_collisions(powered_process):
     item_ids = [i.id for i in merged.items]
     assert len(item_ids) == len(set(item_ids))
     # Both the target's and the library's entities are present.
-    assert set(item_ids) == {"water", "widget", "ore", "ingot", "plate", "eu"}
+    assert set(item_ids) == {"water", "widget", "ore", "ingot", "plate", "coal", "eu"}
     assert {r.id for r in merged.recipes} == {"make_widget", "smelt", "press"}
     # The target's graph is untouched.
     assert [n.id for n in merged.nodes] == ["asm1"]

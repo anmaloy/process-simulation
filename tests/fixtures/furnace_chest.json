@@ -10,14 +10,14 @@
       "name": "Smelt Iron",
       "timeSeconds": 2,
       "inputs": [{"itemId": "ore", "quantity": 1}],
-      "outputs": [{"itemId": "ingot", "quantity": 1}],
-      "energyConsumption": 30
+      "outputs": [{"itemId": "ingot", "quantity": 1}]
     }
   ],
   "machineDefs": [
     {
       "id": "furnace",
       "name": "Electric Furnace",
+      "energySource": "electric",
       "baseEnergyConsumption": 20,
       "allowedRecipeIds": ["smelt"],
       "slots": [

@@ -118,21 +118,13 @@ export function PipeInspector({
           <StaticValue value={pipe.category} />
         </span>
       </Field>
-      <Field label="movement capacity" hint="caps sustained flow (× overclock)">
+      <Field label="transfer rate" hint="caps sustained flow (× overclock); a pipe is just a transfer vehicle">
         <NumberInput
           value={pipe.movementCapacity}
           onChange={(v) => onChange(withField(pipe, "movementCapacity", v))}
           min={0}
         />
       </Field>
-      <OptionalNumber
-        label="storage capacity"
-        value={pipe.storageCapacity}
-        onSet={(v) => onChange(withField(pipe, "storageCapacity", v))}
-        onClear={() => onChange(withoutField(pipe, "storageCapacity"))}
-        min={0}
-        hint="buffers transients only"
-      />
       <OptionalNumber
         label="overclock"
         value={pipe.overclock}

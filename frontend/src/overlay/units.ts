@@ -37,6 +37,22 @@ export function formatRate(rate: number): string {
   return `${value}${suffix}/s`;
 }
 
+import type { Category } from "../bridge";
+
+/** Per-category unit for a quantity: items (unitless), mB (liquids), EU (energy). */
+const CATEGORY_UNIT: Record<Category, string> = {
+  solid: "",
+  liquid: " mB",
+  energy: " EU",
+};
+
+/** Format a per-second rate with its category unit, e.g. liquids → "256 mB/s". */
+export function formatRateFor(category: Category | undefined, rate: number): string {
+  const { value, suffix } = scaleMagnitude(rate);
+  const unit = category ? CATEGORY_UNIT[category] : "";
+  return `${value}${suffix}${unit}/s`;
+}
+
 /** Format an energy balance in EU/s, keeping an explicit sign for net energy. */
 export function formatEnergy(eu: number): string {
   const sign = eu > 0 ? "+" : eu < 0 ? "−" : "";

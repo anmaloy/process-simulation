@@ -8,7 +8,7 @@
 // and is followed by a `recompute`, so edits persist and the balance refreshes.
 // The returned World is stored and the canvas reseeds from it.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient, type ApiSource } from "./bridge";
 import type {
   Edit,
@@ -24,6 +24,7 @@ import { Canvas, categoryColor, type CanvasSelection } from "./canvas";
 import { Inspector, type InspectorSelection } from "./panels";
 import { BalanceReadout, Legends } from "./overlay";
 import { centroidOf, collapseState, freshSystemId } from "./systems";
+import { idFromName, renameEntity } from "./ui";
 import type { System } from "./bridge";
 import "./canvas/canvas.css";
 import "./panels/panels.css";
@@ -50,8 +51,20 @@ export function App() {
   // chosen system.
   const [scope, setScope] = useState<Scope>("world");
   const [systemId, setSystemId] = useState<string | null>(null);
+  // Undo stack of prior World snapshots (#12 / Ctrl+Z). Bounded so it can't grow
+  // without limit; the newest snapshot is last.
+  const history = useRef<World[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
 
   const selectedNodeId = selection?.kind === "node" ? selection.id : null;
+
+  const snapshot = useCallback((w: World | null) => {
+    if (!w) return;
+    const stack = history.current;
+    stack.push(w);
+    if (stack.length > 100) stack.shift();
+    setCanUndo(stack.length > 0);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -85,6 +98,7 @@ export function App() {
     async (edits: Edit[]) => {
       if (!client || edits.length === 0) return;
       try {
+        snapshot(world);
         let next: World | null = null;
         for (const edit of edits) next = await client.applyEdit(edit);
         if (next) setWorld(next);
@@ -95,8 +109,49 @@ export function App() {
         });
       }
     },
-    [client],
+    [client, world, snapshot],
   );
+
+  // Replace the whole World (used by rename and undo), snapshotting first unless
+  // the caller is restoring a snapshot itself.
+  const replaceWorld = useCallback(
+    async (next: World, record = true) => {
+      if (!client) return;
+      try {
+        if (record) snapshot(world);
+        const normalized = await client.setWorld(next);
+        setWorld(normalized);
+      } catch (e) {
+        setConn({
+          phase: "error",
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    },
+    [client, world, snapshot],
+  );
+
+  const undo = useCallback(() => {
+    const prev = history.current.pop();
+    setCanUndo(history.current.length > 0);
+    if (prev) void replaceWorld(prev, false);
+  }, [replaceWorld]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+        const el = e.target as HTMLElement | null;
+        const tag = el?.tagName;
+        // Let text inputs keep their own native undo.
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo]);
 
   // The recompute request for the current scope + target, or null when the
   // chosen scope has no target yet (a machine/process scope with nothing
@@ -220,17 +275,30 @@ export function App() {
   const onCreateEntity = useCallback(
     (kind: "item" | "recipe" | "machineDef") => {
       if (!world) return;
-      const id = freshId(world, kind);
+      const name =
+        kind === "item" ? "New item" : kind === "recipe" ? "New recipe" : "New machine";
+      const id = idFromName(world, kind, name);
       const entity =
         kind === "item"
-          ? { id, name: "New item", category: "solid" as const }
+          ? { id, name, category: "solid" as const }
           : kind === "recipe"
-            ? { id, name: "New recipe", timeSeconds: 1 }
-            : { id, name: "New machine" };
+            ? { id, name, timeSeconds: 1 }
+            : { id, name };
       void applyEdits([upsert(kind, entity)]);
       setSelection({ kind, id });
     },
     [applyEdits, world],
+  );
+
+  // Rename a library entity's id, rewriting every reference, then re-point the
+  // selection at the new id so the inspector stays open on it (#3).
+  const onRenameEntity = useCallback(
+    (kind: EntityKind, oldId: string, newId: string) => {
+      if (!world || oldId === newId) return;
+      void replaceWorld(renameEntity(world, kind, oldId, newId));
+      setSelection((s) => (s && s.kind === kind && s.id === oldId ? { kind, id: newId } : s));
+    },
+    [replaceWorld, world],
   );
 
   const onAddNode = useCallback(
@@ -345,7 +413,15 @@ export function App() {
         </div>
         <div className="rail-scroll">
           <div className="rail-head row">
-            <SourcePill conn={conn} />
+            <button
+              type="button"
+              className="tool-btn undo-btn"
+              onClick={undo}
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+            >
+              ↶ Undo
+            </button>
           </div>
           <Library
             world={world}
@@ -387,6 +463,7 @@ export function App() {
             world={world}
             selection={selection}
             onChange={onEntityChange}
+            onRename={onRenameEntity}
             onDelete={onEntityDelete}
             onClose={() => setSelection(null)}
           />
@@ -394,30 +471,6 @@ export function App() {
       )}
     </div>
   );
-}
-
-function SourcePill({ conn }: { conn: Conn }) {
-  if (conn.phase !== "ready") return null;
-  const dev = conn.source === "dev";
-  return (
-    <span className={`pill ${dev ? "dev" : "live"}`} style={{ marginLeft: "auto" }}>
-      {dev ? "dev fixture" : "pywebview"}
-    </span>
-  );
-}
-
-// A unique id for a new library primitive: a per-kind prefix plus the lowest
-// free integer across that collection's existing ids, so ids never collide with
-// an entity already in the World.
-function freshId(world: World, kind: "item" | "recipe" | "machineDef"): string {
-  const prefix = kind === "machineDef" ? "def" : kind;
-  const field = kind === "machineDef" ? "machineDefs" : `${kind}s`;
-  const existing = new Set(
-    ((world[field as keyof World] ?? []) as { id: string }[]).map((e) => e.id),
-  );
-  let n = 1;
-  while (existing.has(`${prefix}${n}`)) n++;
-  return `${prefix}${n}`;
 }
 
 function Library({

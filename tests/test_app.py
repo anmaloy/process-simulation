@@ -63,6 +63,42 @@ def test_build_api_loads_project(tmp_path: Path, furnace_chest: World) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Persistence (autosave): edits survive a relaunch.
+# --------------------------------------------------------------------------- #
+
+
+def test_edits_autosave_and_restore(tmp_path: Path) -> None:
+    autosave = tmp_path / "autosave.psim.json"
+    # First session: start empty, add an item — which should auto-persist.
+    api = app.build_api(None, autosave)
+    api.apply_edit(
+        {"op": "upsert", "kind": "item", "entity": {"id": "ore", "name": "Ore", "category": "solid"}}
+    )
+    assert autosave.is_file()
+
+    # Second session: no project given, but the autosave is restored.
+    restored = app.build_api(None, autosave)
+    items = restored.get_world()["data"]["items"]
+    assert [i["id"] for i in items] == ["ore"]
+
+
+def test_corrupt_autosave_is_ignored(tmp_path: Path) -> None:
+    autosave = tmp_path / "autosave.psim.json"
+    autosave.write_text("{ not json", encoding="utf-8")
+    api = app.build_api(None, autosave)  # must not raise
+    assert api.get_world()["data"].get("nodes", []) == []
+
+
+def test_explicit_project_wins_over_autosave(tmp_path: Path, furnace_chest: World) -> None:
+    autosave = tmp_path / "autosave.psim.json"
+    save_project(World(items=[], nodes=[]), autosave)
+    project = tmp_path / "chain.json"
+    save_project(furnace_chest, project)
+    api = app.build_api(project, autosave)
+    assert {n["id"] for n in api.get_world()["data"]["nodes"]} == {"furnace1", "chest1"}
+
+
+# --------------------------------------------------------------------------- #
 # Offline-asset check
 # --------------------------------------------------------------------------- #
 

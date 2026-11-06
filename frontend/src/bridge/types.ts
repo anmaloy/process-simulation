@@ -9,6 +9,8 @@
 export type Category = "solid" | "liquid" | "energy";
 export type Direction = "in" | "out";
 export type PipeEndRole = "in" | "out" | "io";
+/** How a machine is powered while it runs (replaces the fuel-burning flag). */
+export type EnergySource = "electric" | "liquid" | "fuel";
 
 export interface Item {
   id: string;
@@ -28,8 +30,6 @@ export interface Recipe {
   name?: string;
   inputs?: Stack[];
   outputs?: Stack[];
-  energyConsumption?: number;
-  energyProduction?: number;
 }
 
 export interface SlotGroup {
@@ -39,14 +39,27 @@ export interface SlotGroup {
   stackSize: number;
 }
 
+/** A buffer's capacity for one category — makes its def a storage node. */
+export interface StorageSpec {
+  category: Category;
+  capacity: number;
+}
+
 export interface MachineDef {
   id: string;
   name?: string;
+  /** How the machine is powered; absent = passive. */
+  energySource?: EnergySource;
+  /** The carrier item consumed (a fuel item, or a liquid like steam). */
+  sourceItemId?: string;
+  /** EU/s drawn while running (a plain consumer). */
   baseEnergyConsumption?: number;
-  baseEnergyProduction?: number;
-  fuelBurning?: boolean;
+  /** A converter's output carrier (steam, or electricity). */
+  outputItemId?: string;
   efficiency?: number;
   maxFluidRate?: number;
+  /** Set to make this def a storage buffer. */
+  storage?: StorageSpec;
   allowedRecipeIds?: string[];
   slots?: SlotGroup[];
   overclockMin?: number;
@@ -150,13 +163,17 @@ export interface PipeFlow {
 
 export interface ScopeReport {
   nodeIds: string[];
+  /** Outside feedstock the running scope consumes (no internal producer). */
   externalInputs: Record<string, number>;
+  /** Actual yield leaving the scope (effective, after duty throttling). */
   externalOutputs: Record<string, number>;
   netEnergy?: number;
   balances: Record<string, NodeBalance>;
   bottlenecks: Bottleneck[];
   /** Per-pipe flow + dashed-edge flag, keyed by pipe id (P8). */
   pipeFlows?: Record<string, PipeFlow>;
+  /** Per-node running fraction in [0,1]; <1 = throttled by a starved input. */
+  nodeDuty?: Record<string, number>;
 }
 
 // --- IO / library --------------------------------------------------------- //
