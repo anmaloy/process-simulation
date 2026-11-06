@@ -31,11 +31,23 @@ the main reason for a web UI over a native toolkit (see `STYLE_GUIDE.md`).
 
 ## Project state
 
-Phases 0–2 are done: the scaffold/toolchain (P0), the domain model with JSON
-round-trip (P1, `model/`), and the headless rate-balance engine (P2, `engine/`:
+Phases 0–3 are done: the scaffold/toolchain (P0), the domain model with JSON
+round-trip (P1, `model/`), the headless rate-balance engine (P2, `engine/`:
 per-node rates + fuel→fluid conversion, per-node balance, asymmetric pipe-priority flow
-resolution, and scope aggregation — all covered by pytest). The io, api, and
-frontend UI are still stubs — build them per the phase order in `WORKFLOW.md`.
+resolution, and scope aggregation), and project/library IO (P3, `io/`: versioned
+project save/load and library export/import with id-collision handling) — all
+covered by pytest. The api and frontend UI are still stubs — build them per the
+phase order in `WORKFLOW.md`.
+
+`io/` reads and writes **versioned envelopes**: every file is a JSON object with
+`schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
+payload. A project file nests the whole World under `"world"`; a library file
+carries the reusable subset (items, recipes, machine defs) at top level.
+`load_project`/`load_library` raise `MalformedFileError` (bad JSON, wrong kind,
+garbled payload) or `UnsupportedVersionError` (version this build can't read) —
+never an unhandled crash. `import_library` resolves id collisions by
+`ConflictPolicy` (`rename` default, `skip`, `error`), rewriting intra-library
+references, and never mutates the target World.
 
 ### Commands
 
