@@ -119,8 +119,10 @@ class MachineDef(Serializable):
     """A machine template: energy behavior, fuel-burning, slots, overclock bounds.
 
     A fuel-burning converter sets ``fuel_burning`` and may set ``efficiency``
-    (the waste fraction ``w``, default 0 = lossless) and ``max_steam_rate``
-    (``R``). Non-fuel defs omit those. Base energy terms are absent unless set.
+    (the waste fraction ``w``, default 0 = lossless) and ``max_fluid_rate``
+    (``R``, the peak output-fluid rate). Which fluid it produces is content, not
+    a model concept. Non-fuel defs omit those. Base energy terms are absent
+    unless set.
     """
 
     id: str
@@ -129,7 +131,7 @@ class MachineDef(Serializable):
     base_energy_production: float | None = None
     fuel_burning: bool = False
     efficiency: float | None = None
-    max_steam_rate: float | None = None
+    max_fluid_rate: float | None = None
     allowed_recipe_ids: list[str] = field(default_factory=list)
     slots: list[SlotGroup] = field(default_factory=list)
     overclock_min: float | None = None
@@ -144,7 +146,7 @@ class MachineDef(Serializable):
             base_energy_production=d.get("baseEnergyProduction"),
             fuel_burning=d.get("fuelBurning", False),
             efficiency=d.get("efficiency"),
-            max_steam_rate=d.get("maxSteamRate"),
+            max_fluid_rate=d.get("maxFluidRate"),
             allowed_recipe_ids=list(d.get("allowedRecipeIds", [])),
             slots=[SlotGroup.from_dict(s) for s in d.get("slots", [])],
             overclock_min=d.get("overclockMin"),

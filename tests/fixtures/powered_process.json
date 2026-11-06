@@ -1,0 +1,67 @@
+{
+  "name": "Powered Process",
+  "items": [
+    {"id": "ore", "name": "Iron Ore", "category": "solid"},
+    {"id": "ingot", "name": "Iron Ingot", "category": "solid"},
+    {"id": "plate", "name": "Iron Plate", "category": "solid"},
+    {"id": "eu", "name": "Energy", "category": "energy"}
+  ],
+  "recipes": [
+    {
+      "id": "smelt",
+      "name": "Smelt Iron",
+      "timeSeconds": 2,
+      "inputs": [{"itemId": "ore", "quantity": 1}],
+      "outputs": [{"itemId": "ingot", "quantity": 1}],
+      "energyConsumption": 30
+    },
+    {
+      "id": "press",
+      "name": "Press Plate",
+      "timeSeconds": 4,
+      "inputs": [{"itemId": "ingot", "quantity": 1}],
+      "outputs": [{"itemId": "plate", "quantity": 1}],
+      "energyConsumption": 60
+    }
+  ],
+  "machineDefs": [
+    {
+      "id": "smelter",
+      "name": "Smelter",
+      "allowedRecipeIds": ["smelt"],
+      "slots": [
+        {"category": "solid", "direction": "in", "slots": 1, "stackSize": 64},
+        {"category": "solid", "direction": "out", "slots": 1, "stackSize": 64}
+      ]
+    },
+    {
+      "id": "presser",
+      "name": "Plate Press",
+      "allowedRecipeIds": ["press"],
+      "slots": [
+        {"category": "solid", "direction": "in", "slots": 1, "stackSize": 64},
+        {"category": "solid", "direction": "out", "slots": 1, "stackSize": 64}
+      ]
+    },
+    {
+      "id": "generator",
+      "name": "Generator",
+      "baseEnergyProduction": 200
+    }
+  ],
+  "nodes": [
+    {"id": "smelter1", "machineDefId": "smelter", "recipeId": "smelt"},
+    {"id": "presser1", "machineDefId": "presser", "recipeId": "press"},
+    {"id": "gen1", "machineDefId": "generator"}
+  ],
+  "pipes": [
+    {
+      "id": "p_ingot",
+      "category": "solid",
+      "movementCapacity": 10,
+      "a": {"nodeId": "smelter1", "role": "out", "extractPriority": 0},
+      "b": {"nodeId": "presser1", "role": "in", "insertPriority": 0}
+    }
+  ],
+  "systems": []
+}

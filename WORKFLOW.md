@@ -16,7 +16,7 @@ The architecture rules dictate the order, not preference:
   is frozen (name + JSON shape per call) before the frontend consumes it, so UI
   work never reaches around it into engine internals.
 - **The domain decisions are settled** (see [Decisions](#decisions-resolved)),
-  but keep the code that depends on them (flow resolution, the EU/steam
+  but keep the code that depends on them (flow resolution, the fuel→fluid
   conversion, color maps) isolated behind small seams so any later tweak is a
   local edit, not a rewrite.
 - **Vertical slice early.** Phases 0–4 produce a headless, fully-tested engine
@@ -104,16 +104,17 @@ landed and tested before the next. All rates per second.
 Energy per node, **omitting unset terms**: a recipe energy term, if set,
 **overrides** the machine-base term of the same kind (not additive) —
 `consume = (recipe.energyConsumption or base) * overclock * count`, `produce`
-likewise, `netEnergy = produce − consume`. **Fuel → steam generation:** a
-fuel-burning node converts an input item's stored `eu` into steam (liquid,
-1 EU/mB). With max rate `R`, drawn steam `D` (capped at `R`) and waste fraction
-`w` (the machine's `efficiency`, default 0): `steamOut = D`,
+likewise, `netEnergy = produce − consume`. **Fuel → fluid conversion:** a
+fuel-burning node converts an input item's stored `eu` into an output fluid (a
+liquid item — the engine doesn't name it; default content uses steam at
+1 EU/unit). With max rate `R`, drawn fluid `D` (capped at `R`) and waste fraction
+`w` (the machine's `efficiency`, default 0): `fluidOut = D`,
 `fuelDrain = D + w·(R − D)`, `η = D / (D + w·(R − D))`. Default `w = 0` is
-lossless 1:1; the Large Steam Boiler uses `w = 0.8`, `R = 256`. Overclock is one
-linear scalar; clamp to def bounds for validation only.
+lossless 1:1; the Large Steam Boiler (default content) uses `w = 0.8`, `R = 256`.
+Overclock is one linear scalar; clamp to def bounds for validation only.
 *Done when:* rates and net energy are correct; a node with no base-energy field
 contributes no energy term (not zero-substituted); a recipe term overrides base;
-and boiler fuelDrain/steam/η match hand calcs at `D = 0`, `D = R`, and a mid
+and boiler fuelDrain/fluidOut/η match hand calcs at `D = 0`, `D = R`, and a mid
 load.
 
 **P2b — Per-node balance.**
@@ -132,7 +133,8 @@ overclock)`; storage only buffers transients. Resolve contention per the
 - Extract contention: drain **ascending** extract priority (lower first); equal →
   even split.
 - Self-loop guard: an `io` end won't re-insert what it pulled when insert < extract.
-Steam is just a liquid here — it flows under these same rules, no special path.
+A converter's output fluid is just a liquid here — it flows under these same
+rules, no special path.
 *Done when:* all five canonical cases in `CLAUDE.md` pass as named tests
 (furnace→two chests, triple even split, io filter no-reinsert, A-before-B drain,
 chest@127 always first). Keep the comparator/batcher behind a seam (see gates).
@@ -235,8 +237,9 @@ connect/delete, and persistence of positions into the World.
 state serializes through the API into a loadable project.
 
 **Notes:** category colors (default, adjustable): solid → silver (`--s-teach`),
-liquid → blue (`--s-indep`), energy → gold (`--subedge`); steam rides the liquid
-color. Read from a single color-map constant, not hardcoded per element.
+liquid → blue (`--s-indep`), energy → gold (`--subedge`); a converter's output
+fluid rides the liquid color. Read from a single color-map constant, not
+hardcoded per element.
 
 ---
 
@@ -332,13 +335,13 @@ matter so the EU model and color maps each live in one place.
 |---|----------|----------|----------|
 | 1 | Insert/extract priority asymmetry | Final as written — not revisable | P2c |
 | 2 | Machine base vs recipe energy | Recipe term **overrides** base (per kind) | P2a |
-| 3 | How EU is carried | Fuel item `eu` → **steam** (liquid, 1 EU/mB) → pipes under normal cap/priority | P1, P2a, P2c |
+| 3 | How EU is carried | Fuel item `eu` → an **output fluid** (a liquid item; steam in default content) → pipes under normal cap/priority | P1, P2a, P2c |
 | 4 | Equal-priority round-robin batch | Batched by pipe movement capacity (existing param) | P2c |
 | 5 | Units / display scaling | Store canonical units; UI auto-scales | P8 |
 | — | Status colors | OK green, shortfall **red (`--s-bad`, added)**, overflow yellow, stalled/unpowered grey | P8 |
-| — | Category colors | solid silver, liquid blue, energy gold — steam = liquid (adjustable) | P6 |
+| — | Category colors | solid silver, liquid blue, energy gold — output fluids = liquid (adjustable) | P6 |
 
-Isolate the EU/steam conversion (η, waste `w`) in one engine module, and both
+Isolate the fuel→fluid conversion (η, waste `w`) in one engine module, and both
 color maps in one constant, so any later tweak stays local.
 
 ## Testing strategy
