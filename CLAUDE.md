@@ -130,6 +130,19 @@ offline guarantee by scanning the built HTML/CSS for any external load.
 glass surface. Packaging is a documented PyInstaller recipe plus a `process-sim`
 console-script entry point.
 
+Post-P10 revision (energy model + UX): the energy model moved to **carrier
+tiers** — `MachineDef.energySource` (electric/liquid/fuel) with a source/output
+carrier replaces the old fuel-burning flag and per-recipe energy terms; steam and
+fuel are routed items, electricity is the scalar grid balance (see "Domain
+model", "Carrier tiers", and decisions #2–#3). The engine now solves per-node
+**duty cycles** so a starved machine reduces yield (downtime) instead of showing
+unmet demand as an external input, and treats **storage** defs as transparent
+buffers (`nodeDuty` + reframed `externalInputs`/`externalOutputs` in
+`ScopeReport`). On the UI side: searchable/alphabetised combo pickers everywhere
+(`frontend/src/ui/Combobox.tsx`), name-derived ids with reference-rewriting
+rename (`ui/ids.ts`), undo (Ctrl+Z), per-category display units (items/mB/EU),
+palette-matched checkboxes, and category pipe-speed defaults.
+
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
 payload. A project file nests the whole World under `"world"`; a library file
@@ -278,14 +291,19 @@ tests/           # pytest for engine/model; frontend tests added later
   EU. A fuel with `eu = 1000` consumed at 2 EU/s lasts 500 s. Optional and
   selectable at item construction: items without `eu` are not fuels.
 - **Stack** — an `{item, quantity}` pair, per recipe cycle unless noted.
-- **Recipe** — input stacks → output stacks over a production time, with optional
-  energy production/consumption.
-- **MachineDef** — a template: energy behavior, allowed recipes, slot layout per
-  category and direction, stack sizes, overclock bounds. A fuel-burning def is
-  flagged as such and may set a conversion `efficiency` (waste fraction, see
-  "Energy generation") and a `maxFluidRate` (`R`); non-fuel defs omit them.
-  Nothing here names a specific fluid — which fluid a converter outputs is just
-  one of its output items (content), not a model concept.
+- **Recipe** — input stacks → output stacks over a production time. Recipes carry
+  **no** energy term: energy is a machine property (a machine draws a defined
+  amount while running), so it lives on the `MachineDef`, not the recipe.
+- **MachineDef** — a template: an **energy source**, allowed recipes, slot layout
+  per category and direction, stack sizes, overclock bounds, and optional
+  storage. `energySource` ∈ `electric` / `liquid` / `fuel` (absent = passive)
+  says how the machine is powered; `sourceItemId` names the carrier it consumes.
+  A **consumer** sets `baseEnergyConsumption` (EU/s drawn to run its recipe). A
+  **converter** sets `outputItemId` + `maxFluidRate` (`R`) and optional
+  `efficiency` (`w`, waste fraction) — it turns its source into that output
+  carrier (fuel→steam, or steam→electricity). A **storage** def sets `storage`
+  (`{category, capacity}`) and is a transparent buffer. Nothing here names a
+  specific fluid — the carriers are just items (content).
 - **MachineNode** — a placed machine bound to a recipe, an overclock multiplier,
   and a parallel count.
 - **Pipe** — the graph edge. Carries one category between two machine ports; has
@@ -308,25 +326,31 @@ outputRate(s)  = s.quantity * cyclesPerSec * count   # per output stack
 inputDemand(s) = s.quantity * cyclesPerSec * count   # per input stack
 ```
 
-Energy per node — a recipe energy term, if set, **overrides** (replaces) the
-machine-base term of the same kind; if neither is set, the term is absent (not
-zero):
+Energy per node — a machine draws its `baseEnergyConsumption` while running (the
+grid-electricity term); a converter earns a `produce` term by making an
+energy-category output. An absent term stays absent (not zero):
 
 ```
-consume   = (recipe.energyConsumption  or  baseEnergyConsumption) * overclock * count
-produce   = (recipe.energyProduction   or  baseEnergyProduction ) * overclock * count
+consume   = baseEnergyConsumption * overclock * count   # electric draw, scalar
+produce   = (converter electricity output)              # see "Energy generation"
 netEnergy = produce - consume     # omit a side entirely when it has no term
 ```
 
-### Energy generation (fuel → fluid)
+### Carrier tiers (fuel → steam → electricity)
 
-Fuel-burning machines convert an item's stored `eu` into an **output fluid** — a
-liquid item that then flows through pipes like any other fluid, obeying movement
-capacity and priority, and energy consumers draw it. This is how EU is
-"carried": as a fluid, not a direct lossless link. Which fluid, and its energy
-density, are content — an `Item` with its own `eu`. (Default content's example
-is steam, a liquid at 1 EU per unit, so 1000 EU of fuel → 1000 units, 1:1 — but
-the engine never names it.)
+Energy flows as a chain of carriers: a **fuel** item (stored `eu`) is burned by a
+boiler into **steam** (a liquid that flows through pipes like any other liquid);
+a turbine consumes steam and produces **electricity** (the `energy` category).
+Steam and fuel are routed items subject to movement capacity and priority;
+electricity is the scalar grid balance (`netEnergy`), reserved for the energy
+category and not routed as an item. A machine's `energySource` picks which
+carrier it consumes to run.
+
+The fuel→output conversion math is unchanged (see `engine/energy.py`): with max
+rate `R`, draw `D`, waste `w`, the converter consumes its source (a fuel by its
+`eu`, else a liquid 1:1) and emits its output carrier. When the output item is
+energy-category (electricity) it is accounted as the scalar `produce` term; any
+other output (steam) is a routed item.
 
 With max rate `R`, fluid actually drawn `D` (capped at `R`), fuel energy `E`, and
 efficiency `η` (rates per second; the tick form scales identically):
@@ -367,10 +391,16 @@ Each pipe's flow is `min(upstream available, downstream demand, pipeThroughput)`
 A full input buffer pushes overflow upstream; a full output buffer stalls the
 machine.
 
-Aggregation over a system, traced process, or world: sum `netEnergy` for the
-scope's energy balance; external inputs are items members demand but aren't
-supplied internally; external outputs are items produced beyond internal demand;
-flag the largest shortfalls as bottlenecks.
+Aggregation over a system, traced process, or world: these are self-sufficient
+devices, so a machine starved of an internally-produced input doesn't get an
+external top-up — it runs at a reduced **duty cycle** (downtime), which lowers
+its output and cascades downstream (solved by relaxation in `compute_scope`,
+reported as `nodeDuty`). The scope then reports: `netEnergy` (sum of duty-scaled
+energy terms); **external inputs** = outside *feedstock* only (items with no
+internal producer that the running scope consumes); **external outputs** = the
+**actual yield** (effective production that leaves the scope); and the largest
+internal shortfalls as **bottlenecks**. A **storage** node is a transparent
+passthrough (its buffer only absorbs transients), spliced out of the flow graph.
 
 ## Pipe priority — read this before touching flow resolution
 
@@ -414,14 +444,15 @@ All of the original open questions are decided. Build to these.
 
 1. **Pipe priority asymmetry is final** — insert favors higher, extract favors
    lower, exactly as specified above and in the five cases. Not up for revision.
-2. **Recipe energy overrides machine base** — when a node's recipe specifies an
-   energy term, it replaces the machine-base term of the same kind (production or
-   consumption), rather than adding to it.
-3. **EU is carried as a fluid** — fuel items store `eu`; a fuel-burning machine
-   converts it into an output fluid (a liquid item) that flows through pipes
-   under the normal movement-capacity and priority rules. The specific fluid is
-   content, not a model concept (default content uses steam at 1 EU/unit). See
-   "Energy generation".
+2. **Energy is a machine property** — recipes carry no energy term; a machine
+   draws `baseEnergyConsumption` while running. A machine's `energySource`
+   (electric / liquid / fuel) picks the carrier it consumes.
+3. **Carriers are routed items; electricity is scalar** — fuel items store `eu`;
+   a boiler burns fuel into steam (a routed liquid), a turbine turns steam into
+   electricity. Steam and fuel flow through pipes under the normal
+   movement-capacity and priority rules; electricity (the `energy` category) is
+   the scalar grid balance, reserved and not routed as an item. The specific
+   carriers are content (default content uses steam). See "Carrier tiers".
 4. **Round-robin batch size follows pipe speed** — the equal-priority split is
    batched by the pipe's movement capacity (already a pipe parameter), not a
    separate fixed constant.
