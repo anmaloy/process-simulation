@@ -33,7 +33,13 @@ import { Combobox } from "../ui";
 import { MachineNodeView } from "./MachineNodeView";
 import { PipeEdgeView } from "./PipeEdgeView";
 import { categoryColor } from "./colors";
-import { MACHINE_NODE_TYPE, PIPE_EDGE_TYPE, newNode, type RfPipeEdge } from "./graph";
+import {
+  DEF_DRAG_MIME,
+  MACHINE_NODE_TYPE,
+  PIPE_EDGE_TYPE,
+  newNode,
+  type RfPipeEdge,
+} from "./graph";
 import {
   SYSTEM_NODE_TYPE,
   SystemActionsContext,
@@ -199,7 +205,14 @@ function CanvasInner(props: CanvasProps) {
     (_e: unknown, edge: { id: string }) => onSelect({ kind: "pipe", id: edge.id }),
     [onSelect],
   );
-  const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
+  const handlePaneClick = useCallback(() => {
+    onSelect(null);
+    // Also clear React Flow's own selection immediately, so a single background
+    // click fully deselects (the host reseed alone can lag the glow) (#6).
+    setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)));
+    setEdges((es) => es.map((e) => (e.selected ? { ...e, selected: false } : e)));
+    setMultiSelected([]);
+  }, [onSelect, setNodes, setEdges]);
 
   // Track React Flow's own multi-selection of machine nodes for grouping.
   const handleSelectionChange = useCallback(
@@ -236,8 +249,33 @@ function CanvasInner(props: CanvasProps) {
     [screenToFlowPosition, onAddNode, world],
   );
 
+  // Drop a machine dragged from the sidebar at the cursor (#10).
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(DEF_DRAG_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      const defId = e.dataTransfer.getData(DEF_DRAG_MIME);
+      if (!defId) return;
+      e.preventDefault();
+      const def = (world.machineDefs ?? []).find((d) => d.id === defId);
+      if (!def) return;
+      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      onAddNode(newNode(def, position, world));
+    },
+    [screenToFlowPosition, onAddNode, world],
+  );
+
   return (
-    <div className="canvas-wrap" ref={wrapperRef}>
+    <div
+      className="canvas-wrap"
+      ref={wrapperRef}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div className="canvas-palette">
         <span className="eyebrow quiet palette-label">Add machine</span>
         {defs.length === 0 ? (
@@ -253,7 +291,7 @@ function CanvasInner(props: CanvasProps) {
               options={defs.map((d) => ({
                 value: d.id,
                 label: d.name ?? d.id,
-                hint: d.storage ? "buffer" : d.id,
+                hint: d.storage ? "buffer" : undefined,
               }))}
               placeholder="+ place a machine…"
               dense

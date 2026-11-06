@@ -28,6 +28,8 @@ export interface BalanceReadoutProps {
   /** The system a system scope targets. */
   systemId: string | null;
   onSystemChange: (systemId: string) => void;
+  /** Select a node (e.g. clicking a bottleneck) so the canvas/inspector follow. */
+  onSelectNode?: (nodeId: string) => void;
 }
 
 export function BalanceReadout(props: BalanceReadoutProps) {
@@ -118,6 +120,7 @@ export function BalanceReadout(props: BalanceReadoutProps) {
           itemName={itemName}
           itemCat={itemCat}
           nodeDefName={nodeDefName}
+          onSelectNode={props.onSelectNode}
         />
       )}
     </section>
@@ -129,11 +132,13 @@ function ReadoutBody({
   itemName,
   itemCat,
   nodeDefName,
+  onSelectNode,
 }: {
   report: ScopeReport;
   itemName: Map<string, string>;
   itemCat: Map<string, Category>;
   nodeDefName: Map<string, string>;
+  onSelectNode?: (nodeId: string) => void;
 }) {
   const inputs = Object.entries(report.externalInputs);
   const outputs = Object.entries(report.externalOutputs);
@@ -186,7 +191,12 @@ function ReadoutBody({
         ) : (
           <ul className="readout-list">
             {report.bottlenecks.slice(0, 6).map((b, i) => (
-              <li key={`${b.nodeId}:${b.itemId}:${i}`} className="readout-leaf">
+              <li
+                key={`${b.nodeId}:${b.itemId}:${i}`}
+                className={`readout-leaf ${onSelectNode ? "clickable" : ""}`}
+                onClick={onSelectNode ? () => onSelectNode(b.nodeId) : undefined}
+                title={onSelectNode ? "Select this machine" : undefined}
+              >
                 <span
                   className="readout-dot"
                   style={{ background: STATUS_COLOR.shortfall }}

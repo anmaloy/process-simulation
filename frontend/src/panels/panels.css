@@ -227,6 +227,12 @@ select.field-input {
   color: var(--ink-faint);
   font-size: 11px;
 }
+.stack-unit {
+  flex: none;
+  width: 24px;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
 
 .row-del {
   flex: none;
@@ -347,6 +353,12 @@ select.field-input {
 /* Rail entries become clickable for library selection (P7). */
 .leaf.clickable {
   cursor: pointer;
+}
+.leaf.draggable {
+  cursor: grab;
+}
+.leaf.draggable:active {
+  cursor: grabbing;
 }
 .leaf.selected {
   border-left-color: var(--spine);

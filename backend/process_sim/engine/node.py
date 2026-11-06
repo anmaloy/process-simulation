@@ -151,7 +151,12 @@ def compute_node(
         r = machine_def.max_fluid_rate * scale  # type: ignore[operator]
         conv = convert_fuel(r, fluid_draw, machine_def.efficiency or 0.0)
         fuel_conversion = conv
+        # The source carrier supplies the *energy*; an optional material input is
+        # what actually becomes the output (a boiler burns fuel to turn water
+        # into steam), consumed 1:1 with the output volume.
         _consume_source(conv.fuel_drain)
+        if machine_def.input_item_id is not None:
+            _accumulate(inputs, machine_def.input_item_id, conv.fluid_out)
         _accumulate(outputs, machine_def.output_item_id, conv.fluid_out)  # type: ignore[arg-type]
 
     # Energy terms are *derived* from the energy-category carriers that now flow

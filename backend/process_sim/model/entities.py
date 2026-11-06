@@ -138,9 +138,11 @@ class MachineDef(Serializable):
     is powered while it runs; ``source_item_id`` names the carrier it consumes
     (a fuel item, or a liquid like steam). A **converter** additionally sets
     ``output_item_id`` + ``max_fluid_rate`` (``R``) and optional ``efficiency``
-    (``w``, waste fraction, default 0 = lossless): it turns its source into that
-    output carrier (fuel→steam, or steam→electricity). A plain **consumer** sets
-    only ``base_energy_consumption`` — the EU/s it draws while running its recipe.
+    (``w``, waste fraction, default 0 = lossless): it spends its source's energy
+    to turn an optional ``input_item_id`` **material** into that output carrier (a
+    boiler heats water → steam burning fuel; a turbine spends steam → electricity
+    with no separate material). A plain **consumer** sets only
+    ``base_energy_consumption`` — the EU/s it draws while running its recipe.
     A **storage** def sets ``storage`` and acts as a buffer. All energy fields are
     absent on a passive machine.
     """
@@ -150,6 +152,7 @@ class MachineDef(Serializable):
     energy_source: EnergySource | None = None
     source_item_id: str | None = None
     base_energy_consumption: float | None = None
+    input_item_id: str | None = None
     output_item_id: str | None = None
     efficiency: float | None = None
     max_fluid_rate: float | None = None
@@ -169,6 +172,7 @@ class MachineDef(Serializable):
             energy_source=EnergySource(source) if source is not None else None,
             source_item_id=d.get("sourceItemId"),
             base_energy_consumption=d.get("baseEnergyConsumption"),
+            input_item_id=d.get("inputItemId"),
             output_item_id=d.get("outputItemId"),
             efficiency=d.get("efficiency"),
             max_fluid_rate=d.get("maxFluidRate"),

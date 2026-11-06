@@ -54,6 +54,8 @@ export interface MachineDef {
   sourceItemId?: string;
   /** EU/s drawn while running (a plain consumer). */
   baseEnergyConsumption?: number;
+  /** A converter's material input (e.g. water) that becomes the output. */
+  inputItemId?: string;
   /** A converter's output carrier (steam, or electricity). */
   outputItemId?: string;
   efficiency?: number;

@@ -89,8 +89,8 @@ export function MachineNodeView({ data }: NodeProps<RfMachineNode>) {
         <span className="node-id mono">{node.id}</span>
       </div>
       {def?.storage && (
-        <div className="node-storage mono" title="buffer capacity">
-          ▭ {fmtCapacity(def.storage.capacity, def.storage.category)}
+        <div className="node-storage mono" title="buffer capacity (× parallel count)">
+          ▭ {fmtCapacity(def.storage.capacity * (node.count ?? 1), def.storage.category)}
         </div>
       )}
       {(meta.length > 0 || status || throttled) && (
