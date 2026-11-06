@@ -211,6 +211,28 @@ export function App() {
   });
   const remove = (kind: EntityKind, id: string): Edit => ({ op: "remove", kind, id });
 
+  // Create a fresh library primitive (item / recipe / machine def) with a unique
+  // id and the minimum valid fields, then select it so its inspector opens for
+  // configuration. The engine tolerates an unreferenced new entity, so the
+  // post-edit recompute stays safe. Nodes come from the canvas "Add machine"
+  // palette and systems from grouping, so only the three library kinds are made
+  // here.
+  const onCreateEntity = useCallback(
+    (kind: "item" | "recipe" | "machineDef") => {
+      if (!world) return;
+      const id = freshId(world, kind);
+      const entity =
+        kind === "item"
+          ? { id, name: "New item", category: "solid" as const }
+          : kind === "recipe"
+            ? { id, name: "New recipe", timeSeconds: 1 }
+            : { id, name: "New machine" };
+      void applyEdits([upsert(kind, entity)]);
+      setSelection({ kind, id });
+    },
+    [applyEdits, world],
+  );
+
   const onAddNode = useCallback(
     (node: MachineNode) => applyEdits([upsert("node", node)]),
     [applyEdits],
@@ -325,7 +347,12 @@ export function App() {
           <div className="rail-head row">
             <SourcePill conn={conn} />
           </div>
-          <Library world={world} selection={selection} onSelect={setSelection} />
+          <Library
+            world={world}
+            selection={selection}
+            onSelect={setSelection}
+            onCreate={onCreateEntity}
+          />
         </div>
       </aside>
 
@@ -379,14 +406,30 @@ function SourcePill({ conn }: { conn: Conn }) {
   );
 }
 
+// A unique id for a new library primitive: a per-kind prefix plus the lowest
+// free integer across that collection's existing ids, so ids never collide with
+// an entity already in the World.
+function freshId(world: World, kind: "item" | "recipe" | "machineDef"): string {
+  const prefix = kind === "machineDef" ? "def" : kind;
+  const field = kind === "machineDef" ? "machineDefs" : `${kind}s`;
+  const existing = new Set(
+    ((world[field as keyof World] ?? []) as { id: string }[]).map((e) => e.id),
+  );
+  let n = 1;
+  while (existing.has(`${prefix}${n}`)) n++;
+  return `${prefix}${n}`;
+}
+
 function Library({
   world,
   selection,
   onSelect,
+  onCreate,
 }: {
   world: World | null;
   selection: Selection;
   onSelect: (s: Selection) => void;
+  onCreate: (kind: "item" | "recipe" | "machineDef") => void;
 }) {
   const defName = useMemo(() => {
     const m = new Map<string, string>();
@@ -433,7 +476,11 @@ function Library({
         ))}
       </Section>
 
-      <Section title="Items" empty={(world.items ?? []).length === 0}>
+      <Section
+        title="Items"
+        empty={(world.items ?? []).length === 0}
+        onAdd={() => onCreate("item")}
+      >
         {(world.items ?? []).map((it) => (
           <Leaf
             key={it.id}
@@ -446,7 +493,11 @@ function Library({
         ))}
       </Section>
 
-      <Section title="Recipes" empty={(world.recipes ?? []).length === 0}>
+      <Section
+        title="Recipes"
+        empty={(world.recipes ?? []).length === 0}
+        onAdd={() => onCreate("recipe")}
+      >
         {(world.recipes ?? []).map((r) => (
           <Leaf
             key={r.id}
@@ -459,7 +510,11 @@ function Library({
         ))}
       </Section>
 
-      <Section title="Machine defs" empty={(world.machineDefs ?? []).length === 0}>
+      <Section
+        title="Machine defs"
+        empty={(world.machineDefs ?? []).length === 0}
+        onAdd={() => onCreate("machineDef")}
+      >
         {(world.machineDefs ?? []).map((d) => (
           <Leaf
             key={d.id}
@@ -478,15 +533,29 @@ function Library({
 function Section({
   title,
   empty,
+  onAdd,
   children,
 }: {
   title: string;
   empty: boolean;
+  onAdd?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <div className="rail-section">
-      <p className="eyebrow quiet">{title}</p>
+      <div className="rail-section-head">
+        <p className="eyebrow quiet">{title}</p>
+        {onAdd && (
+          <button
+            type="button"
+            className="rail-add"
+            title={`New ${title.toLowerCase().replace(/s$/, "")}`}
+            onClick={onAdd}
+          >
+            +
+          </button>
+        )}
+      </div>
       {empty ? <div className="leaf">none</div> : children}
     </div>
   );
