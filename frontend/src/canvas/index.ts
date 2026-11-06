@@ -3,7 +3,7 @@
 // and the World↔React Flow mapping).
 
 export { Canvas } from "./Canvas";
-export type { CanvasProps } from "./Canvas";
+export type { CanvasProps, CanvasSelection } from "./Canvas";
 export { CATEGORY_COLOR, categoryColor } from "./colors";
 export { portsForDef, portId, parsePortId } from "./ports";
 export type { Port } from "./ports";

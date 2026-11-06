@@ -25,11 +25,10 @@ import {
   type EdgeTypes,
   type IsValidConnection,
   type NodeTypes,
-  type OnSelectionChangeParams,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import type { MachineDef, MachineNode, Pipe, World } from "../bridge";
+import type { MachineDef, MachineNode, Pipe, ScopeReport, World } from "../bridge";
 import { MachineNodeView } from "./MachineNodeView";
 import { PipeEdgeView } from "./PipeEdgeView";
 import { categoryColor } from "./colors";
@@ -48,8 +47,13 @@ import {
 const nodeTypes: NodeTypes = { [MACHINE_NODE_TYPE]: MachineNodeView };
 const edgeTypes: EdgeTypes = { [PIPE_EDGE_TYPE]: PipeEdgeView };
 
+/** What the inspector edits — a single canvas element (node or pipe). */
+export type CanvasSelection = { kind: "node" | "pipe"; id: string } | null;
+
 export interface CanvasProps {
   world: World;
+  /** The selected canvas element, controlled by the host (null = cleared). */
+  selection: CanvasSelection;
   /** Add a placed machine; the host assigns position and persists it. */
   onAddNode: (node: MachineNode) => void;
   /** Persist a node's moved position. */
@@ -60,19 +64,23 @@ export interface CanvasProps {
   onRemoveNodes: (ids: string[]) => void;
   /** Remove pipes. */
   onRemovePipes: (ids: string[]) => void;
-  /** Report the current selection (single entity or none) for the inspector (P7). */
-  onSelect?: (sel: { kind: "node" | "pipe"; id: string } | null) => void;
+  /** Report a click selection (element or empty-pane clear) for the inspector. */
+  onSelect: (sel: CanvasSelection) => void;
+  /** Latest balance report (P8 seam); per-node status tints the node bar. */
+  report?: ScopeReport | null;
 }
 
 function CanvasInner(props: CanvasProps) {
   const {
     world,
+    selection,
     onAddNode,
     onMoveNode,
     onAddPipe,
     onRemoveNodes,
     onRemovePipes,
     onSelect,
+    report,
   } = props;
 
   const [nodes, setNodes, onNodesChange] = useNodesState<RfMachineNode>([]);
@@ -80,22 +88,27 @@ function CanvasInner(props: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
 
-  // Reseed from the World whenever it changes, preserving the transient
-  // selection highlight (which lives on React Flow state, not the World).
+  // Reseed from the World (and the host-controlled selection) whenever either
+  // changes. Selection is controlled — driven by clicks, not React Flow's own
+  // selection state — so picking a library entity in the rail simply clears the
+  // canvas highlight here, with no feedback loop. Per-node balance status (P8)
+  // rides in from the latest report; absent → the node reads neutral.
   useEffect(() => {
-    setNodes((prev) => {
-      const sel = new Set(prev.filter((n) => n.selected).map((n) => n.id));
-      return worldToNodes(world).map((n) =>
-        sel.has(n.id) ? { ...n, selected: true } : n,
-      );
-    });
-    setEdges((prev) => {
-      const sel = new Set(prev.filter((e) => e.selected).map((e) => e.id));
-      return worldToEdges(world).map((e) =>
-        sel.has(e.id) ? { ...e, selected: true } : e,
-      );
-    });
-  }, [world, setNodes, setEdges]);
+    const nodeStatus = report?.balances ?? {};
+    setNodes(
+      worldToNodes(world).map((n) => ({
+        ...n,
+        selected: selection?.kind === "node" && selection.id === n.id,
+        data: { ...n.data, status: nodeStatus[n.id]?.status },
+      })),
+    );
+    setEdges(
+      worldToEdges(world).map((e) => ({
+        ...e,
+        selected: selection?.kind === "pipe" && selection.id === e.id,
+      })),
+    );
+  }, [world, selection, report, setNodes, setEdges]);
 
   const defs = useMemo(() => world.machineDefs ?? [], [world.machineDefs]);
 
@@ -137,19 +150,15 @@ function CanvasInner(props: CanvasProps) {
     [onRemovePipes],
   );
 
-  const handleSelectionChange = useCallback(
-    (params: OnSelectionChangeParams) => {
-      if (!onSelect) return;
-      if (params.nodes.length === 1 && params.edges.length === 0) {
-        onSelect({ kind: "node", id: params.nodes[0].id });
-      } else if (params.edges.length === 1 && params.nodes.length === 0) {
-        onSelect({ kind: "pipe", id: params.edges[0].id });
-      } else {
-        onSelect(null);
-      }
-    },
+  const handleNodeClick = useCallback(
+    (_e: unknown, node: { id: string }) => onSelect({ kind: "node", id: node.id }),
     [onSelect],
   );
+  const handleEdgeClick = useCallback(
+    (_e: unknown, edge: { id: string }) => onSelect({ kind: "pipe", id: edge.id }),
+    [onSelect],
+  );
+  const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
 
   const addDef = useCallback(
     (def: MachineDef) => {
@@ -195,7 +204,9 @@ function CanvasInner(props: CanvasProps) {
         onNodeDragStop={handleNodeDragStop}
         onNodesDelete={handleNodesDelete}
         onEdgesDelete={handleEdgesDelete}
-        onSelectionChange={handleSelectionChange}
+        onNodeClick={handleNodeClick}
+        onEdgeClick={handleEdgeClick}
+        onPaneClick={handlePaneClick}
         fitView
         minZoom={0.2}
         maxZoom={2.5}
