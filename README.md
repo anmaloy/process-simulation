@@ -17,10 +17,11 @@ like any other.
 
 ## Stack
 
-- Python 3.11+
-- PySide6 (Qt) for the UI and the node canvas
+- Python 3.11+ backend — the rate-balance engine and data model
+- pywebview shell hosting a web UI (Vite + React + TypeScript, React Flow canvas)
 
-Offline and file-based: a project saves to a single local JSON file.
+Offline and file-based: a project saves to a single local JSON file, and the app
+makes no network calls at runtime.
 
 ## Status
 

@@ -5,11 +5,13 @@ tokens, surfaces, type, component recipes — so a new app reads as the same sys
 regardless of what it does. All styling is hand-written CSS with custom properties;
 no framework.
 
-> **Note for this project:** this guide is written for a web/CSS UI; our app is
-> PySide6/Qt. The color tokens, type roles, and component intent carry over
-> directly, but the CSS mechanics do not. See the "Visual style" section of
-> `CLAUDE.md` for how these map to Qt (QSS, `QPalette`, bundled fonts, canvas
-> painting) and which parts have no Qt equivalent.
+> **Note for this project:** this guide was extracted from a web/CSS app, and our
+> app is also a web UI (rendered in a pywebview webview), so it applies almost
+> directly — paste the tokens and reuse the component recipes as CSS. Two
+> adjustments for our context: bundle the fonts locally instead of the Google
+> Fonts `@import` (the app is offline-first), and sanity-check `backdrop-filter`
+> and font smoothing across the platform webviews. See the "Visual style" section
+> of `CLAUDE.md`.
 
 ---
 

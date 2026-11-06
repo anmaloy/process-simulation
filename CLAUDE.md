@@ -13,13 +13,21 @@ update this file.
 
 ## Stack
 
-- Python 3.11+
-- PySide6 (Qt for Python) for the UI
-- `QGraphicsView` / `QGraphicsScene` for the node canvas
-- Standard-library `json` for project files
-- `pytest` for tests
+- **Backend:** Python 3.11+. The rate-balance engine and data model are pure
+  Python with no UI dependency.
+- **Shell:** pywebview — the app runs as a single Python process hosting a system
+  webview. No Electron/Chromium bundle and no Node server at runtime.
+- **Frontend:** web UI built with Vite + React + TypeScript, rendered in the
+  webview. Node canvas via React Flow (`@xyflow/react`), which provides pan/zoom,
+  ports, edges, and a minimap out of the box.
+- **Bridge:** the frontend calls the engine through pywebview's JS API
+  (`window.pywebview.api`); World state crosses as JSON.
+- **Persistence:** project files are JSON (the whole World), written by the Python
+  side.
+- **Tests:** pytest for the engine and model.
 
-No web frontend. The node canvas is drawn in Qt, not HTML.
+The styling target is edunode's CSS, which the webview renders directly — that is
+the main reason for a web UI over a native toolkit (see `STYLE_GUIDE.md`).
 
 ## Project state
 
@@ -31,20 +39,30 @@ exist — don't invent entry points that aren't there.
 Intended layout (adjust as it takes shape):
 
 ```
-process_sim/
-  engine/        # rate-balance computation, pure Python, no Qt
-  model/         # data classes: Item, Recipe, MachineDef, MachineNode, Pipe, System, World
-  io/            # load/save project files, library import/export
-  ui/            # PySide6 widgets, canvas, inspectors, editors
-  app.py         # entry point
-tests/
+backend/
+  process_sim/
+    engine/      # rate-balance computation, pure Python
+    model/       # dataclasses: Item, Recipe, MachineDef, MachineNode, Pipe, System, World
+    io/          # load/save project files, library import/export
+    api.py       # pywebview JS API surface — thin; marshals World to/from JSON
+  app.py         # entry point: starts pywebview, loads the built frontend
+frontend/        # web UI (Vite + React + TypeScript)
+  src/
+    canvas/      # React Flow graph: custom nodes, edges, ports
+    panels/      # inspectors and editors (item / recipe / machine / pipe / node)
+    styles/      # edunode tokens + component CSS
+tests/           # pytest for engine/model; frontend tests added later
 ```
 
 ## Architecture rules
 
-- **The engine does not import Qt.** All rate/balance computation lives in
-  `engine/` and `model/` and runs without a UI. The UI reads from the engine; the
-  engine never reaches into the UI. This keeps the hard part testable.
+- **The engine does not import the UI or pywebview.** All rate/balance
+  computation lives in `engine/` and `model/` and runs headless. The frontend
+  reaches it only through the pywebview JS API, which serializes World state
+  to/from JSON. Keep `api.py` thin — it marshals data, it does not hold logic.
+  This keeps the hard part testable without a webview.
+- **Offline-first.** The app makes no network calls at runtime. Bundle all assets
+  (fonts, scripts, styles) locally; nothing loads from a CDN.
 - **Recompute on change.** The model is steady-state, not a tick-by-tick
   simulation. Every machine and pipe runs continuously at its effective rate;
   on any edit, recompute balances. There is no event loop over discrete items.
@@ -172,28 +190,23 @@ status colors, mono type for every id/label/metric, and a display sans for
 everything else. Read that file before doing UI work and use its `:root` tokens as
 the only palette — don't introduce new hues.
 
-That guide is written for web/CSS. We're on Qt, so it translates rather than
-copies:
+Because the app is a web UI in a system webview, the guide applies almost
+directly — paste the `:root` tokens, reuse the component recipes as CSS/className
+styling, and the glass/glow/shadow effects (`backdrop-filter`, `box-shadow`,
+`drop-shadow`) all work. Two adjustments for our context:
 
-- **Tokens** — define the `:root` colors once as a Python module of constants and
-  reuse them everywhere: in QSS stylesheet strings, in `QPalette`, and in canvas
-  painting. The hex values are the source of truth; keep them identical to the
-  guide.
-- **QSS** — Qt Style Sheets cover borders, radii, backgrounds, padding, and font
-  properties, so most component recipes (segmented control, tool button, chips,
-  inputs, meters, list rows) port over almost directly.
-- **Fonts** — don't use the Google Fonts `@import`. Bundle IBM Plex Mono and Space
-  Grotesk (`.ttf`) in the repo and load them with `QFontDatabase.addApplicationFont`
-  at startup.
-- **No Qt equivalent:** `backdrop-filter` (glass blur) and CSS `box-shadow` aren't
-  supported by QSS. Approximate glow and elevation with
-  `QGraphicsDropShadowEffect`, and treat "dark glass" panels as solid translucent
-  `--panel` fills rather than real backdrop blur unless a specific widget warrants
-  `QGraphicsBlurEffect`. The radial background glow can be painted in a
-  `paintEvent` with `QRadialGradient`.
-- **Canvas** — ports, pipes, and node bodies are custom-painted `QGraphicsItem`s,
-  not DOM. Pull their stroke/fill colors from the same token constants; apply the
-  cyan glow to the selected/live element only.
+- **Bundle fonts locally.** Don't use the Google Fonts `@import`; the app is
+  offline-first. Ship IBM Plex Mono and Space Grotesk as local `woff2` files and
+  `@font-face` them.
+- **Check across webviews.** Rendering differs between platform webviews
+  (Chromium/WebView2 on Windows, WebKit on macOS and Linux). Verify
+  `backdrop-filter` and font smoothing on each target; where `backdrop-filter` is
+  weak, fall back to a solid translucent `--panel` fill.
+
+Canvas: nodes, ports (React Flow handles), and pipes (edges) are React Flow
+elements styled with the same tokens — node bodies are `div`s, edges are SVG paths
+(color by category, thickness by flow, dashed for shortfall). Apply the cyan glow
+to the selected/live element only.
 
 Still to decide before the palette is complete (the guide doesn't cover our
 domain states directly):
