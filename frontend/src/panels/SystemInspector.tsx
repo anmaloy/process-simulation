@@ -138,7 +138,6 @@ export function SystemInspector({
                   .map((n) => ({
                     value: n.id,
                     label: nodeLabel(n.id),
-                    hint: n.id,
                   })) as ComboOption[]
               }
               placeholder="+ add a member node…"

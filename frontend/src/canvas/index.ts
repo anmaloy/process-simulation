@@ -15,6 +15,7 @@ export {
   freshId,
   MACHINE_NODE_TYPE,
   PIPE_EDGE_TYPE,
+  DEF_DRAG_MIME,
 } from "./graph";
 export type {
   MachineNodeData,

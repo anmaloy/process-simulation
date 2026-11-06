@@ -308,9 +308,11 @@ tests/           # pytest for engine/model; frontend tests added later
   storage. `energySource` ∈ `electric` / `liquid` / `fuel` (absent = passive)
   says how the machine is powered; `sourceItemId` names the carrier it consumes.
   A **consumer** sets `baseEnergyConsumption` (EU/s drawn to run its recipe). A
-  **converter** sets `outputItemId` + `maxFluidRate` (`R`) and optional
-  `efficiency` (`w`, waste fraction) — it turns its source into that output
-  carrier (fuel→steam, or steam→electricity). A **storage** def sets `storage`
+  **converter** sets `outputItemId` + `maxFluidRate` and optional
+  `efficiency` (`w`, waste fraction) — it spends its source's energy to turn an
+  optional `inputItemId` **material** into that output carrier (a boiler burns
+  fuel to heat water → steam; a turbine spends steam → electricity with no
+  separate material). A **storage** def sets `storage`
   (`{category, capacity}`) and is a transparent buffer. Nothing here names a
   specific fluid — the carriers are just items (content).
 - **MachineNode** — a placed machine bound to a recipe, an overclock multiplier,
@@ -361,8 +363,16 @@ out of the material feedstock/yield lists (it is the grid, reported as
 `netEnergy`), but a power shortage still shows as a throttled duty + a bottleneck.
 
 The fuel→output conversion math is unchanged (see `engine/energy.py`): with max
-rate `R`, draw `D`, waste `w`, the converter consumes its source (a fuel by its
-`eu`, else a liquid 1:1) and emits its output carrier as a routed item.
+rate `R`, draw `D`, waste `w`, the converter consumes its source for *energy* (a
+fuel by its `eu`, else a liquid 1:1) and, when `inputItemId` is set, consumes
+that **material** 1:1 with the output volume (water → steam), emitting the output
+carrier as a routed item.
+
+**Units.** The engine is canonical **per second**. A tick is 1/20 s, so the UI
+edits/shows energy and converter output rates **per tick** (EU/t, mB/t), while
+recipe amounts and material flows read **per second** — the two bases are a ×20
+conversion applied only at the UI boundary (`overlay/units.ts`), so the engine
+and its tests stay per-second.
 
 Pipes are **pure transfer vehicles** — only `movementCapacity × overclock` caps
 sustained flow; pipe storage is ignored in the steady-state balance.

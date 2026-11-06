@@ -39,23 +39,33 @@ export function formatRate(rate: number): string {
 
 import type { Category } from "../bridge";
 
-/** Per-category unit for a quantity: items (unitless), mB (liquids), EU (energy). */
-const CATEGORY_UNIT: Record<Category, string> = {
-  solid: "",
-  liquid: " mB",
-  energy: " EU",
-};
+/** Simulation ticks per second — energy is measured per tick (EU/t). */
+export const TICKS_PER_SECOND = 20;
 
-/** Format a per-second rate with its category unit, e.g. liquids → "256 mB/s". */
+/** Canonical (per-second) energy → the per-tick value the UI edits/shows. */
+export const toPerTick = (perSecond: number): number => perSecond / TICKS_PER_SECOND;
+/** A per-tick value the user typed → the canonical per-second value stored. */
+export const toPerSecond = (perTick: number): number => perTick * TICKS_PER_SECOND;
+
+/**
+ * Format a per-second rate with its category unit. Materials read per second
+ * (mB/s for liquids, /s for solids); energy reads per tick (EU/t, 20 ticks/s),
+ * so the two bases stay convertible.
+ */
 export function formatRateFor(category: Category | undefined, rate: number): string {
+  if (category === "energy") {
+    const { value, suffix } = scaleMagnitude(toPerTick(rate));
+    return `${value}${suffix} EU/t`;
+  }
   const { value, suffix } = scaleMagnitude(rate);
-  const unit = category ? CATEGORY_UNIT[category] : "";
+  const unit = category === "liquid" ? " mB" : "";
   return `${value}${suffix}${unit}/s`;
 }
 
-/** Format an energy balance in EU/s, keeping an explicit sign for net energy. */
-export function formatEnergy(eu: number): string {
-  const sign = eu > 0 ? "+" : eu < 0 ? "−" : "";
-  const { value, suffix } = scaleMagnitude(Math.abs(eu));
-  return `${sign}${value}${suffix} EU/s`;
+/** Format an energy balance in EU/t, keeping an explicit sign for net energy. */
+export function formatEnergy(euPerSecond: number): string {
+  const perTick = toPerTick(euPerSecond);
+  const sign = perTick > 0 ? "+" : perTick < 0 ? "−" : "";
+  const { value, suffix } = scaleMagnitude(Math.abs(perTick));
+  return `${sign}${value}${suffix} EU/t`;
 }

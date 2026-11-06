@@ -185,6 +185,16 @@
   font-size: 12px;
   color: var(--ink-dim);
 }
+.readout-leaf.clickable {
+  cursor: pointer;
+  border-radius: 6px;
+  margin: 0 -6px;
+  padding: 2px 6px;
+}
+.readout-leaf.clickable:hover {
+  background: var(--panel-2);
+  color: var(--ink);
+}
 .readout-dot {
   width: 7px;
   height: 7px;

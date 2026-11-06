@@ -32,6 +32,7 @@ import {
 } from "./fields";
 import { Combobox, EditableId, type ComboOption } from "../ui";
 import { categoryColor } from "../canvas";
+import { toPerSecond, toPerTick } from "../overlay/units";
 
 const CATEGORY_OPTIONS = [
   { value: "solid", label: "solid" },
@@ -43,10 +44,10 @@ const DIRECTION_OPTIONS = [
   { value: "out", label: "out" },
 ];
 const SOURCE_OPTIONS = [
-  { value: "", label: "none (passive)" },
-  { value: "electric", label: "electric (grid)" },
-  { value: "liquid", label: "liquid (e.g. steam)" },
-  { value: "fuel", label: "fuel item" },
+  { value: "", label: "none" },
+  { value: "electric", label: "electric" },
+  { value: "liquid", label: "liquid" },
+  { value: "fuel", label: "fuel" },
 ];
 
 /** mB for liquids, EU for energy, items for solids. */
@@ -56,7 +57,6 @@ function itemOpts(items: Item[]): ComboOption[] {
   return items.map((i) => ({
     value: i.id,
     label: i.name ?? i.id,
-    hint: i.id,
     dot: categoryColor(i.category),
   }));
 }
@@ -155,7 +155,7 @@ function AllowedRecipes({
 
   const addable: ComboOption[] = recipes
     .filter((r) => !allowed.includes(r.id))
-    .map((r) => ({ value: r.id, label: r.name ?? r.id, hint: r.id }));
+    .map((r) => ({ value: r.id, label: r.name ?? r.id }));
 
   return (
     <div className="field">
@@ -209,6 +209,8 @@ export function MachineDefInspector({
         : items.filter((i) => i.category === "liquid");
   // A converter's output is a liquid (steam) or energy (electricity) carrier.
   const outputItems = items.filter((i) => i.category === "liquid" || i.category === "energy");
+  const outputCat = items.find((i) => i.id === def.outputItemId)?.category;
+  const outputUnit = outputCat === "energy" ? "EU/t" : outputCat === "liquid" ? "mB/t" : "/t";
 
   // Switch energy source, clearing every field the new source no longer uses.
   const setSource = (next: string) => {
@@ -279,7 +281,7 @@ export function MachineDefInspector({
 
       {source === "electric" && (
         <>
-          <Field label="power carrier" hint="routed over electric connections (transfer-limited)">
+          <Field label="power carrier" hint="routed over electric connections">
             <Combobox
               value={def.sourceItemId ?? ""}
               onChange={(v) => onChange(withField(def, "sourceItemId", v))}
@@ -288,11 +290,11 @@ export function MachineDefInspector({
             />
           </Field>
           <OptionalNumber
-            label="energy draw (EU/s)"
-            value={def.baseEnergyConsumption}
-            onSet={(v) => onChange(withField(def, "baseEnergyConsumption", v))}
+            label="energy draw (EU/t)"
+            value={def.baseEnergyConsumption != null ? toPerTick(def.baseEnergyConsumption) : undefined}
+            onSet={(v) => onChange(withField(def, "baseEnergyConsumption", toPerSecond(v)))}
             onClear={() => onChange(withoutField(def, "baseEnergyConsumption"))}
-            fallback={20}
+            fallback={1}
             min={0}
             hint="drawn while running"
           />
@@ -301,24 +303,34 @@ export function MachineDefInspector({
 
       {(source === "liquid" || source === "fuel") && (
         <>
-          <Field label={source === "fuel" ? "fuel item" : "source liquid"}>
+          <Field label={source === "fuel" ? "fuel" : "source liquid"}>
             <Combobox
               value={def.sourceItemId ?? ""}
               onChange={(v) => onChange(withField(def, "sourceItemId", v))}
               options={itemOpts(sourceItems)}
-              placeholder={sourceItems.length ? "pick a carrier…" : "no matching items"}
+              placeholder={sourceItems.length ? "burns for energy…" : "no matching items"}
             />
           </Field>
           <Field label="converter">
             <Checkbox
               checked={isConverter}
               onChange={setConverter}
-              label="turns its source into an output carrier"
+              label="generates an output from its source"
             />
           </Field>
           {isConverter ? (
             <>
-              <Field label="output carrier" hint="the liquid or electricity it produces">
+              <Field label="material in" hint="consumed and turned into the output (e.g. water → steam); leave unset if the source itself is spent">
+                <Combobox
+                  value={def.inputItemId ?? ""}
+                  onChange={(v) =>
+                    onChange(v ? withField(def, "inputItemId", v) : withoutField(def, "inputItemId"))
+                  }
+                  options={[{ value: "", label: "— none —" }, ...itemOpts(items)]}
+                  placeholder="pick a material…"
+                />
+              </Field>
+              <Field label="produces">
                 <Combobox
                   value={def.outputItemId ?? ""}
                   onChange={(v) => onChange(withField(def, "outputItemId", v))}
@@ -327,34 +339,34 @@ export function MachineDefInspector({
                 />
               </Field>
               <OptionalNumber
-                label="max output rate (R)"
-                value={def.maxFluidRate}
-                onSet={(v) => onChange(withField(def, "maxFluidRate", v))}
+                label={`output rate (${outputUnit})`}
+                value={def.maxFluidRate != null ? toPerTick(def.maxFluidRate) : undefined}
+                onSet={(v) => onChange(withField(def, "maxFluidRate", toPerSecond(v)))}
                 onClear={() => onChange(withoutField(def, "maxFluidRate"))}
-                fallback={256}
+                fallback={8}
                 min={0}
-                hint="peak output per second at full draw"
+                hint="how much output it makes per tick"
               />
               <OptionalNumber
-                label="efficiency (waste w)"
+                label="energy loss"
                 value={def.efficiency}
                 onSet={(v) => onChange(withField(def, "efficiency", v))}
                 onClear={() => onChange(withoutField(def, "efficiency"))}
                 min={0}
                 max={1}
                 step={0.05}
-                hint="0 = lossless (η=1); 0.8 = Large Steam Boiler"
+                hint="fraction wasted below full load; 0 = lossless"
               />
             </>
           ) : (
             <OptionalNumber
-              label="energy draw (EU/s)"
-              value={def.baseEnergyConsumption}
-              onSet={(v) => onChange(withField(def, "baseEnergyConsumption", v))}
+              label="energy draw (EU/t)"
+              value={def.baseEnergyConsumption != null ? toPerTick(def.baseEnergyConsumption) : undefined}
+              onSet={(v) => onChange(withField(def, "baseEnergyConsumption", toPerSecond(v)))}
               onClear={() => onChange(withoutField(def, "baseEnergyConsumption"))}
-              fallback={20}
+              fallback={1}
               min={0}
-              hint="EU-equivalent of the source drawn while running"
+              hint="source consumed while running"
             />
           )}
         </>
@@ -364,7 +376,7 @@ export function MachineDefInspector({
         <Checkbox
           checked={def.storage != null}
           onChange={toggleStorage}
-          label="this machine is a buffer (transparent passthrough)"
+          label="this machine is a buffer"
         />
       </Field>
       {def.storage != null && (
@@ -378,7 +390,7 @@ export function MachineDefInspector({
               options={CATEGORY_OPTIONS}
             />
           </Field>
-          <Field label={`capacity (${UNIT[def.storage.category]})`}>
+          <Field label={`capacity (${UNIT[def.storage.category]})`} hint="per unit; parallel count multiplies it">
             <NumberInput
               value={def.storage.capacity}
               onChange={(v) =>
@@ -392,21 +404,6 @@ export function MachineDefInspector({
 
       <AllowedRecipes def={def} world={world} onChange={onChange} />
       <SlotList slots={def.slots} onChange={(v) => onChange(withField(def, "slots", v))} />
-
-      <OptionalNumber
-        label="overclock min"
-        value={def.overclockMin}
-        onSet={(v) => onChange(withField(def, "overclockMin", v))}
-        onClear={() => onChange(withoutField(def, "overclockMin"))}
-        min={0}
-      />
-      <OptionalNumber
-        label="overclock max"
-        value={def.overclockMax}
-        onSet={(v) => onChange(withField(def, "overclockMax", v))}
-        onClear={() => onChange(withoutField(def, "overclockMax"))}
-        min={0}
-      />
     </div>
   );
 }

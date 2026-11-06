@@ -20,7 +20,7 @@ import type {
   ScopeReport,
   World,
 } from "./bridge";
-import { Canvas, categoryColor, type CanvasSelection } from "./canvas";
+import { Canvas, categoryColor, DEF_DRAG_MIME, type CanvasSelection } from "./canvas";
 import { Inspector, type InspectorSelection } from "./panels";
 import { BalanceReadout, Legends } from "./overlay";
 import { centroidOf, collapseState, freshSystemId } from "./systems";
@@ -501,10 +501,23 @@ function Library({
     energy: categoryColor("energy"),
   };
 
+  // Sort each rail list A→Z by its display label (#9).
+  const cmp = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  const nodes = [...(world.nodes ?? [])].sort((a, b) =>
+    cmp(defName.get(a.machineDefId) ?? a.machineDefId, defName.get(b.machineDefId) ?? b.machineDefId),
+  );
+  const systems = [...(world.systems ?? [])].sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
+  const items = [...(world.items ?? [])].sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
+  const recipes = [...(world.recipes ?? [])].sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
+  const machineDefs = [...(world.machineDefs ?? [])].sort((a, b) =>
+    cmp(a.name ?? a.id, b.name ?? b.id),
+  );
+
   return (
     <>
       <Section title="Nodes" empty={(world.nodes ?? []).length === 0}>
-        {(world.nodes ?? []).map((n) => (
+        {nodes.map((n) => (
           <Leaf
             key={n.id}
             label={defName.get(n.machineDefId) ?? n.machineDefId}
@@ -517,7 +530,7 @@ function Library({
       </Section>
 
       <Section title="Systems" empty={(world.systems ?? []).length === 0}>
-        {(world.systems ?? []).map((s) => (
+        {systems.map((s) => (
           <Leaf
             key={s.id}
             label={s.name ?? s.id}
@@ -534,7 +547,7 @@ function Library({
         empty={(world.items ?? []).length === 0}
         onAdd={() => onCreate("item")}
       >
-        {(world.items ?? []).map((it) => (
+        {items.map((it) => (
           <Leaf
             key={it.id}
             label={it.name ?? it.id}
@@ -551,7 +564,7 @@ function Library({
         empty={(world.recipes ?? []).length === 0}
         onAdd={() => onCreate("recipe")}
       >
-        {(world.recipes ?? []).map((r) => (
+        {recipes.map((r) => (
           <Leaf
             key={r.id}
             label={r.name ?? r.id}
@@ -568,7 +581,7 @@ function Library({
         empty={(world.machineDefs ?? []).length === 0}
         onAdd={() => onCreate("machineDef")}
       >
-        {(world.machineDefs ?? []).map((d) => (
+        {machineDefs.map((d) => (
           <Leaf
             key={d.id}
             label={d.name ?? d.id}
@@ -576,6 +589,7 @@ function Library({
             dot="var(--s-teach)"
             selected={isSel("machineDef", d.id)}
             onClick={() => onSelect({ kind: "machineDef", id: d.id })}
+            dragDefId={d.id}
           />
         ))}
       </Section>
@@ -620,15 +634,30 @@ function Leaf({
   dot,
   selected,
   onClick,
+  dragDefId,
 }: {
   label: string;
   id: string;
   dot: string;
   selected: boolean;
   onClick: () => void;
+  /** When set, the leaf is draggable and carries this def id onto the canvas. */
+  dragDefId?: string;
 }) {
   return (
-    <div className={`leaf clickable ${selected ? "selected" : ""}`} onClick={onClick}>
+    <div
+      className={`leaf clickable ${selected ? "selected" : ""} ${dragDefId ? "draggable" : ""}`}
+      onClick={onClick}
+      draggable={dragDefId != null}
+      onDragStart={
+        dragDefId != null
+          ? (e) => {
+              e.dataTransfer.setData(DEF_DRAG_MIME, dragDefId);
+              e.dataTransfer.effectAllowed = "copy";
+            }
+          : undefined
+      }
+    >
       <span className="dot" style={{ background: dot }} />
       <span>{label}</span>
       <span className="leaf-id">{id}</span>
@@ -714,6 +743,7 @@ function Stage(props: StageProps) {
         selectedNodeId={props.selectedNodeId}
         systemId={props.systemId}
         onSystemChange={props.onSystemChange}
+        onSelectNode={(id) => props.onSelect({ kind: "node", id })}
       />
     </>
   );

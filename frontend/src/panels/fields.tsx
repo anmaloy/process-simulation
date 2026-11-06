@@ -10,7 +10,7 @@
 // end, efficiency on a non-fuel machine) is not rendered at all — that gating
 // lives in the inspectors, which simply don't mount the row.
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** A labeled inspector row. */
 export function Field({
@@ -47,13 +47,30 @@ export function TextInput({
   placeholder?: string;
   mono?: boolean;
 }) {
+  // Locally buffered so the caret survives the async World round-trip: the input
+  // shows `local` (updated synchronously with each keystroke), and only syncs
+  // from `value` when it changes from the *outside* (undo, rename), not when the
+  // host echoes back exactly what we just emitted. Fixes the caret-jump bug (#12).
+  const [local, setLocal] = useState(value);
+  const lastEmit = useRef(value);
+  useEffect(() => {
+    if (value !== lastEmit.current) {
+      setLocal(value);
+      lastEmit.current = value;
+    }
+  }, [value]);
   return (
     <input
       className={`field-input ${mono ? "mono" : ""}`}
       type="text"
-      value={value}
+      value={local}
       placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        const v = e.target.value;
+        setLocal(v);
+        lastEmit.current = v;
+        onChange(v);
+      }}
     />
   );
 }

@@ -33,7 +33,6 @@ export function NodeInspector({
   const recipeOptions = recipePool.map((r) => ({
     value: r.id,
     label: r.name ?? r.id,
-    hint: r.id,
   }));
 
   const bounds: string[] = [];

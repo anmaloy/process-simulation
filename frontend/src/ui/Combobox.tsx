@@ -157,7 +157,7 @@ export function Combobox({
             position: "fixed",
             top: rect.bottom + 4,
             left: rect.left,
-            width: Math.max(rect.width, 200),
+            width: Math.max(rect.width, 240),
           }}
         >
           <input

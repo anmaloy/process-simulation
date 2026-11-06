@@ -20,6 +20,9 @@ import { parsePortId, portId } from "./ports";
 export const MACHINE_NODE_TYPE = "machine";
 export const PIPE_EDGE_TYPE = "pipe";
 
+/** Drag payload key carrying a machine-def id from the sidebar to the canvas. */
+export const DEF_DRAG_MIME = "application/x-process-sim-def";
+
 /** What a rendered machine node carries for its custom view. */
 export interface MachineNodeData extends Record<string, unknown> {
   node: MachineNode;
@@ -84,12 +87,11 @@ export function worldToEdges(world: World): RfPipeEdge[] {
   }));
 }
 
-/** First id of the form `${prefix}-N` not already taken in `existing`. */
+/** First id of the form `${prefix}_N` (N ≥ 1) not already taken in `existing`. */
 export function freshId(prefix: string, existing: Iterable<string>): string {
   const taken = new Set(existing);
-  if (!taken.has(prefix)) return prefix;
   for (let i = 1; ; i++) {
-    const candidate = `${prefix}-${i}`;
+    const candidate = `${prefix}_${i}`;
     if (!taken.has(candidate)) return candidate;
   }
 }

@@ -11,7 +11,6 @@ function itemOptions(world: World): ComboOption[] {
   return (world.items ?? []).map((i) => ({
     value: i.id,
     label: i.name ?? i.id,
-    hint: i.id,
     dot: categoryColor(i.category),
   }));
 }
@@ -30,6 +29,10 @@ function StackList({
   const rows = stacks ?? [];
   const opts = itemOptions(world);
   const firstItem = world.items?.[0]?.id ?? "";
+  const unitOf = (itemId: string) => {
+    const cat = world.items?.find((i) => i.id === itemId)?.category;
+    return cat === "liquid" ? "mB" : cat === "energy" ? "EU" : "×";
+  };
 
   const setRow = (i: number, patch: Partial<Stack>) => {
     const next = rows.map((s, j) => (j === i ? { ...s, ...patch } : s));
@@ -55,6 +58,7 @@ function StackList({
             dense
           />
           <NumberInput value={s.quantity} onChange={(v) => setRow(i, { quantity: v })} min={0} />
+          <span className="stack-unit mono">{unitOf(s.itemId)}</span>
           <button type="button" className="row-del" title="Remove" onClick={() => removeRow(i)}>
             ×
           </button>
