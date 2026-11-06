@@ -276,6 +276,17 @@ I/O, energy balance, bottleneck list from P2d). Scope switcher: machine / proces
 **Done when:** editing a chain updates status colors and the scope readout live;
 the four scopes each display their aggregated stats correctly.
 
+**Status: done.** `frontend/src/overlay/` holds the overlay. `status.ts` is the
+single status color/label constant (node view + legends + readout read it);
+`units.ts` is the display auto-scaling seam (decision #5). Nodes show status as a
+bar + chip + faint ring; edges thicken by flow and dash when they feed a starved
+node; cyan stays reserved for the selection. `BalanceReadout` carries the scope
+switcher and the external-I/O / net-energy / bottleneck readout; recompute is
+effect-driven in `App.tsx` (World or scope-target change → refresh; no target →
+clear). The engine's `ScopeReport` gained a `pipeFlows` field (per-pipe flow +
+starved flag) to drive the edge overlay — an additive contract bump mirrored in
+the TS type and covered by pytest.
+
 **Status colors (decided):** OK → green (`--s-ref`), shortfall → red (`--s-bad`,
 added to the palette), overflow → yellow (`--s-learn`), stalled/unpowered → grey
 (`--s-not`). Read them from a single color-map constant.

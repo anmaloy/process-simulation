@@ -29,12 +29,13 @@ from ..model import (
     PipeEndRole,
     World,
 )
-from .balance import NodeBalance, balance_node
+from .balance import NodeBalance, Status, balance_node
 from .flow import Claim, pipe_throughput, resolve_extract, resolve_insert, will_reinsert
 from .node import NodeComputation, compute_node
 
 __all__ = [
     "Bottleneck",
+    "PipeFlow",
     "ScopeReport",
     "compute_scope",
     "compute_world",
@@ -62,6 +63,28 @@ class Bottleneck:
 
 
 @dataclass
+class PipeFlow:
+    """Resolved steady-state flow on one in-scope pipe (P8 overlay seam).
+
+    ``flow`` is the total rate routed across the pipe (summed over the items it
+    carries). ``shortfall`` is true when the pipe feeds a node that is starved of
+    an item this pipe carries — the "downstream end is starved" signal the canvas
+    draws as a dashed edge.
+    """
+
+    pipe_id: str
+    flow: float
+    shortfall: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "pipeId": self.pipe_id,
+            "flow": self.flow,
+            "shortfall": self.shortfall,
+        }
+
+
+@dataclass
 class ScopeReport:
     """Aggregated steady-state stats for one scope."""
 
@@ -72,6 +95,7 @@ class ScopeReport:
     computations: dict[str, NodeComputation] = field(default_factory=dict)
     balances: dict[str, NodeBalance] = field(default_factory=dict)
     bottlenecks: list[Bottleneck] = field(default_factory=list)
+    pipe_flows: dict[str, PipeFlow] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -80,6 +104,7 @@ class ScopeReport:
             "externalOutputs": dict(self.external_outputs),
             "balances": {k: v.to_dict() for k, v in self.balances.items()},
             "bottlenecks": [b.to_dict() for b in self.bottlenecks],
+            "pipeFlows": {k: v.to_dict() for k, v in self.pipe_flows.items()},
         }
         if self.net_energy is not None:
             out["netEnergy"] = self.net_energy
@@ -287,6 +312,10 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     supplied_internal: dict[str, dict[str, float]] = {nid: {} for nid in ids}
     demanded_internal: dict[str, dict[str, float]] = {nid: {} for nid in ids}
     internal_flow: dict[str, float] = {}  # item -> total internally routed
+    # Per-pipe accumulation for the P8 overlay: routed flow, its sink, and the
+    # items that rode it (so a dashed-edge "starved downstream" check can look at
+    # the sink's balance for exactly those items).
+    pipe_acc: dict[str, dict[str, object]] = {}
 
     items = set(supply) | set(demand)
     for item_id in items:
@@ -306,6 +335,12 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
                 demanded_internal[edge.source].get(item_id, 0.0) + flow
             )
             internal_flow[item_id] = internal_flow.get(item_id, 0.0) + flow
+            acc = pipe_acc.setdefault(
+                edge.pipe_id, {"flow": 0.0, "sink": edge.sink, "items": set()}
+            )
+            acc["flow"] = float(acc["flow"]) + flow  # type: ignore[arg-type]
+            items_on_pipe: set[str] = acc["items"]  # type: ignore[assignment]
+            items_on_pipe.add(item_id)
 
     # External I/O: demand not met internally in, production not used internally out.
     external_inputs: dict[str, float] = {}
@@ -339,6 +374,23 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
 
     bottlenecks.sort(key=lambda b: b.shortfall, reverse=True)
 
+    # Per-pipe flow + a dashed-edge flag: a pipe reads as starved when the node
+    # it feeds is short of an item the pipe carries.
+    pipe_flows: dict[str, PipeFlow] = {}
+    for pipe_id, acc in pipe_acc.items():
+        sink_id: str = acc["sink"]  # type: ignore[assignment]
+        items_on_pipe: set[str] = acc["items"]  # type: ignore[assignment]
+        sink_balance = balances.get(sink_id)
+        starved = bool(
+            sink_balance
+            and any(
+                (ib := sink_balance.inputs.get(item_id)) is not None
+                and ib.status is Status.SHORTFALL
+                for item_id in items_on_pipe
+            )
+        )
+        pipe_flows[pipe_id] = PipeFlow(pipe_id, float(acc["flow"]), starved)
+
     net_energy = _sum_net_energy(computations.values())
 
     return ScopeReport(
@@ -349,6 +401,7 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         computations=computations,
         balances=balances,
         bottlenecks=bottlenecks,
+        pipe_flows=pipe_flows,
     )
 
 

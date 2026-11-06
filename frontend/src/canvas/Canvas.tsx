@@ -40,6 +40,7 @@ import {
   pipeFromConnection,
   worldToEdges,
   worldToNodes,
+  type PipeEdgeData,
   type RfMachineNode,
   type RfPipeEdge,
 } from "./graph";
@@ -95,6 +96,7 @@ function CanvasInner(props: CanvasProps) {
   // rides in from the latest report; absent → the node reads neutral.
   useEffect(() => {
     const nodeStatus = report?.balances ?? {};
+    const pipeFlows = report?.pipeFlows ?? {};
     setNodes(
       worldToNodes(world).map((n) => ({
         ...n,
@@ -103,10 +105,15 @@ function CanvasInner(props: CanvasProps) {
       })),
     );
     setEdges(
-      worldToEdges(world).map((e) => ({
-        ...e,
-        selected: selection?.kind === "pipe" && selection.id === e.id,
-      })),
+      worldToEdges(world).map((e) => {
+        const pf = pipeFlows[e.id];
+        const base = e.data as PipeEdgeData;
+        return {
+          ...e,
+          selected: selection?.kind === "pipe" && selection.id === e.id,
+          data: { ...base, flow: pf?.flow, shortfall: pf?.shortfall },
+        };
+      }),
     );
   }, [world, selection, report, setNodes, setEdges]);
 

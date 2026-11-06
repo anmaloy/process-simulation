@@ -139,6 +139,13 @@ export interface Bottleneck {
   shortfall: number;
 }
 
+/** Resolved steady-state flow on one in-scope pipe (P8 overlay). */
+export interface PipeFlow {
+  pipeId: string;
+  flow: number;
+  shortfall: boolean;
+}
+
 export interface ScopeReport {
   nodeIds: string[];
   externalInputs: Record<string, number>;
@@ -146,6 +153,8 @@ export interface ScopeReport {
   netEnergy?: number;
   balances: Record<string, NodeBalance>;
   bottlenecks: Bottleneck[];
+  /** Per-pipe flow + dashed-edge flag, keyed by pipe id (P8). */
+  pipeFlows?: Record<string, PipeFlow>;
 }
 
 // --- IO / library --------------------------------------------------------- //

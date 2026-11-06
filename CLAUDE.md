@@ -79,7 +79,26 @@ efficiency/`maxFluidRate`, an `in`-only pipe end shows no extract priority, and
 flipping a role or the fuel flag clears the now-inapplicable terms. Every field
 edit routes through the P4 `apply_edit` upsert and is followed by a `recompute`,
 so edits persist and the balance refreshes; the returned World reseeds the
-canvas. The balance overlay (P8) layers onto this next, per `WORKFLOW.md`.
+canvas.
+
+Phase 8 is done: the balance overlay (`frontend/src/overlay/`). The engine's
+`ScopeReport` is made legible on the canvas and in a floating readout. Nodes
+carry their balance status (OK green / shortfall red / overflow yellow /
+stalled grey) as a left bar, a status chip, and a faint body ring; pipe edges
+thicken with resolved flow and dash when they feed a starved node; the cyan glow
+stays reserved for the selected element. `status.ts` is the single status
+color/label map (read by the node view, the legends, and the readout);
+`units.ts` is the single display-scaling seam (resolved decision #5 — canonical
+units stored, values auto-scaled to k/M/G and sub-unit for readability).
+`Legends` renders the category + status keys; `BalanceReadout` shows the chosen
+scope's external I/O, net energy, and ranked bottlenecks, with a scope switcher
+(machine / process / system / world). Scope recompute is effect-driven in
+`App.tsx`: any edit (which replaces the World) or scope-target change refreshes
+the report, and a scope with no target (e.g. machine scope with nothing
+selected) clears it rather than fabricating one. To feed the edge overlay, the
+engine's `ScopeReport` gained a **`pipeFlows`** field (per-pipe resolved `flow` +
+a `shortfall` flag) — an additive, documented contract bump mirrored in the TS
+`ScopeReport` type.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
@@ -129,7 +148,8 @@ model's camelCase wire format.
 - **`recompute` scopes**: `world` (default), `node` (`nodeId` — a single
   machine), `process` (`nodeId` — its connected component via `trace_process`),
   `system` (`systemId`). The payload is `ScopeReport.to_dict()` (external I/O,
-  per-node balances, net energy, ranked bottlenecks).
+  per-node balances, net energy, ranked bottlenecks, and `pipeFlows` — per-pipe
+  resolved flow + a starved-edge `shortfall` flag, added for the P8 overlay).
 - **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
   `error`.
 
@@ -178,6 +198,7 @@ frontend/        # web UI (Vite + React + TypeScript)
     styles/      # palette tokens + shell CSS + local @font-face (woff2)
     canvas/      # React Flow graph: custom nodes, edges, ports, color map (P6)
     panels/      # docked inspector + per-kind editors, sparse-field kit (P7)
+    overlay/     # balance overlay: status map, legends, scope readout (P8)
 tests/           # pytest for engine/model; frontend tests added later
 ```
 

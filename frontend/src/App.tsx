@@ -15,13 +15,17 @@ import type {
   EntityKind,
   MachineNode,
   Pipe,
+  RecomputeRequest,
+  Scope,
   ScopeReport,
   World,
 } from "./bridge";
 import { Canvas, categoryColor, type CanvasSelection } from "./canvas";
 import { Inspector, type InspectorSelection } from "./panels";
+import { BalanceReadout, Legends } from "./overlay";
 import "./canvas/canvas.css";
 import "./panels/panels.css";
+import "./overlay/overlay.css";
 
 type Conn =
   | { phase: "connecting" }
@@ -36,6 +40,13 @@ export function App() {
   const [world, setWorld] = useState<World | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [report, setReport] = useState<ScopeReport | null>(null);
+  // The scope the balance overlay reports on (default: the whole world). A
+  // machine/process scope targets the selected node; a system scope targets a
+  // chosen system.
+  const [scope, setScope] = useState<Scope>("world");
+  const [systemId, setSystemId] = useState<string | null>(null);
+
+  const selectedNodeId = selection?.kind === "node" ? selection.id : null;
 
   useEffect(() => {
     let live = true;
@@ -61,22 +72,17 @@ export function App() {
     };
   }, []);
 
-  // Apply a sequence of edits, then recompute the world balance. The final
-  // World and the fresh report are stored; a failure surfaces in the stage.
+  // Apply a sequence of edits and store the resulting World. The balance
+  // recompute is driven by an effect keyed on the World + scope, so every edit
+  // (which replaces the World) refreshes the overlay without duplicating the
+  // recompute logic here.
   const applyEdits = useCallback(
     async (edits: Edit[]) => {
       if (!client || edits.length === 0) return;
       try {
         let next: World | null = null;
         for (const edit of edits) next = await client.applyEdit(edit);
-        if (next) {
-          setWorld(next);
-          try {
-            setReport(await client.recompute({ scope: "world" }));
-          } catch {
-            // Recompute is best-effort here; an edit still persists.
-          }
-        }
+        if (next) setWorld(next);
       } catch (e) {
         setConn({
           phase: "error",
@@ -85,6 +91,66 @@ export function App() {
       }
     },
     [client],
+  );
+
+  // The recompute request for the current scope + target, or null when the
+  // chosen scope has no target yet (a machine/process scope with nothing
+  // selected, or a system scope with no system picked).
+  const recomputeReq = useMemo<RecomputeRequest | null>(() => {
+    switch (scope) {
+      case "world":
+        return { scope: "world" };
+      case "node":
+        return selectedNodeId ? { scope: "node", nodeId: selectedNodeId } : null;
+      case "process":
+        return selectedNodeId ? { scope: "process", nodeId: selectedNodeId } : null;
+      case "system":
+        return systemId ? { scope: "system", systemId } : null;
+      default:
+        return null;
+    }
+  }, [scope, selectedNodeId, systemId]);
+  // A primitive key so the recompute effect refires on a real target change but
+  // not on an unrelated selection change (e.g. clicking a node in world scope).
+  const reqKey = recomputeReq
+    ? `${recomputeReq.scope}:${recomputeReq.nodeId ?? ""}:${recomputeReq.systemId ?? ""}`
+    : "none";
+
+  // Recompute whenever the World changes (after any edit) or the scope target
+  // changes. An absent target clears the report so nothing is fabricated.
+  useEffect(() => {
+    if (!client) return;
+    if (!recomputeReq) {
+      setReport(null);
+      return;
+    }
+    let live = true;
+    client
+      .recompute(recomputeReq)
+      .then((r) => {
+        if (live) setReport(r);
+      })
+      .catch(() => {
+        if (live) setReport(null);
+      });
+    return () => {
+      live = false;
+    };
+    // recomputeReq is captured via reqKey (a stable primitive); world drives the
+    // post-edit refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, world, reqKey]);
+
+  // Switching scope: default a system scope to the first system if none picked.
+  const onScopeChange = useCallback(
+    (next: Scope) => {
+      if (next === "system" && !systemId) {
+        const first = world?.systems?.[0]?.id ?? null;
+        setSystemId(first);
+      }
+      setScope(next);
+    },
+    [systemId, world],
   );
 
   const upsert = (kind: EntityKind, entity: object): Edit => ({
@@ -171,6 +237,11 @@ export function App() {
           world={world}
           selection={canvasSelection}
           report={report}
+          scope={scope}
+          onScopeChange={onScopeChange}
+          selectedNodeId={selectedNodeId}
+          systemId={systemId}
+          onSystemChange={setSystemId}
           onAddNode={onAddNode}
           onMoveNode={onMoveNode}
           onAddPipe={onAddPipe}
@@ -332,6 +403,11 @@ interface StageProps {
   world: World | null;
   selection: CanvasSelection;
   report: ScopeReport | null;
+  scope: Scope;
+  onScopeChange: (scope: Scope) => void;
+  selectedNodeId: string | null;
+  systemId: string | null;
+  onSystemChange: (systemId: string) => void;
   onAddNode: (node: MachineNode) => void;
   onMoveNode: (id: string, x: number, y: number) => void;
   onAddPipe: (pipe: Pipe) => void;
@@ -370,7 +446,7 @@ function Stage(props: StageProps) {
 
   return (
     <>
-      <CategoryLegend />
+      <Legends />
       <Canvas
         world={world}
         selection={props.selection}
@@ -382,20 +458,15 @@ function Stage(props: StageProps) {
         onRemovePipes={props.onRemovePipes}
         onSelect={props.onSelect}
       />
+      <BalanceReadout
+        world={world}
+        report={props.report}
+        scope={props.scope}
+        onScopeChange={props.onScopeChange}
+        selectedNodeId={props.selectedNodeId}
+        systemId={props.systemId}
+        onSystemChange={props.onSystemChange}
+      />
     </>
-  );
-}
-
-function CategoryLegend() {
-  const cats: ("solid" | "liquid" | "energy")[] = ["solid", "liquid", "energy"];
-  return (
-    <div className="category-legend">
-      {cats.map((c) => (
-        <span className="legend-item mono" key={c}>
-          <span className="legend-dot" style={{ background: categoryColor(c) }} />
-          {c}
-        </span>
-      ))}
-    </div>
   );
 }
