@@ -31,10 +31,11 @@ the main reason for a web UI over a native toolkit (see `STYLE_GUIDE.md`).
 
 ## Project state
 
-Phase 0 (scaffold & toolchain) is done: the package layout, dependency
-manifests, and run/test commands below are real and wired. The engine, model,
-io, api, and frontend UI are still stubs — build them per the phase order in
-`WORKFLOW.md`.
+Phases 0–2 are done: the scaffold/toolchain (P0), the domain model with JSON
+round-trip (P1, `model/`), and the headless rate-balance engine (P2, `engine/`:
+per-node rates + EU→steam, per-node balance, asymmetric pipe-priority flow
+resolution, and scope aggregation — all covered by pytest). The io, api, and
+frontend UI are still stubs — build them per the phase order in `WORKFLOW.md`.
 
 ### Commands
 
