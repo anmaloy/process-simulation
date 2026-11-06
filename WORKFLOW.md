@@ -276,6 +276,17 @@ I/O, energy balance, bottleneck list from P2d). Scope switcher: machine / proces
 **Done when:** editing a chain updates status colors and the scope readout live;
 the four scopes each display their aggregated stats correctly.
 
+**Status: done.** `frontend/src/overlay/` holds the overlay. `status.ts` is the
+single status color/label constant (node view + legends + readout read it);
+`units.ts` is the display auto-scaling seam (decision #5). Nodes show status as a
+bar + chip + faint ring; edges thicken by flow and dash when they feed a starved
+node; cyan stays reserved for the selection. `BalanceReadout` carries the scope
+switcher and the external-I/O / net-energy / bottleneck readout; recompute is
+effect-driven in `App.tsx` (World or scope-target change → refresh; no target →
+clear). The engine's `ScopeReport` gained a `pipeFlows` field (per-pipe flow +
+starved flag) to drive the edge overlay — an additive contract bump mirrored in
+the TS type and covered by pytest.
+
 **Status colors (decided):** OK → green (`--s-ref`), shortfall → red (`--s-bad`,
 added to the palette), overflow → yellow (`--s-learn`), stalled/unpowered → grey
 (`--s-not`). Read them from a single color-map constant.
@@ -297,6 +308,20 @@ collapsed representation.
 stats; nesting works; expanding restores the members; balances are identical
 collapsed vs expanded.
 
+**Status: done.** The engine already scoped systems (P2d, nesting-safe); P9 adds
+the UI in `frontend/src/systems/`. Collapse is presentation only — pipes always
+reference the real member nodes, so the balance is identical folded or expanded
+(the model's `collapsed` flag is never read by the engine). `collapseState`
+computes which members fold away and which outermost collapsed systems render as
+nodes; `buildCanvasGraph` folds them, re-points boundary pipes to the system
+node (handles encode the member port as `b:<nodeId>:<port>`), and drops internal
+ones. A new pipe drawn to a collapsed system decodes that handle back to a real
+node→node pipe, so a group is genuinely connectable. Multi-select on the canvas
+offers "Group"; the `SystemInspector` edits membership, nesting (cycle-guarded),
+the collapsed flag, and exposed ports; a folded node shows member count + its
+aggregate status/energy (a per-system recompute). The `System` model gained
+optional `x`/`y` for the collapsed node's position.
+
 ---
 
 ## Phase 10 — App shell & packaging
@@ -315,6 +340,21 @@ target OS.
 **Done when:** `python app.py` opens the app with the built frontend, all assets
 load offline, and the glass effects either work or degrade cleanly on each target
 webview.
+
+**Status: done.** `backend/app.py` is the shell: it builds the thin `Api`,
+loads `frontend/dist/index.html` from disk via a `file://` URI (Vite `base:
+"./"` keeps asset paths relative), and binds the API to a pywebview window
+(deep-slate `background_color` so there's no white flash). All non-GUI logic is
+import-safe and unit-tested headless (`webview` is imported lazily inside
+`main`): `dist_dir` resolves the bundle (``PROCESS_SIM_DIST`` → PyInstaller
+`_MEIPASS` → repo layout), `build_api` optionally preloads a project file, and
+`find_external_refs` machine-checks the offline guarantee — scanning the built
+HTML/CSS for any `http(s)://` or protocol-relative load. `python app.py --check`
+runs that scan in CI (exit 0 clean / 1 external refs / 2 unbuilt); the built
+bundle passes. `backdrop-filter` has a solid `--panel` `@supports` fallback on
+every glass surface and font smoothing is set, so the glass degrades cleanly on
+a weak webview. Packaging per OS is a documented PyInstaller recipe
+(`--add-data frontend/dist`) plus a `process-sim` console-script entry point.
 
 ---
 

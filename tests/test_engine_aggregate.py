@@ -116,8 +116,55 @@ def test_scopes_compose(powered_process: World) -> None:
 
 def test_scope_report_serializes(powered_process: World) -> None:
     d = compute_world(powered_process).to_dict()
-    assert set(d) >= {"nodeIds", "externalInputs", "externalOutputs", "balances"}
+    assert set(d) >= {
+        "nodeIds",
+        "externalInputs",
+        "externalOutputs",
+        "balances",
+        "pipeFlows",
+    }
     assert d["netEnergy"] == 110.0
+
+
+# --------------------------------------------------------------------------- #
+# Per-pipe flow (P8 overlay seam): resolved rate + dashed-edge shortfall flag.
+# --------------------------------------------------------------------------- #
+
+
+def test_pipe_flow_routed(powered_process: World) -> None:
+    report = compute_world(powered_process)
+    # smelter ships 0.5 ingot/s; presser pulls 0.25/s → 0.25 routed over p_ingot.
+    pf = report.pipe_flows["p_ingot"]
+    assert _close(pf.flow, 0.25)
+    assert pf.shortfall is False  # presser's ingot demand is fully met
+
+
+def test_pipe_flow_no_draw(furnace_chest: World) -> None:
+    # The chest has no recipe, so it demands nothing: the pipe carries no flow
+    # and is absent from the per-pipe map (nothing fabricated).
+    report = compute_world(furnace_chest)
+    assert "p1" not in report.pipe_flows
+
+
+def test_pipe_flow_shortfall_flag(powered_process: World) -> None:
+    # Speed the press up so it out-demands the smelter: the feed pipe is starved.
+    press = next(r for r in powered_process.recipes if r.id == "press")
+    press.time_seconds = 1.0  # demand ingot 1.0/s vs supply 0.5/s
+    report = compute_world(powered_process)
+    pf = report.pipe_flows["p_ingot"]
+    assert _close(pf.flow, 0.5)  # all the smelter makes is routed
+    assert pf.shortfall is True  # but the presser is still short → dashed edge
+
+
+def test_pipe_flow_even_split_serializes() -> None:
+    # The three fan-out pipes each carry 30 x/s and each feeds a starved consumer.
+    report = compute_scope(_fanout_world(), None)
+    for i in range(3):
+        pf = report.pipe_flows[f"p{i}"]
+        assert _close(pf.flow, 30.0)
+        assert pf.shortfall is True
+    wire = report.to_dict()["pipeFlows"]
+    assert wire["p0"] == {"pipeId": "p0", "flow": 30.0, "shortfall": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -189,3 +236,30 @@ def test_system_scope(powered_process: World) -> None:
     report = compute_system(powered_process, "sys1")
     assert set(report.node_ids) == {"smelter1", "presser1"}
     assert _close(report.net_energy, -90.0)
+
+
+def test_system_scope_collapse_invariant(powered_process: World) -> None:
+    # `collapsed` is a presentation flag the engine never reads, so a system's
+    # report is identical whether it is drawn folded or expanded.
+    powered_process.systems.append(
+        System(id="sys1", member_node_ids=["smelter1", "presser1"], collapsed=False)
+    )
+    expanded = compute_system(powered_process, "sys1").to_dict()
+    powered_process.systems[0].collapsed = True
+    collapsed = compute_system(powered_process, "sys1").to_dict()
+    assert expanded == collapsed
+
+
+def test_nested_system_flattens(powered_process: World) -> None:
+    # An outer system holding an inner system plus a loose node flattens to all
+    # the real member nodes; its report equals the scope over that node set.
+    powered_process.systems.append(
+        System(id="inner", member_node_ids=["smelter1", "presser1"])
+    )
+    powered_process.systems.append(
+        System(id="outer", member_system_ids=["inner"], member_node_ids=["gen1"])
+    )
+    report = compute_system(powered_process, "outer")
+    assert set(report.node_ids) == {"smelter1", "presser1", "gen1"}
+    # Outer = whole world here (all three nodes), so energy matches the world.
+    assert _close(report.net_energy, compute_world(powered_process).net_energy)

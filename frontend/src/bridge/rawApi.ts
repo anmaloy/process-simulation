@@ -136,6 +136,7 @@ export class DevApi implements RawApi {
       externalOutputs: {},
       balances: {},
       bottlenecks: [],
+      pipeFlows: {},
     });
   }
 

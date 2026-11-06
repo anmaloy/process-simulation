@@ -12,13 +12,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { categoryColor } from "./colors";
 import { portsForDef, type Port } from "./ports";
 import type { MachineNodeData, RfMachineNode } from "./graph";
-
-const STATUS_COLOR: Record<string, string> = {
-  ok: "var(--s-ref)",
-  shortfall: "var(--s-bad)",
-  overflow: "var(--s-learn)",
-  stalled: "var(--s-not)",
-};
+import { STATUS_COLOR, STATUS_FILL, STATUS_LABEL, statusColor } from "../overlay/status";
 
 // Evenly distribute n handles down a side: vertical center of each slot, as a
 // top percentage (one handle → 50%, two → 25%/75%, …).
@@ -75,16 +69,26 @@ export function MachineNodeView({ data }: NodeProps<RfMachineNode>) {
   const rows = Math.max(ins.length, outs.length, 1);
 
   return (
-    <div className="machine-node">
-      <span
-        className="node-status"
-        style={{ background: STATUS_COLOR[status ?? "stalled"] }}
-      />
+    <div className="machine-node" data-status={status ?? "stalled"}>
+      <span className="node-status" style={{ background: statusColor(status) }} />
       <div className="node-head">
         <span className="node-title">{title}</span>
         <span className="node-id mono">{node.id}</span>
       </div>
-      {meta.length > 0 && <div className="node-meta mono">{meta.join("  ")}</div>}
+      {(meta.length > 0 || status) && (
+        <div className="node-meta mono">
+          {status && (
+            <span
+              className="node-status-chip"
+              style={{ background: STATUS_FILL[status], color: STATUS_COLOR[status] }}
+              title={`balance: ${STATUS_LABEL[status]}`}
+            >
+              {STATUS_LABEL[status]}
+            </span>
+          )}
+          {meta.length > 0 && <span>{meta.join("  ")}</span>}
+        </div>
+      )}
       <div className="node-ports" style={{ height: rows * 22 }}>
         {ins.map((p, i) => (
           <PortRow key={p.id} port={p} side="in" index={i} count={ins.length} />

@@ -11,6 +11,7 @@ Does not import the UI or pywebview — the whole engine runs headless. Layers:
 
 from .aggregate import (
     Bottleneck,
+    PipeFlow,
     ScopeReport,
     compute_scope,
     compute_system,
@@ -57,6 +58,7 @@ __all__ = [
     "pipe_throughput",
     # aggregate
     "Bottleneck",
+    "PipeFlow",
     "ScopeReport",
     "compute_scope",
     "compute_world",

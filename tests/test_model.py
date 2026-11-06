@@ -208,6 +208,8 @@ def test_empty_collections_emit_as_lists() -> None:
             member_node_ids=["n1", "n2"],
             exposed_ports=[SystemPort(node_id="n2", name="power")],
             collapsed=True,
+            x=120.0,
+            y=-40.0,
         ),
     ],
 )
