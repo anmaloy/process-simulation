@@ -166,11 +166,47 @@ non-linear curve.
 
 ## Visual style
 
-Match **edunode** (`github.com/anmaloy/edunode`): pull its palette, typography,
-spacing, and component shapes rather than inventing new ones. Overall feel is
-clean, flat, and legible at a glance, with docked inspector panels and the canvas
-dominant. Categorical accents needed: distinct colors for solid / liquid / energy
-edges and ports, plus OK / shortfall / overflow / stalled status colors.
+The look is defined in `STYLE_GUIDE.md` (edunode's "Instrument Panel on Dark
+Glass"): a deep slate field, one signal-cyan accent for the active path, phosphor
+status colors, mono type for every id/label/metric, and a display sans for
+everything else. Read that file before doing UI work and use its `:root` tokens as
+the only palette — don't introduce new hues.
+
+That guide is written for web/CSS. We're on Qt, so it translates rather than
+copies:
+
+- **Tokens** — define the `:root` colors once as a Python module of constants and
+  reuse them everywhere: in QSS stylesheet strings, in `QPalette`, and in canvas
+  painting. The hex values are the source of truth; keep them identical to the
+  guide.
+- **QSS** — Qt Style Sheets cover borders, radii, backgrounds, padding, and font
+  properties, so most component recipes (segmented control, tool button, chips,
+  inputs, meters, list rows) port over almost directly.
+- **Fonts** — don't use the Google Fonts `@import`. Bundle IBM Plex Mono and Space
+  Grotesk (`.ttf`) in the repo and load them with `QFontDatabase.addApplicationFont`
+  at startup.
+- **No Qt equivalent:** `backdrop-filter` (glass blur) and CSS `box-shadow` aren't
+  supported by QSS. Approximate glow and elevation with
+  `QGraphicsDropShadowEffect`, and treat "dark glass" panels as solid translucent
+  `--panel` fills rather than real backdrop blur unless a specific widget warrants
+  `QGraphicsBlurEffect`. The radial background glow can be painted in a
+  `paintEvent` with `QRadialGradient`.
+- **Canvas** — ports, pipes, and node bodies are custom-painted `QGraphicsItem`s,
+  not DOM. Pull their stroke/fill colors from the same token constants; apply the
+  cyan glow to the selected/live element only.
+
+Still to decide before the palette is complete (the guide doesn't cover our
+domain states directly):
+
+- **Category colors** (solid / liquid / energy edges and ports) — the guide
+  reserves cyan for "active/selected" and gold as the single secondary accent, so
+  categories should come from the phosphor set (`--s-*`). Assignments aren't fixed
+  yet.
+- **Status colors** (OK / shortfall / overflow / stalled / unpowered) — OK → green
+  (`--s-ref`), stalled/unpowered → grey (`--s-not`) map cleanly. Shortfall is the
+  problem state and the spec wanted red, but this palette has **no red**; either
+  add one deliberately or map shortfall to yellow (`--s-learn`). Overflow is
+  open too. Decide these together.
 
 ## Out of scope for v1
 

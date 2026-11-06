@@ -24,8 +24,9 @@ Offline and file-based: a project saves to a single local JSON file.
 
 ## Status
 
-Early. The repo currently holds the project reference (`CLAUDE.md`) and this
-README; the application itself isn't scaffolded yet.
+Early. The repo currently holds the project reference (`CLAUDE.md`), the visual
+style guide (`STYLE_GUIDE.md`), and this README; the application itself isn't
+scaffolded yet.
 
 ## License
 
