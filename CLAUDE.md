@@ -31,13 +31,16 @@ the main reason for a web UI over a native toolkit (see `STYLE_GUIDE.md`).
 
 ## Project state
 
-Phases 0–3 are done: the scaffold/toolchain (P0), the domain model with JSON
+Phases 0–4 are done: the scaffold/toolchain (P0), the domain model with JSON
 round-trip (P1, `model/`), the headless rate-balance engine (P2, `engine/`:
 per-node rates + fuel→fluid conversion, per-node balance, asymmetric pipe-priority flow
-resolution, and scope aggregation), and project/library IO (P3, `io/`: versioned
-project save/load and library export/import with id-collision handling) — all
-covered by pytest. The api and frontend UI are still stubs — build them per the
-phase order in `WORKFLOW.md`.
+resolution, and scope aggregation), project/library IO (P3, `io/`: versioned
+project save/load and library export/import with id-collision handling), and the
+pywebview JS API surface (P4, `api.py`: the frozen JSON bridge — see "API
+surface" below) — all covered by pytest. This is the end-of-P4 milestone: a
+complete, headless, tested product that loads a project, computes every scope's
+balance, and saves. The frontend UI is still a stub — build it per the phase
+order in `WORKFLOW.md`.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
@@ -48,6 +51,51 @@ garbled payload) or `UnsupportedVersionError` (version this build can't read) �
 never an unhandled crash. `import_library` resolves id collisions by
 `ConflictPolicy` (`rename` default, `skip`, `error`), rewriting intra-library
 references, and never mutates the target World.
+
+### API surface (P4 — frozen contract)
+
+`api.py` exposes a single `Api` class; pywebview binds one long-lived instance
+so the frontend calls each method as `window.pywebview.api.<method>(...)`.
+Arguments arrive as plain JSON and return values serialize straight back. The
+class is **marshaling only** — it converts JSON↔model and delegates to `engine/`
+and `io/`; it holds no rate math, flow resolution, or file-format logic. The one
+state it keeps is *the current World*; edits mutate it, reads and recomputes run
+against it.
+
+**Result envelope.** Every method returns `{"ok": true, "data": <payload>}` on
+success or `{"ok": false, "error": {"type": "<ErrorName>", "message": "<str>"}}`
+on an expected failure (malformed file, unreadable payload, bad request shape,
+unknown entity kind, id collision under the `error` policy). Payloads are the
+model's camelCase wire format.
+
+| method | arguments | `data` payload |
+|---|---|---|
+| `get_world()` | — | World |
+| `set_world(world)` | World dict | World (normalized) |
+| `apply_edit(edit)` | `{op, kind, entity\|id}` | World after the edit |
+| `load_project(path)` | path string | World |
+| `save_project(path)` | path string | `{"path": str}` |
+| `recompute(request)` | `{scope, nodeId?\|systemId?}` | ScopeReport |
+| `export_library(options)` | `{name?, itemIds?, recipeIds?, machineDefIds?}` | Library envelope |
+| `save_library(path, options)` | path string, options dict | `{"path": str}` |
+| `load_library(path)` | path string | Library envelope |
+| `import_library(library, on_conflict="rename")` | Library envelope, policy | `{world, idRemap, skippedIds}` |
+| `import_library_file(path, on_conflict="rename")` | path string, policy | `{world, idRemap, skippedIds}` |
+
+- **`edit`** is `{"op": "upsert", "kind": <kind>, "entity": {...}}` (replaces the
+  entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
+  "id": <id>}`. `kind` ∈ `item`, `recipe`, `machineDef`, `node`, `pipe`,
+  `system`. Editing recomputes nothing by itself — the frontend follows an edit
+  with a `recompute` call.
+- **`recompute` scopes**: `world` (default), `node` (`nodeId` — a single
+  machine), `process` (`nodeId` — its connected component via `trace_process`),
+  `system` (`systemId`). The payload is `ScopeReport.to_dict()` (external I/O,
+  per-node balances, net energy, ranked bottlenecks).
+- **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
+  `error`.
+
+A changed shape here is a deliberate, documented contract bump — the P5 TS
+bridge mirrors this table.
 
 ### Commands
 
