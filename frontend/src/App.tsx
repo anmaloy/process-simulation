@@ -155,9 +155,10 @@ export function App() {
       const res = await client.importMiDir(path);
       setWorld(res.world);
       const s = res.stats;
+      const energy = s.energyMachines ? ` (+${s.energyMachines} energy)` : "";
       return (
         `Imported ${s.recipesImported} recipes · ${s.items} items · ` +
-        `${s.tags} tags · ${s.machineDefs} machines`
+        `${s.tags} tags · ${s.machineDefs} machines${energy}`
       );
     },
     [client, world, snapshot],

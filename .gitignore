@@ -6,21 +6,25 @@ __pycache__/
 # C extensions
 *.so
 
-# Distribution / packaging
+# Distribution / packaging — Python build artifacts.
+# Scoped to backend/ (where packaging runs) so these generic directory names
+# can never silently swallow a frontend source folder of the same name
+# (e.g. a future frontend/src/lib/). The built frontend is ignored separately,
+# under "Frontend (Node / Vite)" below.
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
+backend/build/
+backend/develop-eggs/
+backend/dist/
+backend/downloads/
+backend/eggs/
+backend/.eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg

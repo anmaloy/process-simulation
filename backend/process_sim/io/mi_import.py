@@ -1,11 +1,13 @@
 """Import Modern Industrialization recipe data into a process-sim library.
 
 Modern Industrialization (MI) ships its machine recipes as data JSON inside its
-mod jar; this reads an **extracted** jar directory and turns those recipes (for a
-chosen set of machine types) into a :class:`~process_sim.io.library.Library` — the
-reusable subset of items, recipes, and machine defs — that
-:func:`~process_sim.io.library.import_library` then merges into a World with the
-usual id-collision handling.
+mod jar; this reads an **extracted** jar directory and turns those recipes into a
+:class:`~process_sim.io.library.Library` — the reusable subset of items, recipes,
+and machine defs — that :func:`~process_sim.io.library.import_library` then merges
+into a World with the usual id-collision handling. By default **every** MI machine
+recipe type is imported (:data:`DEFAULT_MACHINE_TYPES`); a caller may pass a
+narrower tuple. Energy *generation* (boilers, steam turbines, diesel generators)
+is not recipe-driven in MI and is added separately as converter defs.
 
 What a MI recipe looks like (the shape this parser normalizes)::
 
@@ -19,6 +21,10 @@ Each of the four I/O keys may be a **single object or a list**; ``amount``
 defaults to 1; an entry names an ``item``, a ``fluid``, or a ``tag`` (a group
 reference, imported as an ``is_tag`` item); ids may be namespaced
 (``modern_industrialization:iron_dust``) or bare (``water`` → ``minecraft:water``).
+The **forge hammer** is the one targeted type using a vanilla-style single
+``ingredient`` → ``result`` shape (``count``/``id`` instead of the arrays); it is
+a manual tool with no ``eu``/``duration``, so it imports its I/O with a zero cycle
+time (no automatic rate).
 
 Units follow the engine's conventions: ``duration`` ticks → ``time_seconds``
 (÷20), ``eu`` is kept **per tick** on ``Recipe.eu_per_tick`` (the engine scales
@@ -62,17 +68,49 @@ __all__ = [
     "CABLE_TIER_EU",
     "MACHINE_CATALOG",
     "MachineSpec",
+    "ENERGY_MACHINES",
+    "EnergyMachine",
+    "ELECTRICITY_ID",
+    "STEAM_ID",
     "MiImport",
     "import_mi_library",
 ]
 
-#: The machine types imported by default (the phase-3 targeted subset). The
-#: parser is generic — pass any MI recipe ``type`` names to widen the import.
+#: Every Modern Industrialization machine recipe ``type`` (the ``modern_
+#: industrialization:*`` recipes in the jar). Importing all of them is the
+#: default — a *full* import. Vanilla crafting/smelting types are not MI machines
+#: and are always skipped. The parser is generic, so a caller may still pass a
+#: narrower tuple. (Energy generation — boilers, steam turbines, diesel
+#: generators — is **not** recipe-driven in MI; those are added as converter
+#: defs from :data:`ENERGY_MACHINES`, not parsed here.)
 DEFAULT_MACHINE_TYPES: tuple[str, ...] = (
+    # Single-block electric crafting machines (LV tier — see MACHINE_CATALOG).
     "macerator",
     "mixer",
     "assembler",
+    "packer",
+    "unpacker",
     "chemical_reactor",
+    "cutting_machine",
+    "compressor",
+    "distillery",
+    "centrifuge",
+    "wiremill",
+    "electrolyzer",
+    "polarizer",
+    # Manual tool recipes (no powered machine): forge hammer.
+    "forge_hammer",
+    # Multiblock machines (no fixed EU ceiling — scaled by energy hatches).
+    "blast_furnace",
+    "heat_exchanger",
+    "vacuum_freezer",
+    "implosion_compressor",
+    "pressurizer",
+    "quarry",
+    "distillation_tower",
+    "fusion_reactor",
+    "oil_drilling_rig",
+    "coke_oven",
 )
 
 #: Modern Industrialization voltage-tier EU/tick, read verbatim from the jar's
@@ -102,21 +140,247 @@ class MachineSpec:
     max_eu_per_tick: float | None = None
 
 
-#: Per-type machine metadata for the imported subset. MI's basic electric
-#: processing machines are Low-Voltage blocks (upgradable), so each targeted type
-#: gets the LV ceiling (32 EU/t); a node can be retiered in the inspector. A type
-#: absent here imports with no ceiling (overclock unclamped).
+#: Per-type machine metadata. MI's basic electric processing machines are
+#: single-block Low-Voltage blocks (upgradable), so each gets the LV ceiling
+#: (32 EU/t, the ``electric`` variant registered in the jar's
+#: ``SingleBlockCraftingMachines``); a node can be retiered in the inspector. A
+#: type absent here imports with no ceiling (overclock unclamped) — used for the
+#: multiblocks (which scale with their energy hatches, not a fixed tier) and the
+#: manual forge hammer.
+_LV = MachineSpec("LV", CABLE_TIER_EU["LV"])
 MACHINE_CATALOG: dict[str, MachineSpec] = {
-    "macerator": MachineSpec("LV", CABLE_TIER_EU["LV"]),
-    "mixer": MachineSpec("LV", CABLE_TIER_EU["LV"]),
-    "assembler": MachineSpec("LV", CABLE_TIER_EU["LV"]),
-    "chemical_reactor": MachineSpec("LV", CABLE_TIER_EU["LV"]),
+    "macerator": _LV,
+    "mixer": _LV,
+    "assembler": _LV,
+    "packer": _LV,
+    "unpacker": _LV,
+    "chemical_reactor": _LV,
+    "cutting_machine": _LV,
+    "compressor": _LV,
+    "distillery": _LV,
+    "centrifuge": _LV,
+    "wiremill": _LV,
+    "electrolyzer": _LV,
+    "polarizer": _LV,
 }
 
 _MI_NS = "modern_industrialization"
 #: Default stack sizes per category for a derived slot (a solid stack; a tank).
 _SOLID_STACK = 64
 _FLUID_STACK = 16000
+# Energy slots are ports only; the engine ignores stack size, so a nominal 1.
+_ENERGY_STACK = 1
+
+#: Ticks per second. MI energy/fluid machine rates are authored **per tick**; the
+#: engine is canonical **per second**, so a rated EU/t or mB/t becomes ``× 20``.
+_TICKS_PER_SEC = 20.0
+
+# --------------------------------------------------------------------------- #
+# Energy generation (boilers / turbines / generators).
+#
+# MI's power machines are NOT recipe-driven — their rates live in the jar's Java
+# (``SingleBlockSpecialMachines`` / ``MultiblockMachines`` / ``SteamHeaterComponent``),
+# read verbatim below. The planner models each as a **converter** (see
+# ``engine/energy.py``): a boiler burns fuel to turn water into steam; a turbine
+# or generator spends its source carrier to make **electricity**. Electricity is
+# a routed energy-category carrier (resolved decision #3), so generators emit it
+# as an item over energy pipes and the imported consumers draw it (see
+# ``_machine_def``). All rates are MI's per-tick figures, stored ``× 20`` for the
+# per-second engine.
+# --------------------------------------------------------------------------- #
+
+#: Canonical electricity carrier. MI has no "electricity item" (EU is a scalar
+#: in-game); the planner routes it as an energy-category item, defined here.
+ELECTRICITY_ID = "mi:electricity"
+STEAM_ID = f"{_MI_NS}:steam"
+WATER_ID = "minecraft:water"
+PLASMA_ID = f"{_MI_NS}:helium_plasma"
+DIESEL_ID = f"{_MI_NS}:diesel"
+
+#: steamPerWater, MIServerConfig default (verbatim): 1 mB water → 16 mB steam.
+STEAM_PER_WATER = 16.0
+#: Steam energy density: 1 mB steam = 1 EU (turbine ``EUProductionMap`` for STEAM).
+_EU_PER_MB_STEAM = 1.0
+#: Helium-plasma energy density (plasma turbine ``ofSingleFluid`` arg): 100000 EU/mB.
+_EU_PER_MB_PLASMA = 100_000.0
+#: Boilers idle hot and lose unused surplus heat — the SteamHeater waste fraction.
+_BOILER_WASTE = 0.8
+
+
+@dataclass(frozen=True)
+class EnergyMachine:
+    """A hand-authored energy-generation converter (rates verbatim from the jar).
+
+    ``eu_per_tick`` is the machine's rated EU/t (steam mB/t for a boiler, since
+    1 mB = 1 EU); it is stored ``× 20`` as the per-second ``max_fluid_rate``.
+    ``source_item_id`` is the carrier consumed (a fuel by its ``eu``, or steam
+    1:1); a boiler leaves it unset so the player picks which fuel to burn, while
+    its steam output and water draw are fixed. ``input_item_id`` /
+    ``material_ratio`` are the material a boiler converts (water, 16:1).
+    """
+
+    key: str
+    name: str
+    energy_source: EnergySource
+    eu_per_tick: float
+    output_item_id: str
+    source_item_id: str | None = None
+    input_item_id: str | None = None
+    material_ratio: float | None = None
+    waste: float | None = None
+
+
+#: Every MI energy-generation machine, with its rated EU/t read from the 2.5.11
+#: jar. Boilers → steam (fuel chosen by the player); steam turbines → electricity
+#: (steam 1:1); diesel generators → electricity (fuel burned by its ``eu``); the
+#: plasma turbine burns helium plasma. Diesel/plasma "generator efficiency"
+#: multipliers in MI are not modelled — the planner is energy-conserving (1 EU of
+#: fuel → 1 EU out), so a generator's fuel draw is its output ÷ the fuel's EU/mB.
+ENERGY_MACHINES: tuple[EnergyMachine, ...] = (
+    # Boilers: fuel → steam, consuming water at 16 steam : 1 water (w = 0.8).
+    EnergyMachine(
+        "bronze_boiler",
+        "Bronze Boiler",
+        EnergySource.FUEL,
+        8,
+        STEAM_ID,
+        None,
+        WATER_ID,
+        STEAM_PER_WATER,
+        _BOILER_WASTE,
+    ),
+    EnergyMachine(
+        "steel_boiler",
+        "Steel Boiler",
+        EnergySource.FUEL,
+        16,
+        STEAM_ID,
+        None,
+        WATER_ID,
+        STEAM_PER_WATER,
+        _BOILER_WASTE,
+    ),
+    EnergyMachine(
+        "large_steam_boiler",
+        "Large Steam Boiler",
+        EnergySource.FUEL,
+        256,
+        STEAM_ID,
+        None,
+        WATER_ID,
+        STEAM_PER_WATER,
+        _BOILER_WASTE,
+    ),
+    EnergyMachine(
+        "advanced_large_steam_boiler",
+        "Advanced Large Steam Boiler",
+        EnergySource.FUEL,
+        1024,
+        STEAM_ID,
+        None,
+        WATER_ID,
+        STEAM_PER_WATER,
+        _BOILER_WASTE,
+    ),
+    EnergyMachine(
+        "high_pressure_large_steam_boiler",
+        "High Pressure Large Steam Boiler",
+        EnergySource.FUEL,
+        2048,
+        STEAM_ID,
+        None,
+        WATER_ID,
+        STEAM_PER_WATER,
+        _BOILER_WASTE,
+    ),
+    EnergyMachine(
+        "high_pressure_advanced_large_steam_boiler",
+        "High Pressure Advanced Large Steam Boiler",
+        EnergySource.FUEL,
+        8192,
+        STEAM_ID,
+        None,
+        WATER_ID,
+        STEAM_PER_WATER,
+        _BOILER_WASTE,
+    ),
+    # Steam turbines: steam → electricity (LV/MV/HV = 32/128/512; large = 16384).
+    EnergyMachine(
+        "lv_steam_turbine",
+        "Steam Turbine",
+        EnergySource.LIQUID,
+        32,
+        ELECTRICITY_ID,
+        STEAM_ID,
+    ),
+    EnergyMachine(
+        "mv_steam_turbine",
+        "Advanced Steam Turbine",
+        EnergySource.LIQUID,
+        128,
+        ELECTRICITY_ID,
+        STEAM_ID,
+    ),
+    EnergyMachine(
+        "hv_steam_turbine",
+        "HV Steam Turbine",
+        EnergySource.LIQUID,
+        512,
+        ELECTRICITY_ID,
+        STEAM_ID,
+    ),
+    EnergyMachine(
+        "large_steam_turbine",
+        "Large Steam Turbine",
+        EnergySource.LIQUID,
+        16384,
+        ELECTRICITY_ID,
+        STEAM_ID,
+    ),
+    # Plasma turbine: helium plasma → electricity (plasma = 100000 EU/mB).
+    EnergyMachine(
+        "plasma_turbine",
+        "Plasma Turbine",
+        EnergySource.FUEL,
+        1048576,
+        ELECTRICITY_ID,
+        PLASMA_ID,
+    ),
+    # Diesel generators: fluid fuel → electricity (LV/MV/HV = 64/256/1024;
+    # large = 16384). Diesel is the default fuel; swap it in the inspector.
+    EnergyMachine(
+        "lv_diesel_generator",
+        "LV Diesel Generator",
+        EnergySource.FUEL,
+        64,
+        ELECTRICITY_ID,
+        DIESEL_ID,
+    ),
+    EnergyMachine(
+        "mv_diesel_generator",
+        "MV Diesel Generator",
+        EnergySource.FUEL,
+        256,
+        ELECTRICITY_ID,
+        DIESEL_ID,
+    ),
+    EnergyMachine(
+        "hv_diesel_generator",
+        "HV Diesel Generator",
+        EnergySource.FUEL,
+        1024,
+        ELECTRICITY_ID,
+        DIESEL_ID,
+    ),
+    EnergyMachine(
+        "large_diesel_generator",
+        "Large Diesel Generator",
+        EnergySource.FUEL,
+        16384,
+        ELECTRICITY_ID,
+        DIESEL_ID,
+    ),
+)
 
 
 @dataclass
@@ -250,6 +514,14 @@ def _entries(recipe: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_count(entry: dict[str, Any]) -> dict[str, Any]:
+    """Map a vanilla-style ``count`` onto the ``amount`` key the parser reads."""
+
+    if "count" in entry and "amount" not in entry:
+        entry = {**entry, "amount": entry["count"]}
+    return entry
+
+
 class _ItemRegistry:
     """Accumulates the unique items/fluids/tags referenced, as model Items."""
 
@@ -309,6 +581,7 @@ def import_mi_library(
     *,
     machine_types: tuple[str, ...] = DEFAULT_MACHINE_TYPES,
     name: str | None = None,
+    include_energy: bool = True,
 ) -> MiImport:
     """Build a :class:`Library` from the MI recipes under ``root``.
 
@@ -317,6 +590,11 @@ def import_mi_library(
     other file (vanilla crafting recipes, other machines) is skipped. The result
     is never merged here — hand its ``library`` to
     :func:`~process_sim.io.library.import_library`.
+
+    ``include_energy`` (default on) adds the energy-generation machines
+    (:data:`ENERGY_MACHINES`: boilers, steam turbines, diesel/plasma generators)
+    and the carriers they route — these are not recipe-driven in MI, so they ride
+    alongside the parsed recipes rather than being parsed from files.
     """
 
     root = Path(root)
@@ -354,6 +632,19 @@ def import_mi_library(
         item_out = _entries(data, "item_outputs")
         fluid_in = _entries(data, "fluid_inputs")
         fluid_out = _entries(data, "fluid_outputs")
+        # The forge hammer uses a vanilla-style single ``ingredient`` → ``result``
+        # shape instead of the ``*_inputs``/``*_outputs`` arrays. Normalize it to
+        # the item-entry shape the loops below expect (``count`` → ``amount``,
+        # ``result.id`` → ``item``).
+        ingredient = data.get("ingredient")
+        if isinstance(ingredient, dict):
+            item_in = [*item_in, _normalize_count(ingredient)]
+        result = data.get("result")
+        if isinstance(result, dict) and result.get("id") is not None:
+            item_out = [
+                *item_out,
+                {"item": result["id"], "amount": result.get("count", 1)},
+            ]
 
         inputs: list[Stack] = []
         outputs: list[Stack] = []
@@ -401,6 +692,14 @@ def import_mi_library(
         _machine_def(t, agg, lang) for t, agg in by_type.items() if agg["recipe_ids"]
     ]
 
+    # Energy generation (not recipe-driven in MI): add the converter defs and the
+    # carriers they reference (electricity, steam, water, plasma). Done before tag
+    # membership so a newly-added carrier still gets any tag wiring.
+    energy_defs: list[MachineDef] = []
+    if include_energy:
+        _ensure_carrier_items(registry)
+        energy_defs = [_energy_machine_def(m) for m in ENERGY_MACHINES]
+
     # Resolve tag membership from the game's tag definitions, so a concrete item
     # can later stand in for a recipe that references a tag (e.g. iron_ore → a
     # recipe keyed on c:ores/iron). Also register any member item not already
@@ -411,7 +710,7 @@ def import_mi_library(
         name=name or "Modern Industrialization",
         items=sorted(registry.items.values(), key=lambda i: i.id),
         recipes=recipes,
-        machine_defs=machine_defs,
+        machine_defs=machine_defs + energy_defs,
     )
     stats = {
         "filesScanned": files_scanned,
@@ -421,6 +720,7 @@ def import_mi_library(
         "tags": sum(1 for i in registry.items.values() if i.is_tag),
         "memberItemsAdded": member_items_added,
         "machineDefs": len(machine_defs),
+        "energyMachines": len(energy_defs),
         "byType": {t: len(agg["recipe_ids"]) for t, agg in by_type.items()},
     }
     return MiImport(library=library, stats=stats)
@@ -504,7 +804,12 @@ def _recipe_name(
 def _machine_def(
     machine_type: str, agg: dict[str, Any], lang: dict[str, str]
 ) -> MachineDef:
-    """An electric-consumer def for ``machine_type`` with a data-derived layout."""
+    """An electric-consumer def for ``machine_type`` with a data-derived layout.
+
+    Electricity is a routed carrier (resolved decision #3): the consumer draws it
+    as the :data:`ELECTRICITY_ID` item through an energy **in** port, so a
+    generator must feed it over an energy pipe (an unwired machine is unpowered).
+    """
 
     slots: list[SlotGroup] = []
 
@@ -516,14 +821,74 @@ def _machine_def(
     add(Category.SOLID, Direction.OUT, agg["sout"], _SOLID_STACK)
     add(Category.LIQUID, Direction.IN, agg["lin"], _FLUID_STACK)
     add(Category.LIQUID, Direction.OUT, agg["lout"], _FLUID_STACK)
+    add(Category.ENERGY, Direction.IN, 1, _ENERGY_STACK)  # routed electricity in
 
     spec = MACHINE_CATALOG.get(machine_type, MachineSpec())
     return MachineDef(
         id=f"mi.machine.{machine_type}",
         name=_machine_name(machine_type, lang),
         energy_source=EnergySource.ELECTRIC,
+        source_item_id=ELECTRICITY_ID,
         allowed_recipe_ids=list(agg["recipe_ids"]),
         slots=slots,
         voltage_tier=spec.voltage_tier,
         max_eu_per_tick=spec.max_eu_per_tick,
     )
+
+
+def _energy_machine_def(m: EnergyMachine) -> MachineDef:
+    """Build a converter :class:`MachineDef` for one energy-generation machine.
+
+    The rated EU/t (``eu_per_tick``) becomes the per-second ``max_fluid_rate``
+    (``× 20``). Ports: a boiler takes fuel (solid + liquid in) and water (liquid
+    in) and emits steam (liquid out); a turbine/generator takes its source fluid
+    (liquid in) and emits electricity (energy out).
+    """
+
+    slots: list[SlotGroup] = []
+    out_cat = Category.ENERGY if m.output_item_id == ELECTRICITY_ID else Category.LIQUID
+    if out_cat is Category.ENERGY:
+        # Turbine / generator: one liquid-fuel in, electricity out.
+        slots.append(SlotGroup(Category.LIQUID, Direction.IN, 1, _FLUID_STACK))
+        slots.append(SlotGroup(Category.ENERGY, Direction.OUT, 1, _ENERGY_STACK))
+    else:
+        # Boiler: solid + liquid fuel in, water in, steam out.
+        slots.append(SlotGroup(Category.SOLID, Direction.IN, 1, _SOLID_STACK))
+        slots.append(SlotGroup(Category.LIQUID, Direction.IN, 2, _FLUID_STACK))
+        slots.append(SlotGroup(Category.LIQUID, Direction.OUT, 1, _FLUID_STACK))
+
+    return MachineDef(
+        id=f"mi.energy.{m.key}",
+        name=m.name,
+        energy_source=m.energy_source,
+        source_item_id=m.source_item_id,
+        output_item_id=m.output_item_id,
+        input_item_id=m.input_item_id,
+        material_ratio=m.material_ratio,
+        efficiency=m.waste,
+        max_fluid_rate=m.eu_per_tick * _TICKS_PER_SEC,
+        slots=slots,
+    )
+
+
+def _ensure_carrier_items(registry: _ItemRegistry) -> None:
+    """Register the energy carriers the generated defs reference, if absent.
+
+    Electricity is always added (the planner's grid carrier). Steam, water,
+    diesel and helium plasma may already be imported as MI fluids; only a missing
+    one is created, and a fuel's ``eu`` (plasma's energy density) is filled in.
+    """
+
+    def ensure(item_id: str, name: str, category: Category, eu: float | None) -> None:
+        existing = registry.items.get(item_id)
+        if existing is None:
+            registry.items[item_id] = Item(
+                id=item_id, name=name, category=category, eu=eu
+            )
+        elif eu is not None and existing.eu is None:
+            existing.eu = eu
+
+    ensure(ELECTRICITY_ID, "Electricity", Category.ENERGY, None)
+    ensure(STEAM_ID, "Steam", Category.LIQUID, None)
+    ensure(WATER_ID, "Water", Category.LIQUID, None)
+    ensure(PLASMA_ID, "Helium Plasma", Category.LIQUID, _EU_PER_MB_PLASMA)

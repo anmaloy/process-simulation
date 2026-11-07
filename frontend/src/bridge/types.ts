@@ -228,6 +228,8 @@ export interface MiImportStats {
   /** Concrete member items registered while resolving tag membership. */
   memberItemsAdded?: number;
   machineDefs: number;
+  /** Energy-generation converter defs added (boilers, turbines, generators). */
+  energyMachines?: number;
   byType: Record<string, number>;
 }
 

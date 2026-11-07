@@ -169,10 +169,17 @@ resolved I/O. The finder is membership-aware — a tag resource also offers its
 member items, so a concrete item (e.g. "Iron Ore") reaches a recipe keyed on a
 tag. The library **rail** is collapsible per-section with a search box and a
 per-section row cap, so an imported world of thousands of entities stays usable.
-(Still deferred: the engine's flow solver keys supply/demand per resource id, so
-a wired chain does **not** yet balance a concrete producer against a tag
-consumer — tag *flow* resolution, generators, and widening the import past the
-four types remain follow-ups.)
+
+**Tag flow resolution is done** (`engine/aggregate.py`): the scope solver is now
+membership-aware. Flow is resolved **per demand key** (a recipe input id —
+concrete or tag); a tag demand draws from any produced concrete supply the tag
+includes (`_satisfies`), a source's output is *committed* as it is drained so one
+supply can't feed two demand keys twice, and that absorbed supply backpressures
+instead of being mistaken for yield. `supplied` is keyed by the sink's demand key
+(the tag id for a tag input), `drained` by the source's concrete supply key. With
+no tags in play each key is matched only by its own id, so a plain concrete chain
+resolves exactly as before. So a producer of `minecraft:iron_ingot` now balances a
+consumer whose recipe input is the tag `c:ingots/iron`.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 2; v1 files still load — every bump has been
@@ -193,12 +200,46 @@ unit rules. It also resolves **tag membership** from the game's tag definitions
 (`data/<ns>/tags/item/<path>.json`, nested `#tag`s flattened): each tag item
 gets its concrete `members`, and any member not already imported is registered
 as a named item — so a concrete item can stand in for a recipe keyed on a tag.
-A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes
-don't carry — the base electric tier and its `maxEuPerTick` ceiling; the
-targeted subset is all **LV** (32 EU/t). The tier EU/t values (`CABLE_TIER_EU`:
-LV 32, MV 128, HV 1024, EV 8192, SV 128000000) were read verbatim from the jar's
-`CableTier` static initializer, not guessed. `examples/` holds a small sample
-project (`mi_lv_battery_line.psim.json`) generated from a real import.
+A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes don't carry —
+the base electric tier and its `maxEuPerTick` ceiling. The tier EU/t values
+(`CABLE_TIER_EU`: LV 32, MV 128, HV 1024, EV 8192, SV 128000000) and the machine
+tiers were read verbatim from the jar (`CableTier` / `MachineTier` static
+initializers), not guessed. `examples/` holds a small sample project
+(`mi_lv_battery_line.psim.json`) generated from a real import.
+
+**Full import is the default** (`DEFAULT_MACHINE_TYPES`): all 24 MI machine recipe
+types are imported, not a four-type subset (validated against the 2.5.11 jar —
+2268 recipes, 1486 items, 403 tags, 24 machine defs). The 13 single-block electric
+machines (macerator, mixer, assembler, packer, unpacker, chemical_reactor,
+cutting_machine, compressor, distillery, centrifuge, wiremill, electrolyzer,
+polarizer) get the **LV** ceiling (32 EU/t, their electric variant in the jar's
+`SingleBlockCraftingMachines`); the multiblocks (blast_furnace, heat_exchanger,
+vacuum_freezer, implosion_compressor, pressurizer, quarry, distillation_tower,
+fusion_reactor, oil_drilling_rig, coke_oven) import with **no ceiling** — in MI
+they scale with their energy hatches, not a fixed tier. The **forge hammer** is a
+manual tool using a vanilla-style single `ingredient` → `result` shape (not the
+`*_inputs`/`*_outputs` arrays) with no `eu`/`duration`; the parser normalizes that
+shape so its I/O imports, with a zero cycle time (no automatic rate).
+
+**Energy generation is imported too** (`ENERGY_MACHINES`, `include_energy` default
+on). MI's power machines are **not** recipe-driven — their rates live in the jar's
+Java, so they are added as hand-authored **converter** defs (`mi.energy.*`) with
+numbers read verbatim (`SingleBlockSpecialMachines` / `MultiblockMachines` /
+`SteamHeaterComponent` / `MachineTier`): **6 boilers** (bronze 8, steel 16, large
+256, advanced 1024, HP 2048, HP-advanced 8192 EU/t — fuel → steam, water material
+at `steamPerWater` 16:1, waste `w`=0.8), **5 steam turbines** (LV 32, MV 128,
+HV 512, large 16384 — steam → electricity 1:1; plus the plasma turbine, 1048576,
+helium plasma → electricity at 100000 EU/mB), and **4 diesel generators** (LV 64,
+MV 256, HV 1024, large 16384 — a fluid fuel → electricity by its `eu`). MI rates
+are per **tick**; stored `×20` as the per-second `maxFluidRate`. A boiler leaves
+its fuel (`sourceItemId`) unset for the player to pick; its steam/water rates are
+fixed. MI's diesel/plasma generator-efficiency multipliers are **not** modelled —
+the planner is energy-conserving (1 EU fuel → 1 EU out). **Electricity is a routed
+carrier** (resolved decision #3): a new energy-category `mi:electricity` item is
+added, generators emit it over energy pipes, and imported consumers draw it
+(`sourceItemId = mi:electricity` + an energy-in port), so an unwired machine is
+unpowered until a generator feeds it. (The committed `examples/` project predates
+this and uses the scalar-mains fallback, still a valid mode.)
 
 ### API surface (P4 — frozen contract)
 
@@ -245,18 +286,23 @@ model's camelCase wire format.
   `error`.
 - **`import_mi_dir`** reads an **extracted Modern Industrialization jar
   directory** (`io/mi_import.py`) and merges the recipes for the chosen
-  `machineTypes` (default subset: macerator, mixer, assembler, chemical_reactor)
-  into the current World via `import_library`. The parser normalizes MI's shapes
-  (object-or-list I/O, bare/namespaced ids, `tag` refs → `isTag` items,
-  `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
-  per-tick on the recipe), builds items/tags/fluids with names from `lang` and
-  fuel `eu` from the `fluid_fuels` data map, and groups recipes by `type` into
-  electric-consumer machine defs with a data-derived slot layout and the
-  `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`; the subset is
-  LV = 32 EU/t, from the jar's `CableTier`). It resolves tag membership (each tag
+  `machineTypes` (default: **all 24** MI machine recipe types) into the current
+  World via `import_library`. The parser normalizes MI's shapes (object-or-list
+  I/O, the forge hammer's `ingredient`/`result` shape, bare/namespaced ids, `tag`
+  refs → `isTag` items, `probability`, default `amount` 1), converts units
+  (ticks→seconds, `eu` kept per-tick on the recipe), builds items/tags/fluids with
+  names from `lang` and fuel `eu` from the `fluid_fuels` data map, and groups
+  recipes by `type` into electric-consumer machine defs with a data-derived slot
+  layout and the `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`;
+  single-block electric machines are LV = 32 EU/t, from the jar's `CableTier` /
+  `MachineTier`; multiblocks import unclamped). It also adds the non-recipe
+  **energy-generation** converter defs (`ENERGY_MACHINES`: boilers, steam/plasma
+  turbines, diesel generators) and the routed-electricity carrier, and sets
+  imported consumers to draw it (see "Energy generation is imported too" above);
+  pass `include_energy: false` to skip them. It resolves tag membership (each tag
   item's `members`, registering missing member items). `stats` reports the counts
   (files scanned, recipes imported/skipped, items, tags, member items added,
-  defs, per-type).
+  defs, `energyMachines`, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the P5 TS
 bridge mirrors this table.
