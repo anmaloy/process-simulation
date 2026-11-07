@@ -353,3 +353,22 @@ h3 {
     padding: 16px;
   }
 }
+
+/* Import-MI rail control (P4): directory input + result line. */
+.mi-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 22px 4px;
+}
+.mi-import-body .field-input {
+  width: 100%;
+}
+.mi-import-msg {
+  font-size: 12px;
+  color: var(--ink-faint);
+  word-break: break-word;
+}
+.mi-import-msg.bad {
+  color: var(--s-bad);
+}

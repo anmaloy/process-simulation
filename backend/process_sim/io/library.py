@@ -196,7 +196,10 @@ def import_library(
         clone = copy.deepcopy(recipe)
         clone.id = recipe_remap.get(recipe.id, recipe.id)
         for stack in (*clone.inputs, *clone.outputs):
-            stack.item_id = item_remap.get(stack.item_id, stack.item_id)
+            if stack.item_id is not None:
+                stack.item_id = item_remap.get(stack.item_id, stack.item_id)
+            if stack.tag is not None:
+                stack.tag = item_remap.get(stack.tag, stack.tag)
         new_recipes.append(clone)
 
     new_defs: list[MachineDef] = []

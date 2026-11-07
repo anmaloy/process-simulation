@@ -15,6 +15,8 @@ import type {
   ExportLibraryOptions,
   ImportResult,
   LibraryEnvelope,
+  MiImportOptions,
+  MiImportResult,
   RecomputeRequest,
   ScopeReport,
   World,
@@ -152,5 +154,13 @@ export class ApiClient {
     onConflict: ConflictPolicy = "rename",
   ): Promise<ImportResult> {
     return unwrap(await this.raw.import_library_file(path, onConflict));
+  }
+
+  /** Import Modern Industrialization recipes from an extracted jar directory. */
+  async importMiDir(
+    path: string,
+    options: MiImportOptions = {},
+  ): Promise<MiImportResult> {
+    return unwrap(await this.raw.import_mi_dir(path, options));
   }
 }

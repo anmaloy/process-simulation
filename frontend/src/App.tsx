@@ -137,6 +137,24 @@ export function App() {
     if (prev) void replaceWorld(prev, false);
   }, [replaceWorld]);
 
+  // Import Modern Industrialization recipes from an extracted jar directory
+  // (merged via the Python host). Snapshots first so the import is undoable,
+  // then swaps in the returned World and reports what was read.
+  const onImportMi = useCallback(
+    async (path: string): Promise<string> => {
+      if (!client) throw new Error("not connected");
+      snapshot(world);
+      const res = await client.importMiDir(path);
+      setWorld(res.world);
+      const s = res.stats;
+      return (
+        `Imported ${s.recipesImported} recipes · ${s.items} items · ` +
+        `${s.tags} tags · ${s.machineDefs} machines`
+      );
+    },
+    [client, world, snapshot],
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -438,6 +456,7 @@ export function App() {
               ↶ Undo
             </button>
           </div>
+          <MiImport onImport={onImportMi} disabled={!client} />
           <Library
             world={world}
             selection={selection}
@@ -482,6 +501,84 @@ export function App() {
             onDelete={onEntityDelete}
             onClose={() => setSelection(null)}
           />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A small rail control to import Modern Industrialization recipes from an
+// extracted jar directory. It takes a directory path (the import reads it in the
+// Python host) and shows the result or error inline — no modal, no alert().
+function MiImport({
+  onImport,
+  disabled,
+}: {
+  onImport: (path: string) => Promise<string>;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const run = async () => {
+    const p = path.trim();
+    if (!p || busy) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      setMsg({ ok: true, text: await onImport(p) });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rail-section mi-import">
+      <div className="rail-section-head">
+        <p className="eyebrow quiet">Import MI</p>
+        <button
+          type="button"
+          className="rail-add"
+          title="Import Modern Industrialization recipes"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "–" : "+"}
+        </button>
+      </div>
+      {open && (
+        <div className="mi-import-body">
+          <input
+            className="field-input mono"
+            type="text"
+            value={path}
+            placeholder="path to extracted MI jar dir"
+            spellCheck={false}
+            disabled={disabled || busy}
+            onChange={(e) => setPath(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void run();
+            }}
+          />
+          <button
+            type="button"
+            className="tool-btn"
+            onClick={() => void run()}
+            disabled={disabled || busy || path.trim() === ""}
+          >
+            {busy ? "Importing…" : "Import recipes"}
+          </button>
+          {msg && (
+            <span className={`mi-import-msg mono ${msg.ok ? "" : "bad"}`}>
+              {msg.text}
+            </span>
+          )}
+          <span className="field-hint">
+            default subset: macerator, mixer, assembler, chemical reactor
+          </span>
         </div>
       )}
     </div>

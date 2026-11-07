@@ -17,11 +17,18 @@ export interface Item {
   name: string;
   category: Category;
   eu?: number;
+  /** A tag (group) resource — "any item in this set" — not a concrete item. */
+  isTag?: boolean;
 }
 
 export interface Stack {
-  itemId: string;
+  /** A concrete item id — or use `tag` instead; exactly one is set. */
+  itemId?: string;
+  /** A tag (group) resource id, e.g. `c:gears/iron`. */
+  tag?: string;
   quantity: number;
+  /** Expected consume/produce chance; absent = always (1), 0 = catalyst. */
+  probability?: number;
 }
 
 export interface Recipe {
@@ -30,6 +37,10 @@ export interface Recipe {
   name?: string;
   inputs?: Stack[];
   outputs?: Stack[];
+  /** EU/tick the running machine draws; overrides the def's default draw. */
+  euPerTick?: number;
+  /** The machine kind that runs this recipe (MI's recipe `type`). */
+  machineType?: string;
 }
 
 export interface SlotGroup {
@@ -68,6 +79,10 @@ export interface MachineDef {
   slots?: SlotGroup[];
   overclockMin?: number;
   overclockMax?: number;
+  /** Power-tier label (e.g. "LV"/"MV"/"HV") — display + the ceiling below. */
+  voltageTier?: string;
+  /** Max EU/tick the machine can draw; clamps overclock to what the tier feeds. */
+  maxEuPerTick?: number;
 }
 
 export interface MachineNode {
@@ -199,6 +214,26 @@ export interface ImportResult {
   world: World;
   idRemap: Record<string, string>;
   skippedIds: string[];
+}
+
+/** Counts from a Modern Industrialization import (`import_mi_dir`). */
+export interface MiImportStats {
+  filesScanned: number;
+  recipesImported: number;
+  recipesSkipped: number;
+  items: number;
+  tags: number;
+  machineDefs: number;
+  byType: Record<string, number>;
+}
+
+export type MiImportResult = ImportResult & { stats: MiImportStats };
+
+export interface MiImportOptions {
+  /** MI recipe `type`s to import; absent = the default subset. */
+  machineTypes?: string[];
+  name?: string;
+  onConflict?: ConflictPolicy;
 }
 
 // --- Request shapes ------------------------------------------------------- //

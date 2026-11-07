@@ -462,3 +462,60 @@ def test_nested_system_flattens(powered_process: World) -> None:
     assert set(report.node_ids) == {"smelter1", "presser1", "gen1"}
     # Outer = whole world here (all three nodes), so energy matches the world.
     assert _close(report.net_energy, compute_world(powered_process).net_energy)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2 — a tag resource routes end-to-end like any other resource.
+# --------------------------------------------------------------------------- #
+
+
+def _tag_world() -> World:
+    """Producer outputs a tag resource; consumer inputs the same tag."""
+
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+    make = Recipe(
+        id="make",
+        time_seconds=1.0,
+        outputs=[Stack(tag="c:dusts/iron", quantity=5)],
+    )
+    use = Recipe(
+        id="use",
+        time_seconds=1.0,
+        inputs=[Stack(tag="c:dusts/iron", quantity=5)],
+        outputs=[Stack("ingot", 1)],
+    )
+    return World(
+        name="tag",
+        items=[
+            Item("c:dusts/iron", "Iron Dusts", Category.SOLID, is_tag=True),
+            Item("ingot", "Ingot", Category.SOLID),
+        ],
+        recipes=[make, use],
+        machine_defs=[
+            MachineDef(id="dmk", allowed_recipe_ids=["make"], slots=[out_s]),
+            MachineDef(id="duse", allowed_recipe_ids=["use"], slots=[in_s, out_s]),
+        ],
+        nodes=[
+            MachineNode(id="src", machine_def_id="dmk", recipe_id="make"),
+            MachineNode(id="dst", machine_def_id="duse", recipe_id="use"),
+        ],
+        pipes=[
+            Pipe(
+                id="p",
+                category=Category.SOLID,
+                movement_capacity=1000,
+                a=PipeEnd(node_id="src", role=PipeEndRole.OUT),
+                b=PipeEnd(node_id="dst", role=PipeEndRole.IN),
+            )
+        ],
+    )
+
+
+def test_tag_resource_routes_through_a_pipe() -> None:
+    report = compute_scope(_tag_world(), None)
+    # The consumer is fully supplied the tag over the pipe (no shortfall), so it
+    # runs at full duty and no tag leaves the scope.
+    assert _close(report.balances["dst"].inputs["c:dusts/iron"].supplied, 5.0)
+    assert _close(report.external_outputs.get("c:dusts/iron", 0.0), 0.0)
+    assert _close(report.external_outputs.get("ingot", 0.0), 1.0)  # ingot is the yield

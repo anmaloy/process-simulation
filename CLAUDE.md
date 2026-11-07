@@ -152,8 +152,18 @@ override; a corrupt autosave is ignored, an explicit project file wins), so the
 app no longer resets on reopen. `DevApi` mirrors this with `localStorage` for the
 browser build.
 
+The MI-model rework (hybrid recipe energy, tag resources, power tiers) is wired
+through the frontend: the TS bridge mirrors the new fields and the `importMiDir`
+method; the `RecipeInspector` edits per-recipe `euPerTick` (EU/t) + `machineType`
+and each stack's resource (a concrete item **or** a tag) + `probability`; the
+`MachineDefInspector` edits `voltageTier` + `maxEuPerTick` (the overclock
+ceiling) and frames `baseEnergyConsumption` as the fallback draw; and an "Import
+MI" rail control runs `importMiDir` against an extracted jar directory (Python
+host only — the `DevApi` returns a clear error in the browser build).
+
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
-`schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
+`schemaVersion` (currently 2; v1 files still load — every bump has been
+additive/optional) and `kind` (`project` or `library`) wrapping its
 payload. A project file nests the whole World under `"world"`; a library file
 carries the reusable subset (items, recipes, machine defs) at top level.
 `load_project`/`load_library` raise `MalformedFileError` (bad JSON, wrong kind,
@@ -161,6 +171,17 @@ garbled payload) or `UnsupportedVersionError` (version this build can't read) �
 never an unhandled crash. `import_library` resolves id collisions by
 `ConflictPolicy` (`rename` default, `skip`, `error`), rewriting intra-library
 references, and never mutates the target World.
+
+`io/mi_import.py` imports **Modern Industrialization** recipe data: it reads an
+extracted MI jar directory, parses the machine recipes for a chosen set of types
+into a `Library` (items/recipes/machine defs), and merges it with
+`import_library`. See the `import_mi_dir` API entry below for the parsing and
+unit rules. A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes
+don't carry — the base electric tier and its `maxEuPerTick` ceiling; the
+targeted subset is all **LV** (32 EU/t). The tier EU/t values (`CABLE_TIER_EU`:
+LV 32, MV 128, HV 1024, EV 8192, SV 128000000) were read verbatim from the jar's
+`CableTier` static initializer, not guessed. `examples/` holds a small sample
+project (`mi_lv_battery_line.psim.json`) generated from a real import.
 
 ### API surface (P4 — frozen contract)
 
@@ -191,6 +212,7 @@ model's camelCase wire format.
 | `load_library(path)` | path string | Library envelope |
 | `import_library(library, on_conflict="rename")` | Library envelope, policy | `{world, idRemap, skippedIds}` |
 | `import_library_file(path, on_conflict="rename")` | path string, policy | `{world, idRemap, skippedIds}` |
+| `import_mi_dir(path, options)` | path string, `{machineTypes?, name?, onConflict?}` | `{world, idRemap, skippedIds, stats}` |
 
 - **`edit`** is `{"op": "upsert", "kind": <kind>, "entity": {...}}` (replaces the
   entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
@@ -204,6 +226,18 @@ model's camelCase wire format.
   resolved flow + a starved-edge `shortfall` flag, added for the P8 overlay).
 - **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
   `error`.
+- **`import_mi_dir`** reads an **extracted Modern Industrialization jar
+  directory** (`io/mi_import.py`) and merges the recipes for the chosen
+  `machineTypes` (default subset: macerator, mixer, assembler, chemical_reactor)
+  into the current World via `import_library`. The parser normalizes MI's shapes
+  (object-or-list I/O, bare/namespaced ids, `tag` refs → `isTag` items,
+  `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
+  per-tick on the recipe), builds items/tags/fluids with names from `lang` and
+  fuel `eu` from the `fluid_fuels` data map, and groups recipes by `type` into
+  electric-consumer machine defs with a data-derived slot layout and the
+  `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`; the subset is
+  LV = 32 EU/t, from the jar's `CableTier`). `stats` reports the counts (files
+  scanned, recipes imported/skipped, items, tags, defs, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the P5 TS
 bridge mirrors this table.
@@ -299,10 +333,18 @@ tests/           # pytest for engine/model; frontend tests added later
   An item may optionally carry a stored-energy value `eu` — its fuel content in
   EU. A fuel with `eu = 1000` consumed at 2 EU/s lasts 500 s. Optional and
   selectable at item construction: items without `eu` are not fuels.
-- **Stack** — an `{item, quantity}` pair, per recipe cycle unless noted.
-- **Recipe** — input stacks → output stacks over a production time. Recipes carry
-  **no** energy term: energy is a machine property (a machine draws a defined
-  amount while running), so it lives on the `MachineDef`, not the recipe.
+- **Stack** — a `{resource, quantity}` pair, per recipe cycle unless noted. The
+  resource is a concrete `itemId` **or** a `tag` (a group reference like
+  `c:gears/iron` = "any item in this set"; a tag is a first-class fungible
+  resource backed by an `Item` with `isTag: true`). A stack may carry an optional
+  `probability` (expected consume/produce chance; absent = always, `0` = a
+  referenced-but-unconsumed catalyst).
+- **Recipe** — input stacks → output stacks over a production time. Energy is
+  **hybrid** (see decision #2): a recipe may carry its own `euPerTick` (the
+  EU/tick its machine draws while making it) which overrides the machine's
+  `baseEnergyConsumption` default; a recipe without it falls back to the machine
+  draw. An optional `machineType` names the machine kind that runs it (MI's
+  recipe `type`, e.g. `macerator`).
 - **MachineDef** — a template: an **energy source**, allowed recipes, slot layout
   per category and direction, stack sizes, overclock bounds, and optional
   storage. `energySource` ∈ `electric` / `liquid` / `fuel` (absent = passive)
@@ -338,21 +380,30 @@ and direction sets how much a machine can hold.
 
 For a node running recipe `R` at `overclock` with parallel `count`:
 
+`overclock` is first **clamped** by the machine's power ceiling (decision #2):
+`overclock ≤ maxEuPerTick / euPerTick` when both are set — a capped machine runs
+its recipe slower, since speed and energy move together. A term `s` carries an
+optional `probability` (absent = 1); a `probability = 0` term is a catalyst
+(referenced, not consumed/produced) and is left absent, never a zero rate:
+
 ```
 cyclesPerSec   = overclock / R.timeSeconds
-outputRate(s)  = s.quantity * cyclesPerSec * count   # per output stack
-inputDemand(s) = s.quantity * cyclesPerSec * count   # per input stack
+outputRate(s)  = s.quantity * p(s) * cyclesPerSec * count   # p(s)=probability||1
+inputDemand(s) = s.quantity * p(s) * cyclesPerSec * count
 ```
 
-Energy per node — a machine draws its `baseEnergyConsumption` while running; a
-converter earns a `produce` term by making an energy-category output. Both the
-draw and the output are **routed carriers** (items), and the scalar energy terms
-are *derived* from those energy-category flows. An absent term stays absent (not
-zero):
+Energy per node — the draw is **hybrid** (decision #2): a recipe's own
+`euPerTick` overrides the machine's `baseEnergyConsumption` default. `euPerTick`
+is per **tick**, so the engine multiplies by 20 for its per-second canonical
+draw; `baseEnergyConsumption` is already per-second. A converter earns a
+`produce` term by making an energy-category output. Both the draw and the output
+are **routed carriers** (items), and the scalar energy terms are *derived* from
+those energy-category flows. An absent term stays absent (not zero):
 
 ```
-consume   = baseEnergyConsumption * overclock * count   # routed as its carrier
-produce   = (converter energy-carrier output)           # see "Carrier tiers"
+euPerTick = R.euPerTick  (else baseEnergyConsumption / 20)   # per-tick draw
+consume   = euPerTick * 20 * overclock * count               # routed as carrier
+produce   = (converter energy-carrier output)                # see "Carrier tiers"
 netEnergy = produce - consume     # derived from energy-category carriers
 ```
 
@@ -491,7 +542,9 @@ Insert favors higher, extract favors lower. Don't "simplify" this into one rule.
 A single scalar multiplier, default 1, applied linearly. On machines it scales
 cycles/sec, energy consumption, and energy production together. On pipes it scales
 movement capacity. Optional min/max bounds per definition for UI clamping. No
-non-linear curve.
+non-linear curve. The engine additionally clamps a machine's effective overclock
+to its power ceiling (`euPerTick × overclock ≤ maxEuPerTick`, decision #2) — a
+machine can't run faster than its tier/upgrades can feed it.
 
 ## Resolved decisions
 
@@ -499,9 +552,15 @@ All of the original open questions are decided. Build to these.
 
 1. **Pipe priority asymmetry is final** — insert favors higher, extract favors
    lower, exactly as specified above and in the five cases. Not up for revision.
-2. **Energy is a machine property** — recipes carry no energy term; a machine
-   draws `baseEnergyConsumption` while running. A machine's `energySource`
-   (electric / liquid / fuel) picks the carrier it consumes.
+2. **Energy is hybrid (recipe overrides machine)** — revised to match Modern
+   Industrialization, which puts `eu`/`duration` on each recipe. A recipe's
+   `euPerTick` is the EU/tick its machine draws while making it and **overrides**
+   the machine's `baseEnergyConsumption`; a recipe without it falls back to the
+   machine draw, so pre-existing machine-energy projects keep working. A
+   machine's `energySource` (electric / liquid / fuel) still picks the carrier
+   consumed, and a machine carries a MI-style power ceiling (`voltageTier` +
+   `maxEuPerTick`) that clamps overclock so `euPerTick × overclock ≤
+   maxEuPerTick`.
 3. **All carriers are routed items (electricity included)** — fuel items store
    `eu`; a boiler burns fuel into steam, a turbine turns steam into electricity.
    Fuel, steam, **and** electricity flow through pipes under the normal

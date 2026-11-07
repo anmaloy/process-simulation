@@ -7,9 +7,13 @@ rates per second)::
     outputRate(s)  = s.quantity * cyclesPerSec * count
     inputDemand(s) = s.quantity * cyclesPerSec * count
 
-Energy is a **machine** property, not a recipe one: a machine draws
-``base_energy_consumption`` EU/s while it runs (scaled by overclock × count).
-How that energy is sourced is the machine's ``energy_source``, and every carrier
+Energy is **hybrid** (resolved decision #2): a recipe's own ``eu_per_tick``
+overrides the machine's ``base_energy_consumption`` default. The effective
+per-tick draw is scaled by overclock × count and converted to per-second (×20);
+the overclock is first clamped so ``eu_per_tick × overclock ≤ max_eu_per_tick``
+(the machine's power-tier ceiling), which slows the recipe too, since speed and
+energy move together. How that energy is sourced is the machine's
+``energy_source``, and every carrier
 — fuel, steam, **and electricity** — flows as a routed item so pipe throughput
 caps it (electric connections give electricity its transfer limit):
 
@@ -33,7 +37,12 @@ from dataclasses import dataclass, field
 from ..model import Category, EnergySource, Item, MachineDef, MachineNode, Recipe
 from .energy import FuelConversion, convert_fuel
 
-__all__ = ["NodeComputation", "compute_node"]
+__all__ = ["NodeComputation", "compute_node", "TICKS_PER_SEC"]
+
+#: Game ticks per second. Recipe energy (``eu_per_tick``) and the machine power
+#: ceiling (``max_eu_per_tick``) are per **tick** (Modern Industrialization's
+#: native base); the engine is canonical per **second**, so draws convert ×20.
+TICKS_PER_SEC = 20.0
 
 
 @dataclass
@@ -97,8 +106,32 @@ def compute_node(
     """
 
     items = items or {}
-    overclock = node.overclock
     count = node.count
+
+    # Effective per-tick energy draw (hybrid, resolved decision #2): a recipe's
+    # own ``eu_per_tick`` overrides the machine's ``base_energy_consumption``
+    # default. ``base`` is stored per-second, so convert it to per-tick for the
+    # tier comparison and the draw. Absent on both = no recipe-driven draw (a
+    # converter, or a passive machine).
+    base = machine_def.base_energy_consumption
+    if recipe is not None and recipe.eu_per_tick is not None:
+        eu_per_tick: float | None = recipe.eu_per_tick
+    elif base is not None:
+        eu_per_tick = base / TICKS_PER_SEC
+    else:
+        eu_per_tick = None
+
+    # Modern-Industrialization-style power ceiling: a machine cannot overclock
+    # past the EU/tick its tier/upgrades feed, so clamp the overclock used for
+    # *all* scaling — speed and energy move together, so a capped machine runs
+    # its recipe slower too. A machine with no ceiling (or no per-tick draw to
+    # measure against) overclocks freely.
+    overclock = node.overclock
+    cap = machine_def.max_eu_per_tick
+    if cap is not None and eu_per_tick is not None and eu_per_tick > 0:
+        max_oc = cap / eu_per_tick
+        if overclock > max_oc:
+            overclock = max_oc
     scale = overclock * count
 
     cycles_per_sec = 0.0
@@ -107,10 +140,22 @@ def compute_node(
     if recipe is not None and recipe.time_seconds > 0:
         cycles_per_sec = overclock / recipe.time_seconds
         rate = cycles_per_sec * count
+        # A probabilistic term contributes its *expected* amount (quantity ×
+        # probability); absent probability = always (1), probability 0 = a
+        # catalyst (referenced but neither consumed nor produced).
         for s in recipe.outputs:
-            _accumulate(outputs, s.item_id, s.quantity * rate)
+            rid = s.resource_id
+            prob = s.probability if s.probability is not None else 1.0
+            if rid is not None and prob != 0.0:
+                _accumulate(outputs, rid, s.quantity * prob * rate)
         for s in recipe.inputs:
-            _accumulate(inputs, s.item_id, s.quantity * rate)
+            rid = s.resource_id
+            prob = s.probability if s.probability is not None else 1.0
+            # A probability-0 term is a catalyst: referenced but not consumed /
+            # produced, so it imposes no demand and is left absent (never a
+            # zero-rate entry).
+            if rid is not None and prob != 0.0:
+                _accumulate(inputs, rid, s.quantity * prob * rate)
 
     src_id = machine_def.source_item_id
 
@@ -126,13 +171,14 @@ def compute_node(
         else:
             _accumulate(inputs, src_id, amount)
 
-    # A machine draws base energy while it runs. With a source carrier chosen it
-    # is *routed* (and therefore transfer-limited by its pipes); without one it
-    # falls back to a scalar grid draw (an abstract mains supply).
-    base = machine_def.base_energy_consumption
+    # A machine draws energy while it runs: ``eu_per_tick`` (recipe override or
+    # machine default) × 20 → per-second, scaled by the clamped overclock ×
+    # count. With a source carrier chosen it is *routed* (and therefore
+    # transfer-limited by its pipes); without one it falls back to a scalar grid
+    # draw (an abstract mains supply).
     scalar_consume = 0.0
-    if base is not None:
-        draw = base * scale
+    if eu_per_tick is not None:
+        draw = eu_per_tick * TICKS_PER_SEC * scale
         if src_id is not None:
             _consume_source(draw)
         else:

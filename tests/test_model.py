@@ -349,3 +349,70 @@ def test_world_round_trip_preserves_absent_fields() -> None:
     furnace_def = next(m for m in restored.machine_defs if m.id == "furnace")
     assert furnace_def.efficiency is None and furnace_def.output_item_id is None
     assert next(i for i in restored.items if i.id == "iron").eu is None
+
+
+# --------------------------------------------------------------------------- #
+# Phase 1 (v2) additions: hybrid per-recipe energy, tag resources, power tiers.
+# Every new field is optional and must survive the round-trip as absence when
+# unset — the same "unset ≠ zero/false" bar as the rest of the model.
+# --------------------------------------------------------------------------- #
+
+
+def test_recipe_carries_optional_energy_and_machine_type() -> None:
+    r = Recipe(
+        id="macerate_iron",
+        time_seconds=10.0,
+        eu_per_tick=2,
+        machine_type="macerator",
+        inputs=[Stack(item_id="iron_ingot", quantity=1)],
+        outputs=[Stack(item_id="iron_dust", quantity=2)],
+    )
+    d = r.to_dict()
+    assert d["euPerTick"] == 2 and d["machineType"] == "macerator"
+    back = Recipe.from_dict(d)
+    assert back.eu_per_tick == 2 and back.machine_type == "macerator"
+
+
+def test_recipe_energy_terms_absent_when_unset() -> None:
+    d = Recipe(id="r", time_seconds=1.0).to_dict()
+    assert "euPerTick" not in d and "machineType" not in d
+    assert Recipe.from_dict(d).eu_per_tick is None
+
+
+def test_stack_tag_resource_round_trips() -> None:
+    s = Stack(tag="c:gears/iron", quantity=1, probability=0.5)
+    assert s.item_id is None and s.resource_id == "c:gears/iron"
+    d = s.to_dict()
+    assert d == {"tag": "c:gears/iron", "quantity": 1, "probability": 0.5}
+    assert "itemId" not in d
+    back = Stack.from_dict(d)
+    assert back.tag == "c:gears/iron" and back.probability == 0.5
+
+
+def test_stack_concrete_item_resource_id_and_sparse_probability() -> None:
+    s = Stack(item_id="iron", quantity=2)
+    assert s.resource_id == "iron"
+    d = s.to_dict()
+    assert d == {"itemId": "iron", "quantity": 2}
+    assert "tag" not in d and "probability" not in d
+
+
+def test_item_tag_flag_round_trips_and_is_sparse() -> None:
+    tag = Item(id="c:gears/iron", name="Iron Gears", category=Category.SOLID, is_tag=True)
+    assert tag.to_dict()["isTag"] is True
+    assert Item.from_dict(tag.to_dict()).is_tag is True
+    # A concrete item never carries the flag in the wire format.
+    concrete = Item(id="iron", name="Iron", category=Category.SOLID)
+    assert "isTag" not in concrete.to_dict()
+    assert Item.from_dict(concrete.to_dict()).is_tag is None
+
+
+def test_machine_def_power_tier_round_trips_and_is_sparse() -> None:
+    m = MachineDef(id="electric_macerator", voltage_tier="LV", max_eu_per_tick=32)
+    d = m.to_dict()
+    assert d["voltageTier"] == "LV" and d["maxEuPerTick"] == 32
+    back = MachineDef.from_dict(d)
+    assert back.voltage_tier == "LV" and back.max_eu_per_tick == 32
+    # A machine with no modelled ceiling omits both.
+    plain = MachineDef(id="plain").to_dict()
+    assert "voltageTier" not in plain and "maxEuPerTick" not in plain

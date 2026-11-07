@@ -95,25 +95,61 @@ export function NumberInput({
   onChange,
   min,
   max,
-  step = "any",
 }: {
   value: number;
   onChange: (v: number) => void;
   min?: number;
   max?: number;
+  /** Accepted for call-site compatibility; unused now the input is text-based. */
   step?: number | "any";
 }) {
+  // A controlled `type="number"` bound straight to the numeric value cannot hold
+  // the transient states real editing passes through — an empty field, a lone
+  // "-", a trailing "0." — so clearing "1" to type "0.4" snapped back to 1 and
+  // the keystrokes landed as "10.4". We keep the raw text locally instead,
+  // re-syncing from the prop only while unfocused, and commit a parsed number
+  // whenever the text reads as one. Empty is a valid in-progress state; blur
+  // with no valid number reverts to the last good value.
+  const [text, setText] = useState(() =>
+    Number.isFinite(value) ? String(value) : "",
+  );
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!focused) setText(Number.isFinite(value) ? String(value) : "");
+  }, [value, focused]);
+
+  const clamp = (n: number) => {
+    let v = n;
+    if (min != null && v < min) v = min;
+    if (max != null && v > max) v = max;
+    return v;
+  };
+
   return (
     <input
       className="field-input mono"
-      type="number"
-      value={Number.isFinite(value) ? value : ""}
-      min={min}
-      max={max}
-      step={step}
+      type="text"
+      inputMode="decimal"
+      value={text}
+      onFocus={() => setFocused(true)}
       onChange={(e) => {
-        const n = e.target.valueAsNumber;
-        if (!Number.isNaN(n)) onChange(n);
+        const s = e.target.value;
+        setText(s);
+        if (s.trim() === "") return; // allow the field to be emptied mid-edit
+        const n = Number(s);
+        if (Number.isFinite(n)) onChange(clamp(n));
+      }}
+      onBlur={(e) => {
+        setFocused(false);
+        const s = e.target.value.trim();
+        const n = Number(s);
+        if (s === "" || !Number.isFinite(n)) {
+          setText(Number.isFinite(value) ? String(value) : "");
+        } else {
+          const v = clamp(n);
+          onChange(v);
+          setText(String(v));
+        }
       }}
     />
   );

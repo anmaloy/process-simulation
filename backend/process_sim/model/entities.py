@@ -35,12 +35,20 @@ class Item(Serializable):
 
     ``eu`` is the item's stored-energy (fuel) content in EU; items without it
     are not fuels. Absent ``eu`` means "not a fuel", distinct from ``eu = 0``.
+
+    ``is_tag`` marks a *tag* resource — a named group ("any item in this set",
+    e.g. Modern Industrialization's ``c:gears/iron``) rather than a concrete
+    item. A tag item is a first-class, fungible resource in the balance: a
+    :class:`Stack` may reference it, and the engine treats its id like any other
+    resource id. Absent = a concrete item (the common case), not ``False`` in
+    the wire format.
     """
 
     id: str
     name: str
     category: Category
     eu: float | None = None
+    is_tag: bool | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Item:
@@ -49,28 +57,63 @@ class Item(Serializable):
             name=d["name"],
             category=Category(d["category"]),
             eu=d.get("eu"),
+            is_tag=d.get("isTag"),
         )
 
 
 @dataclass
 class Stack(Serializable):
-    """An ``{item, quantity}`` pair, per recipe cycle unless noted."""
+    """A ``{resource, quantity}`` pair, per recipe cycle unless noted.
 
-    item_id: str
-    quantity: float
+    The resource is either a concrete item (``item_id``) **or** a tag
+    (``tag`` — a group reference like ``c:gears/iron``); exactly one is set.
+    :attr:`resource_id` returns whichever applies, which is the id the engine
+    keys flows by (a tag resolves to a tag :class:`Item` of the same id).
+
+    ``probability`` is the expected consume/produce chance for a probabilistic
+    recipe term (absent = always, i.e. ``1``). ``probability = 0`` is a catalyst
+    (referenced but neither consumed nor produced) — distinct from absent.
+    """
+
+    item_id: str | None = None
+    quantity: float = 0.0
+    tag: str | None = None
+    probability: float | None = None
+
+    @property
+    def resource_id(self) -> str | None:
+        """The concrete item id, else the tag id — the flow key for this stack."""
+
+        return self.item_id if self.item_id is not None else self.tag
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Stack:
-        return cls(item_id=d["itemId"], quantity=d["quantity"])
+        return cls(
+            item_id=d.get("itemId"),
+            quantity=d["quantity"],
+            tag=d.get("tag"),
+            probability=d.get("probability"),
+        )
 
 
 @dataclass
 class Recipe(Serializable):
     """Input stacks → output stacks over ``time_seconds``.
 
-    Recipes carry no energy term: a machine draws a defined amount while running
-    (``MachineDef.base_energy_consumption``), so energy lives on the machine, not
-    the recipe (resolved: energy is a machine property).
+    Energy is **hybrid** (resolved decision #2, revised to match Modern
+    Industrialization): a recipe may carry its own ``eu_per_tick`` — the EU/tick
+    its running machine draws while making it — which *overrides* the machine's
+    ``base_energy_consumption`` default when present. A recipe without
+    ``eu_per_tick`` falls back to the machine's own draw, so pre-existing
+    machine-energy projects keep working. ``eu_per_tick`` is per **tick** (the
+    canonical EU/t the UI and MI data both use); the engine converts to
+    per-second (×20) at compute time, mirroring the duration ticks→seconds
+    conversion the importer applies.
+
+    ``machine_type`` is the kind of machine that runs this recipe (MI's recipe
+    ``type``, e.g. ``macerator``). It names the binding from the machine side; a
+    :class:`MachineDef` still lists its ``allowed_recipe_ids``, but importers key
+    recipe→machine off this field.
     """
 
     id: str
@@ -78,6 +121,8 @@ class Recipe(Serializable):
     name: str | None = None
     inputs: list[Stack] = field(default_factory=list)
     outputs: list[Stack] = field(default_factory=list)
+    eu_per_tick: float | None = None
+    machine_type: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Recipe:
@@ -87,6 +132,8 @@ class Recipe(Serializable):
             name=d.get("name"),
             inputs=[Stack.from_dict(s) for s in d.get("inputs", [])],
             outputs=[Stack.from_dict(s) for s in d.get("outputs", [])],
+            eu_per_tick=d.get("euPerTick"),
+            machine_type=d.get("machineType"),
         )
 
 
@@ -148,6 +195,15 @@ class MachineDef(Serializable):
     ``base_energy_consumption`` — the EU/s it draws while running its recipe.
     A **storage** def sets ``storage`` and acts as a buffer. All energy fields are
     absent on a passive machine.
+
+    ``base_energy_consumption`` is now the machine's *default* draw: a bound
+    recipe's own ``eu_per_tick`` overrides it (see :class:`Recipe`). The machine
+    additionally carries a Modern-Industrialization-style power ceiling:
+    ``voltage_tier`` (a tier label such as ``LV`` / ``MV`` / ``HV``) and
+    ``max_eu_per_tick`` (the most EU/tick the machine can draw). The engine
+    clamps the effective overclock so ``eu_per_tick × overclock`` never exceeds
+    ``max_eu_per_tick`` — the tier/upgrade cap that gates overclocking in MI.
+    Both are absent on a machine with no modelled ceiling.
     """
 
     id: str
@@ -165,6 +221,8 @@ class MachineDef(Serializable):
     slots: list[SlotGroup] = field(default_factory=list)
     overclock_min: float | None = None
     overclock_max: float | None = None
+    voltage_tier: str | None = None
+    max_eu_per_tick: float | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> MachineDef:
@@ -186,6 +244,8 @@ class MachineDef(Serializable):
             slots=[SlotGroup.from_dict(s) for s in d.get("slots", [])],
             overclock_min=d.get("overclockMin"),
             overclock_max=d.get("overclockMax"),
+            voltage_tier=d.get("voltageTier"),
+            max_eu_per_tick=d.get("maxEuPerTick"),
         )
 
 

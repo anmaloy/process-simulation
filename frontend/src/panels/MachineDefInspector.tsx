@@ -24,6 +24,7 @@ import {
   Checkbox,
   Field,
   NumberInput,
+  Optional,
   OptionalNumber,
   Select,
   TextInput,
@@ -290,14 +291,37 @@ export function MachineDefInspector({
             />
           </Field>
           <OptionalNumber
-            label="energy draw"
+            label="default energy draw"
             unit="EU/t"
             value={def.baseEnergyConsumption != null ? toPerTick(def.baseEnergyConsumption) : undefined}
             onSet={(v) => onChange(withField(def, "baseEnergyConsumption", toPerSecond(v)))}
             onClear={() => onChange(withoutField(def, "baseEnergyConsumption"))}
             fallback={1}
             min={0}
-            hint="drawn while running"
+            hint="fallback EU/t while running; a recipe's own energy overrides it"
+          />
+          <Optional
+            label="voltage tier"
+            present={def.voltageTier != null}
+            onAdd={() => onChange(withField(def, "voltageTier", "LV"))}
+            onClear={() => onChange(withoutField(def, "voltageTier"))}
+            hint="power-tier label (LV / MV / HV …)"
+          >
+            <TextInput
+              value={def.voltageTier ?? ""}
+              onChange={(v) => onChange(withField(def, "voltageTier", v))}
+              placeholder="e.g. LV"
+            />
+          </Optional>
+          <OptionalNumber
+            label="max draw"
+            unit="EU/t"
+            value={def.maxEuPerTick}
+            onSet={(v) => onChange(withField(def, "maxEuPerTick", v))}
+            onClear={() => onChange(withoutField(def, "maxEuPerTick"))}
+            fallback={32}
+            min={0}
+            hint="power ceiling — clamps overclock to what the tier can feed"
           />
         </>
       )}
