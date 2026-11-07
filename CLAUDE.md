@@ -176,7 +176,12 @@ references, and never mutates the target World.
 extracted MI jar directory, parses the machine recipes for a chosen set of types
 into a `Library` (items/recipes/machine defs), and merges it with
 `import_library`. See the `import_mi_dir` API entry below for the parsing and
-unit rules; tier EU caps are deferred to the P5 machine catalog.
+unit rules. A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes
+don't carry — the base electric tier and its `maxEuPerTick` ceiling; the
+targeted subset is all **LV** (32 EU/t). The tier EU/t values (`CABLE_TIER_EU`:
+LV 32, MV 128, HV 1024, EV 8192, SV 128000000) were read verbatim from the jar's
+`CableTier` static initializer, not guessed. `examples/` holds a small sample
+project (`mi_lv_battery_line.psim.json`) generated from a real import.
 
 ### API surface (P4 — frozen contract)
 
@@ -229,10 +234,10 @@ model's camelCase wire format.
   `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
   per-tick on the recipe), builds items/tags/fluids with names from `lang` and
   fuel `eu` from the `fluid_fuels` data map, and groups recipes by `type` into
-  electric-consumer machine defs with a data-derived slot layout. Tier EU caps
-  (`maxEuPerTick`) are left unset here — authored in the machine catalog (P5).
-  `stats` reports the counts (files scanned, recipes imported/skipped, items,
-  tags, defs, per-type).
+  electric-consumer machine defs with a data-derived slot layout and the
+  `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`; the subset is
+  LV = 32 EU/t, from the jar's `CableTier`). `stats` reports the counts (files
+  scanned, recipes imported/skipped, items, tags, defs, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the P5 TS
 bridge mirrors this table.

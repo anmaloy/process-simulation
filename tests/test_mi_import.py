@@ -9,12 +9,21 @@ and machine defs group by ``type`` with a data-derived slot layout.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from process_sim.api import Api
-from process_sim.io import import_mi_library
+from process_sim.engine import compute_world
+from process_sim.io import (
+    CABLE_TIER_EU,
+    MACHINE_CATALOG,
+    import_mi_library,
+    load_project,
+)
 from process_sim.model import Category
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 NS = "modern_industrialization"
 
@@ -213,11 +222,47 @@ def test_machine_defs_group_with_electric_source_and_derived_slots(mi_root):
     asm = defs["mi.machine.assembler"]
     assert asm.energy_source.value == "electric"
     assert asm.base_energy_consumption is None  # energy now rides the recipe
-    assert asm.max_eu_per_tick is None  # tier caps deferred to the catalog (P5)
+    # Catalog (P5): the targeted types are LV machines, so the overclock ceiling
+    # is the LV tier's EU/t (32, read from the jar's CableTier).
+    assert asm.voltage_tier == "LV"
+    assert asm.max_eu_per_tick == 32
     assert asm.allowed_recipe_ids == ["mi:assembler/gear"]
     layout = {(g.category.value, g.direction.value): g.slots for g in asm.slots}
     # Derived from the one assembler recipe: 2 solid in, 1 solid out, 1 fluid in.
     assert layout == {("solid", "in"): 2, ("solid", "out"): 1, ("liquid", "in"): 1}
+
+
+def test_catalog_tier_caps_match_jar_cable_tiers():
+    # The authored EU/t ceilings are MI's CableTier values (verified from the
+    # jar), not guesses; the targeted subset is all Low Voltage.
+    assert CABLE_TIER_EU == {
+        "LV": 32,
+        "MV": 128,
+        "HV": 1024,
+        "EV": 8192,
+        "SV": 128_000_000,
+    }
+    for t in ("macerator", "mixer", "assembler", "chemical_reactor"):
+        spec = MACHINE_CATALOG[t]
+        assert spec.voltage_tier == "LV" and spec.max_eu_per_tick == 32
+
+
+def test_uncatalogued_type_imports_without_a_ceiling(tmp_path):
+    # A type not in the catalog still imports (generic), just with no clamp.
+    recipe = tmp_path / "data" / NS / "recipe"
+    _write(
+        recipe / "polarizer" / "x.json",
+        {
+            "type": f"{NS}:polarizer",
+            "duration": 100,
+            "eu": 2,
+            "item_inputs": [{"item": f"{NS}:iron_rod"}],
+            "item_outputs": [{"item": f"{NS}:iron_magnetic_rod"}],
+        },
+    )
+    lib = import_mi_library(tmp_path, machine_types=("polarizer",)).library
+    pol = next(d for d in lib.machine_defs if d.id == "mi.machine.polarizer")
+    assert pol.voltage_tier is None and pol.max_eu_per_tick is None
 
 
 # --------------------------------------------------------------------------- #
@@ -237,6 +282,24 @@ def test_api_import_mi_dir_merges_and_reports_stats(mi_root):
     }
     # The merge landed in the api's live World.
     assert len(api._world.machine_defs) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Committed sample project (P5) — loads and computes to the documented balance.
+# --------------------------------------------------------------------------- #
+
+
+def test_sample_mi_project_loads_and_balances():
+    world = load_project(EXAMPLES / "mi_lv_battery_line.psim.json")
+    rep = compute_world(world).to_dict()
+    # Both nodes run at full duty; the battery maker (count 2) exactly feeds the
+    # hull maker, so there is no bottleneck and the hull is the product.
+    assert rep["nodeDuty"] == {"assembler_battery": 1.0, "assembler_hull": 1.0}
+    assert rep["netEnergy"] == -480.0  # 8 EU/t ×20 × (2 + 1) nodes
+    assert rep["bottlenecks"] == []
+    assert rep["externalOutputs"].get(
+        "modern_industrialization:basic_machine_hull"
+    ) == pytest.approx(0.1)
 
 
 def test_api_import_mi_dir_bad_path_is_error_envelope(tmp_path):

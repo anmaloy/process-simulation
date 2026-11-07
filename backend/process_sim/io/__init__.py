@@ -31,7 +31,10 @@ from .library import (
     save_library,
 )
 from .mi_import import (
+    CABLE_TIER_EU,
     DEFAULT_MACHINE_TYPES,
+    MACHINE_CATALOG,
+    MachineSpec,
     MiImport,
     import_mi_library,
 )
@@ -68,6 +71,9 @@ __all__ = [
     "load_library",
     # Modern Industrialization import
     "DEFAULT_MACHINE_TYPES",
+    "CABLE_TIER_EU",
+    "MACHINE_CATALOG",
+    "MachineSpec",
     "MiImport",
     "import_mi_library",
 ]

@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 2,
+  "kind": "project",
+  "world": {
+    "name": "MI - LV Battery Line",
+    "items": [
+      {
+        "id": "c:plates/battery_alloy",
+        "name": "Plates Battery Alloy",
+        "category": "solid",
+        "isTag": true
+      },
+      {
+        "id": "minecraft:redstone",
+        "name": "Redstone",
+        "category": "solid"
+      },
+      {
+        "id": "modern_industrialization:analog_circuit",
+        "name": "Analog Circuit",
+        "category": "solid"
+      },
+      {
+        "id": "modern_industrialization:basic_machine_hull",
+        "name": "Basic Machine Hull",
+        "category": "solid"
+      },
+      {
+        "id": "modern_industrialization:battery_alloy_curved_plate",
+        "name": "Battery Alloy Curved Plate",
+        "category": "solid"
+      },
+      {
+        "id": "modern_industrialization:redstone_battery",
+        "name": "Redstone Battery",
+        "category": "solid"
+      },
+      {
+        "id": "modern_industrialization:steel_machine_casing",
+        "name": "Steel Machine Casing",
+        "category": "solid"
+      },
+      {
+        "id": "modern_industrialization:tin_cable",
+        "name": "Tin Cable",
+        "category": "solid"
+      }
+    ],
+    "recipes": [
+      {
+        "id": "mi:assembler_generated/electric_age/battery/lv_battery",
+        "timeSeconds": 10.0,
+        "name": "Assembler: Redstone Battery",
+        "inputs": [
+          {
+            "quantity": 1.0,
+            "tag": "c:plates/battery_alloy"
+          },
+          {
+            "itemId": "modern_industrialization:tin_cable",
+            "quantity": 2.0
+          },
+          {
+            "itemId": "modern_industrialization:battery_alloy_curved_plate",
+            "quantity": 4.0
+          },
+          {
+            "itemId": "minecraft:redstone",
+            "quantity": 2.0
+          }
+        ],
+        "outputs": [
+          {
+            "itemId": "modern_industrialization:redstone_battery",
+            "quantity": 1.0
+          }
+        ],
+        "euPerTick": 8.0,
+        "machineType": "assembler"
+      },
+      {
+        "id": "mi:assembler_generated/electric_age/hull/lv_machine_hull",
+        "timeSeconds": 10.0,
+        "name": "Assembler: Basic Machine Hull",
+        "inputs": [
+          {
+            "itemId": "modern_industrialization:analog_circuit",
+            "quantity": 1.0
+          },
+          {
+            "itemId": "modern_industrialization:tin_cable",
+            "quantity": 3.0
+          },
+          {
+            "itemId": "modern_industrialization:redstone_battery",
+            "quantity": 2.0
+          },
+          {
+            "itemId": "modern_industrialization:steel_machine_casing",
+            "quantity": 1.0
+          }
+        ],
+        "outputs": [
+          {
+            "itemId": "modern_industrialization:basic_machine_hull",
+            "quantity": 1.0
+          }
+        ],
+        "euPerTick": 8.0,
+        "machineType": "assembler"
+      }
+    ],
+    "machineDefs": [
+      {
+        "id": "mi.machine.assembler",
+        "name": "Assembler",
+        "energySource": "electric",
+        "allowedRecipeIds": [
+          "mi:assembler_generated/electric_age/battery/lv_battery",
+          "mi:assembler_generated/electric_age/hull/lv_machine_hull"
+        ],
+        "slots": [
+          {
+            "category": "solid",
+            "direction": "in",
+            "slots": 8,
+            "stackSize": 64
+          },
+          {
+            "category": "solid",
+            "direction": "out",
+            "slots": 1,
+            "stackSize": 64
+          },
+          {
+            "category": "liquid",
+            "direction": "in",
+            "slots": 2,
+            "stackSize": 16000
+          }
+        ],
+        "voltageTier": "LV",
+        "maxEuPerTick": 32
+      }
+    ],
+    "nodes": [
+      {
+        "id": "assembler_battery",
+        "machineDefId": "mi.machine.assembler",
+        "recipeId": "mi:assembler_generated/electric_age/battery/lv_battery",
+        "overclock": 1.0,
+        "count": 2,
+        "assumeInputs": true,
+        "assumeOutputs": false,
+        "x": -220,
+        "y": 0
+      },
+      {
+        "id": "assembler_hull",
+        "machineDefId": "mi.machine.assembler",
+        "recipeId": "mi:assembler_generated/electric_age/hull/lv_machine_hull",
+        "overclock": 1.0,
+        "count": 1,
+        "assumeInputs": true,
+        "assumeOutputs": true,
+        "x": 160,
+        "y": 0
+      }
+    ],
+    "pipes": [
+      {
+        "id": "battery_feed",
+        "category": "solid",
+        "a": {
+          "nodeId": "assembler_battery",
+          "role": "out"
+        },
+        "b": {
+          "nodeId": "assembler_hull",
+          "role": "in"
+        },
+        "movementCapacity": 1000,
+        "overclock": 1.0
+      }
+    ],
+    "systems": []
+  }
+}

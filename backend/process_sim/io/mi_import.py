@@ -59,6 +59,9 @@ from .library import Library
 
 __all__ = [
     "DEFAULT_MACHINE_TYPES",
+    "CABLE_TIER_EU",
+    "MACHINE_CATALOG",
+    "MachineSpec",
     "MiImport",
     "import_mi_library",
 ]
@@ -71,6 +74,44 @@ DEFAULT_MACHINE_TYPES: tuple[str, ...] = (
     "assembler",
     "chemical_reactor",
 )
+
+#: Modern Industrialization voltage-tier EU/tick, read verbatim from the jar's
+#: ``CableTier`` static initializer (``api/energy/CableTier.class``) — not
+#: guessed. The ``eu`` is the per-tick power a tier's machine/cable carries,
+#: i.e. the overclock ceiling a machine of that tier draws at.
+CABLE_TIER_EU: dict[str, float] = {
+    "LV": 32,  # Low Voltage
+    "MV": 128,  # Medium Voltage
+    "HV": 1024,  # High Voltage
+    "EV": 8192,  # Extreme Voltage
+    "SV": 128_000_000,  # Superconductor
+}
+
+
+@dataclass(frozen=True)
+class MachineSpec:
+    """Hand-authored metadata the recipe data doesn't carry, keyed by type.
+
+    A MI machine's tier isn't in its recipes (the same ``macerator`` recipe runs
+    on the bronze, steel, or electric macerator), so the base **electric** tier
+    is authored here: ``voltage_tier`` labels it and ``max_eu_per_tick`` is that
+    tier's EU/tick (:data:`CABLE_TIER_EU`), which clamps overclock in the engine.
+    """
+
+    voltage_tier: str | None = None
+    max_eu_per_tick: float | None = None
+
+
+#: Per-type machine metadata for the imported subset. MI's basic electric
+#: processing machines are Low-Voltage blocks (upgradable), so each targeted type
+#: gets the LV ceiling (32 EU/t); a node can be retiered in the inspector. A type
+#: absent here imports with no ceiling (overclock unclamped).
+MACHINE_CATALOG: dict[str, MachineSpec] = {
+    "macerator": MachineSpec("LV", CABLE_TIER_EU["LV"]),
+    "mixer": MachineSpec("LV", CABLE_TIER_EU["LV"]),
+    "assembler": MachineSpec("LV", CABLE_TIER_EU["LV"]),
+    "chemical_reactor": MachineSpec("LV", CABLE_TIER_EU["LV"]),
+}
 
 _MI_NS = "modern_industrialization"
 #: Default stack sizes per category for a derived slot (a solid stack; a tank).
@@ -411,10 +452,13 @@ def _machine_def(
     add(Category.LIQUID, Direction.IN, agg["lin"], _FLUID_STACK)
     add(Category.LIQUID, Direction.OUT, agg["lout"], _FLUID_STACK)
 
+    spec = MACHINE_CATALOG.get(machine_type, MachineSpec())
     return MachineDef(
         id=f"mi.machine.{machine_type}",
         name=_machine_name(machine_type, lang),
         energy_source=EnergySource.ELECTRIC,
         allowed_recipe_ids=list(agg["recipe_ids"]),
         slots=slots,
+        voltage_tier=spec.voltage_tier,
+        max_eu_per_tick=spec.max_eu_per_tick,
     )
