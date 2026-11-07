@@ -80,6 +80,19 @@
   color: var(--ink-faint);
   line-height: 1.4;
 }
+/* A unit shown next to an uppercased label keeps its real casing — `mB/t`, not
+   `MB/T` (mB and EU/t are the correct unit spellings). */
+.field-unit {
+  text-transform: none;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+}
+.field-unit::before {
+  content: "(";
+}
+.field-unit::after {
+  content: ")";
+}
 
 .field-input {
   width: 100%;
@@ -327,9 +340,11 @@ select.field-input {
   flex: none;
 }
 
-/* The stage makes room for the docked inspector when something is selected. */
+/* The stage makes room for the docked inspector when something is selected.
+   The dock scales with the viewport (vw) between sensible bounds, so it reads
+   well on a 1080p panel and a 2k panel alike rather than a fixed pixel width. */
 .shell.has-inspector {
-  grid-template-columns: 300px 1fr 540px;
+  grid-template-columns: 300px 1fr clamp(320px, 21vw, 540px);
 }
 .inspector-dock {
   padding: 16px 16px 16px 0;

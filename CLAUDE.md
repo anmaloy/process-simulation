@@ -318,10 +318,15 @@ tests/           # pytest for engine/model; frontend tests added later
   (`{category, capacity}`) and is a transparent buffer. Nothing here names a
   specific fluid — the carriers are just items (content).
 - **MachineNode** — a placed machine bound to a recipe, an overclock multiplier,
-  and a parallel count.
+  and a parallel count. Two optional **boundary** flags opt a node out of the
+  automatic supply/demand gating for the edge of the system a player tends by
+  hand: `assumeInputs` (manual insertion — treat any input not supplied by a pipe
+  as available) and `assumeOutputs` (manual extraction — treat outputs as removed,
+  so it runs even with nothing downstream). Default off.
 - **Pipe** — the graph edge. Carries one category between two machine ports; has
   storage capacity, movement capacity, an overclock multiplier, and per-end
-  roles and priorities.
+  roles and priorities. **Liquid pipes carry an unlimited rate** — only solids
+  and electricity are throughput-capped by `movementCapacity`.
 - **System** — a user-defined group of nodes treated as one unit, with exposed
   ports and aggregated stats. Collapsible, nestable, connectable.
 - **World** — all items, recipes, machine defs, nodes, pipes, and systems.
@@ -380,8 +385,10 @@ recipe amounts and material flows read **per second** — the two bases are a ×
 conversion applied only at the UI boundary (`overlay/units.ts`), so the engine
 and its tests stay per-second.
 
-Pipes are **pure transfer vehicles** — only `movementCapacity × overclock` caps
-sustained flow; pipe storage is ignored in the steady-state balance.
+Pipes are **pure transfer vehicles** — for solids and electricity,
+`movementCapacity × overclock` caps sustained flow; **liquid pipes are
+uncapped** (unlimited rate). Pipe storage is ignored in the steady-state
+balance.
 
 With max rate `R`, fluid actually drawn `D` (capped at `R`), fuel energy `E`, and
 efficiency `η` (rates per second; the tick form scales identically):
@@ -422,16 +429,33 @@ Each pipe's flow is `min(upstream available, downstream demand, pipeThroughput)`
 A full input buffer pushes overflow upstream; a full output buffer stalls the
 machine.
 
-Aggregation over a system, traced process, or world: these are self-sufficient
-devices, so a machine starved of an internally-produced input doesn't get an
-external top-up — it runs at a reduced **duty cycle** (downtime), which lowers
-its output and cascades downstream (solved by relaxation in `compute_scope`,
-reported as `nodeDuty`). The scope then reports: `netEnergy` (sum of duty-scaled
-energy terms); **external inputs** = outside *feedstock* only (items with no
-internal producer that the running scope consumes); **external outputs** = the
-**actual yield** (effective production that leaves the scope); and the largest
-internal shortfalls as **bottlenecks**. A **storage** node is a transparent
-passthrough (its buffer only absorbs transients), spliced out of the flow graph.
+Aggregation over a system, traced process, or world models an **automatic
+system**: a machine runs only to the extent its inputs are actually delivered by
+connected pipes *and* its outputs are actually taken downstream — "if everything
+is not continuous, it won't run". Each node's **duty cycle** is the smaller of
+those two limits, solved by relaxation in `compute_scope` (reported as
+`nodeDuty`):
+
+- **Input-limited (starved):** an input isn't supplied → the node can't run → a
+  **shortfall** (red), reported as a bottleneck. A node flagged `assumeInputs`
+  (manual insertion) treats any unsupplied input as available, so it runs on
+  hand-fed feedstock. Placing *just* a converter (nothing wired) is a shortfall,
+  not an overflow of output it can't make.
+- **Demand-limited:** an output isn't fully consumed, so the node throttles and
+  draws proportionally less input — a water pump only runs as often as the boiler
+  draws water, so its material isn't drawn 100% of the time. An output nothing
+  consumes is a **product** and leaves as yield; an output with a downstream
+  consumer backpressures to that demand unless the node is flagged
+  `assumeOutputs` (manual extraction). Storage (buffer) nodes are transparent, so
+  an item only a buffer holds is still a product.
+
+A node held below the duty that demand alone would allow (computed by a second,
+inputs-unconstrained relaxation) is the input-limited case. The scope reports:
+`netEnergy` (sum of duty-scaled energy terms); **external inputs** = the
+manually-inserted feedstock the running scope consumes; **external outputs** =
+the **actual yield** (products leaving the scope); and the largest input
+shortfalls as **bottlenecks**. A **storage** node is a transparent passthrough
+(its buffer only absorbs transients), spliced out of the flow graph.
 
 ## Pipe priority — read this before touching flow resolution
 

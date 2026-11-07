@@ -160,11 +160,22 @@ export function buildCanvasGraph(
     });
   }
 
-  // One node per rendered collapsed system.
-  const fallbackPos = (i: number) => ({ x: i * 60, y: i * 60 });
-  const systemNodes: RfAnyNode[] = cs.renderedSystems.map((s, i) => {
+  // One node per rendered collapsed system. A system with no explicit position
+  // sits at the centroid of its (current) members, so a folded group always
+  // appears where the work is rather than teleporting to the origin — otherwise
+  // the members read as "disappeared" when they fold.
+  const nodePos = new Map(worldToNodes(world).map((n) => [n.id, n.position]));
+  const memberCentroid = (s: System): { x: number; y: number } => {
+    const pts = [...flattenSystem(world, s.id).nodeIds]
+      .map((id) => nodePos.get(id))
+      .filter((p): p is { x: number; y: number } => !!p);
+    if (pts.length === 0) return { x: 0, y: 0 };
+    const sum = pts.reduce((a, p) => ({ x: a.x + p.x, y: a.y + p.y }), { x: 0, y: 0 });
+    return { x: Math.round(sum.x / pts.length), y: Math.round(sum.y / pts.length) };
+  };
+  const systemNodes: RfAnyNode[] = cs.renderedSystems.map((s) => {
     const sr = systemReports[s.id];
-    const fb = fallbackPos(i);
+    const fb = memberCentroid(s);
     const handles = [...handleAcc.get(s.id)!.values()];
     return {
       id: systemRfId(s.id),

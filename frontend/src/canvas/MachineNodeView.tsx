@@ -106,8 +106,12 @@ export function MachineNodeView({ data }: NodeProps<RfMachineNode>) {
           )}
           {throttled && (
             <span
-              className="node-duty-chip"
-              title="running below full rate (starved input)"
+              className={`node-duty-chip ${status === "shortfall" ? "bad" : ""}`}
+              title={
+                status === "shortfall"
+                  ? "running below full rate — starved of an input"
+                  : "running below full rate — limited by downstream demand"
+              }
             >
               {Math.round((duty ?? 0) * 100)}%
             </span>

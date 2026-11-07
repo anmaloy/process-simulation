@@ -60,9 +60,9 @@
     }
   ],
   "nodes": [
-    {"id": "smelter1", "machineDefId": "smelter", "recipeId": "smelt"},
+    {"id": "smelter1", "machineDefId": "smelter", "recipeId": "smelt", "assumeInputs": true},
     {"id": "presser1", "machineDefId": "presser", "recipeId": "press"},
-    {"id": "gen1", "machineDefId": "generator"}
+    {"id": "gen1", "machineDefId": "generator", "assumeInputs": true}
   ],
   "pipes": [
     {

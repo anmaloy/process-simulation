@@ -12,19 +12,34 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-/** A labeled inspector row. */
+/** The label text plus an optional unit shown verbatim (not upper-cased). */
+function LabelText({ label, unit }: { label: string; unit?: string }) {
+  return (
+    <>
+      {label}
+      {unit != null && <span className="field-unit">{unit}</span>}
+    </>
+  );
+}
+
+/** A labeled inspector row. `unit` renders next to the label without the
+ * label's uppercase transform, so a unit like `mB/t` never becomes `MB/T`. */
 export function Field({
   label,
+  unit,
   hint,
   children,
 }: {
   label: string;
+  unit?: string;
   hint?: string;
   children: ReactNode;
 }) {
   return (
     <label className="field">
-      <span className="field-label mono">{label}</span>
+      <span className="field-label mono">
+        <LabelText label={label} unit={unit} />
+      </span>
       {children}
       {hint && <span className="field-hint">{hint}</span>}
     </label>
@@ -163,6 +178,7 @@ export function Checkbox({
  */
 export function Optional({
   label,
+  unit,
   present,
   onAdd,
   onClear,
@@ -170,6 +186,7 @@ export function Optional({
   children,
 }: {
   label: string;
+  unit?: string;
   present: boolean;
   onAdd: () => void;
   onClear: () => void;
@@ -179,7 +196,9 @@ export function Optional({
   if (!present) {
     return (
       <div className="field field-optional-empty">
-        <span className="field-label mono">{label}</span>
+        <span className="field-label mono">
+          <LabelText label={label} unit={unit} />
+        </span>
         <button type="button" className="unset-btn" onClick={onAdd}>
           <span className="unset-tag mono">unset</span>
           <span className="unset-add">+ set</span>
@@ -191,7 +210,7 @@ export function Optional({
   return (
     <div className="field">
       <span className="field-label mono">
-        {label}
+        <LabelText label={label} unit={unit} />
         <button
           type="button"
           className="clear-btn"
@@ -210,6 +229,7 @@ export function Optional({
 /** An optional numeric field — the common case, bundled. */
 export function OptionalNumber({
   label,
+  unit,
   value,
   onSet,
   onClear,
@@ -220,6 +240,7 @@ export function OptionalNumber({
   hint,
 }: {
   label: string;
+  unit?: string;
   value: number | undefined;
   onSet: (v: number) => void;
   onClear: () => void;
@@ -232,6 +253,7 @@ export function OptionalNumber({
   return (
     <Optional
       label={label}
+      unit={unit}
       present={value != null}
       onAdd={() => onSet(fallback)}
       onClear={onClear}

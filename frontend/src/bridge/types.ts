@@ -76,6 +76,10 @@ export interface MachineNode {
   recipeId?: string;
   overclock?: number;
   count?: number;
+  /** Manual insertion: assume any input not supplied by a pipe is available. */
+  assumeInputs?: boolean;
+  /** Manual extraction: assume outputs are removed, so it runs without a consumer. */
+  assumeOutputs?: boolean;
   x?: number;
   y?: number;
 }
