@@ -372,3 +372,62 @@ h3 {
 .mi-import-msg.bad {
   color: var(--s-bad);
 }
+
+/* Collapsible, searchable library rail (dropdown sections + search). */
+.rail-search {
+  position: relative;
+  padding: 10px 22px 4px;
+}
+.rail-search .field-input {
+  width: 100%;
+  padding-right: 26px;
+}
+.rail-search-clear {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-40%);
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+.rail-search-clear:hover {
+  color: var(--ink);
+}
+/* The section header is now a toggle button spanning the row. */
+.rail-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.rail-section-toggle:hover {
+  color: var(--ink);
+}
+.rail-caret {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--ink-faint);
+  transition: transform 0.12s ease;
+}
+.rail-caret.open {
+  transform: rotate(90deg);
+}
+.rail-count {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.rail-more {
+  color: var(--ink-faint);
+  font-style: italic;
+}

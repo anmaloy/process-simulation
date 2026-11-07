@@ -112,6 +112,16 @@ def mi_root(tmp_path):
         tmp_path / "data" / NS / "data_maps" / "fluid" / "fluid_fuels.json",
         {"values": {f"{NS}:biodiesel": {"eu_per_mb": 250}}},
     )
+    # Tag membership: c:ingots/iron (used by the macerator recipe) nests a second
+    # tag, so flattening is exercised too.
+    _write(
+        tmp_path / "data" / "c" / "tags" / "item" / "ingots" / "iron.json",
+        {"values": [f"{NS}:iron_ingot", "#c:ingots/wrought_iron"]},
+    )
+    _write(
+        tmp_path / "data" / "c" / "tags" / "item" / "ingots" / "wrought_iron.json",
+        {"values": [{"id": f"{NS}:wrought_iron_ingot", "required": False}]},
+    )
     return tmp_path
 
 
@@ -182,6 +192,21 @@ def test_tag_input_becomes_is_tag_item_and_tag_stack(mi_root):
     assert tag.is_tag is True and tag.category is Category.SOLID
     stack = _recipe(lib, "mi:macerator/iron").inputs[0]
     assert stack.tag == "c:ingots/iron" and stack.item_id is None
+
+
+def test_tag_membership_resolved_and_flattened(mi_root):
+    lib = import_mi_library(mi_root).library
+    tag = _item(lib, "c:ingots/iron")
+    # Nested #c:ingots/wrought_iron is flattened into the member list.
+    assert tag.members == [
+        f"{NS}:iron_ingot",
+        f"{NS}:wrought_iron_ingot",
+    ]
+    # Members not otherwise referenced are registered as named, concrete items.
+    wrought = _item(lib, f"{NS}:wrought_iron_ingot")
+    assert wrought.is_tag is None and wrought.category is Category.SOLID
+    # A concrete item carries no member list.
+    assert _item(lib, f"{NS}:iron_dust").members is None
 
 
 def test_bare_fluid_id_namespaced_and_liquid_category(mi_root):

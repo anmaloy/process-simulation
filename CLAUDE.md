@@ -161,6 +161,19 @@ ceiling) and frames `baseEnergyConsumption` as the fallback draw; and an "Import
 MI" rail control runs `importMiDir` against an extracted jar directory (Python
 host only — the `DevApi` returns a clear error in the browser build).
 
+A node's recipe is chosen by an **input/output-driven finder** in the
+`NodeInspector` (not a flat dropdown — a machine type has many near-duplicate
+recipes): pick an input and/or output resource the machine's recipes use and the
+matching recipe(s) appear, shown by their inputs → outputs; binding shows the
+resolved I/O. The finder is membership-aware — a tag resource also offers its
+member items, so a concrete item (e.g. "Iron Ore") reaches a recipe keyed on a
+tag. The library **rail** is collapsible per-section with a search box and a
+per-section row cap, so an imported world of thousands of entities stays usable.
+(Still deferred: the engine's flow solver keys supply/demand per resource id, so
+a wired chain does **not** yet balance a concrete producer against a tag
+consumer — tag *flow* resolution, generators, and widening the import past the
+four types remain follow-ups.)
+
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 2; v1 files still load — every bump has been
 additive/optional) and `kind` (`project` or `library`) wrapping its
@@ -176,7 +189,11 @@ references, and never mutates the target World.
 extracted MI jar directory, parses the machine recipes for a chosen set of types
 into a `Library` (items/recipes/machine defs), and merges it with
 `import_library`. See the `import_mi_dir` API entry below for the parsing and
-unit rules. A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes
+unit rules. It also resolves **tag membership** from the game's tag definitions
+(`data/<ns>/tags/item/<path>.json`, nested `#tag`s flattened): each tag item
+gets its concrete `members`, and any member not already imported is registered
+as a named item — so a concrete item can stand in for a recipe keyed on a tag.
+A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes
 don't carry — the base electric tier and its `maxEuPerTick` ceiling; the
 targeted subset is all **LV** (32 EU/t). The tier EU/t values (`CABLE_TIER_EU`:
 LV 32, MV 128, HV 1024, EV 8192, SV 128000000) were read verbatim from the jar's
@@ -236,8 +253,10 @@ model's camelCase wire format.
   fuel `eu` from the `fluid_fuels` data map, and groups recipes by `type` into
   electric-consumer machine defs with a data-derived slot layout and the
   `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`; the subset is
-  LV = 32 EU/t, from the jar's `CableTier`). `stats` reports the counts (files
-  scanned, recipes imported/skipped, items, tags, defs, per-type).
+  LV = 32 EU/t, from the jar's `CableTier`). It resolves tag membership (each tag
+  item's `members`, registering missing member items). `stats` reports the counts
+  (files scanned, recipes imported/skipped, items, tags, member items added,
+  defs, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the P5 TS
 bridge mirrors this table.
@@ -336,7 +355,8 @@ tests/           # pytest for engine/model; frontend tests added later
 - **Stack** — a `{resource, quantity}` pair, per recipe cycle unless noted. The
   resource is a concrete `itemId` **or** a `tag` (a group reference like
   `c:gears/iron` = "any item in this set"; a tag is a first-class fungible
-  resource backed by an `Item` with `isTag: true`). A stack may carry an optional
+  resource backed by an `Item` with `isTag: true` whose `members` list the
+  concrete items it includes). A stack may carry an optional
   `probability` (expected consume/produce chance; absent = always, `0` = a
   referenced-but-unconsumed catalyst).
 - **Recipe** — input stacks → output stacks over a production time. Energy is

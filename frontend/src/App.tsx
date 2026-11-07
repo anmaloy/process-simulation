@@ -8,7 +8,15 @@
 // and is followed by a `recompute`, so edits persist and the balance refreshes.
 // The returned World is stored and the canvas reseeds from it.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Children,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ApiClient, type ApiSource } from "./bridge";
 import type {
   Edit,
@@ -585,6 +593,13 @@ function MiImport({
   );
 }
 
+// How many rows a section renders before capping (a search narrows past this).
+// Imported libraries run to thousands of items/recipes, so an uncapped render
+// would stutter; the cap keeps the rail snappy and nudges toward the search.
+const RAIL_ROW_CAP = 60;
+
+type RailKey = "nodes" | "systems" | "items" | "recipes" | "machineDefs";
+
 function Library({
   world,
   selection,
@@ -602,6 +617,19 @@ function Library({
     return m;
   }, [world]);
 
+  const [query, setQuery] = useState("");
+  // Per-section open state. The big library sections (items/recipes/machine
+  // defs) start collapsed so an imported world doesn't bury the canvas controls;
+  // what's placed (nodes) and grouped (systems) start open.
+  const [open, setOpen] = useState<Record<RailKey, boolean>>({
+    nodes: true,
+    systems: true,
+    items: false,
+    recipes: false,
+    machineDefs: false,
+  });
+  const toggle = (k: RailKey) => setOpen((o) => ({ ...o, [k]: !o[k] }));
+
   if (!world) return <div className="leaf">—</div>;
 
   const isSel = (kind: EntityKind, id: string) =>
@@ -613,26 +641,66 @@ function Library({
     energy: categoryColor("energy"),
   };
 
-  // Sort each rail list A→Z by its display label (#9).
   const cmp = (a: string, b: string) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-  const nodes = [...(world.nodes ?? [])].sort((a, b) =>
-    cmp(defName.get(a.machineDefId) ?? a.machineDefId, defName.get(b.machineDefId) ?? b.machineDefId),
-  );
-  const systems = [...(world.systems ?? [])].sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
-  const items = [...(world.items ?? [])].sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
-  const recipes = [...(world.recipes ?? [])].sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
-  const machineDefs = [...(world.machineDefs ?? [])].sort((a, b) =>
-    cmp(a.name ?? a.id, b.name ?? b.id),
-  );
+  const q = query.trim().toLowerCase();
+  // A row matches when its label or id contains the query (case-insensitive).
+  const hit = (label: string, id: string) =>
+    q === "" || label.toLowerCase().includes(q) || id.toLowerCase().includes(q);
+
+  const nodeLabel = (machineDefId: string) => defName.get(machineDefId) ?? machineDefId;
+  const nodes = [...(world.nodes ?? [])]
+    .filter((n) => hit(nodeLabel(n.machineDefId), n.id))
+    .sort((a, b) => cmp(nodeLabel(a.machineDefId), nodeLabel(b.machineDefId)));
+  const systems = [...(world.systems ?? [])]
+    .filter((s) => hit(s.name ?? s.id, s.id))
+    .sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
+  const items = [...(world.items ?? [])]
+    .filter((it) => hit(it.name ?? it.id, it.id))
+    .sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
+  const recipes = [...(world.recipes ?? [])]
+    .filter((r) => hit(r.name ?? r.id, r.id))
+    .sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
+  const machineDefs = [...(world.machineDefs ?? [])]
+    .filter((d) => hit(d.name ?? d.id, d.id))
+    .sort((a, b) => cmp(a.name ?? a.id, b.name ?? b.id));
+
+  // While searching, force every section open so matches aren't hidden.
+  const sectionOpen = (k: RailKey) => q !== "" || open[k];
 
   return (
     <>
-      <Section title="Nodes" empty={(world.nodes ?? []).length === 0}>
+      <div className="rail-search">
+        <input
+          className="field-input mono"
+          type="text"
+          value={query}
+          placeholder="search library…"
+          spellCheck={false}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {query !== "" && (
+          <button
+            type="button"
+            className="rail-search-clear"
+            title="Clear search"
+            onClick={() => setQuery("")}
+          >
+            ×
+          </button>
+        )}
+      </div>
+
+      <Section
+        title="Nodes"
+        count={nodes.length}
+        open={sectionOpen("nodes")}
+        onToggle={() => toggle("nodes")}
+      >
         {nodes.map((n) => (
           <Leaf
             key={n.id}
-            label={defName.get(n.machineDefId) ?? n.machineDefId}
+            label={nodeLabel(n.machineDefId)}
             id={n.id}
             dot="var(--s-not)"
             selected={isSel("node", n.id)}
@@ -641,7 +709,12 @@ function Library({
         ))}
       </Section>
 
-      <Section title="Systems" empty={(world.systems ?? []).length === 0}>
+      <Section
+        title="Systems"
+        count={systems.length}
+        open={sectionOpen("systems")}
+        onToggle={() => toggle("systems")}
+      >
         {systems.map((s) => (
           <Leaf
             key={s.id}
@@ -656,7 +729,9 @@ function Library({
 
       <Section
         title="Items"
-        empty={(world.items ?? []).length === 0}
+        count={items.length}
+        open={sectionOpen("items")}
+        onToggle={() => toggle("items")}
         onAdd={() => onCreate("item")}
       >
         {items.map((it) => (
@@ -664,7 +739,7 @@ function Library({
             key={it.id}
             label={it.name ?? it.id}
             id={it.id}
-            dot={CATEGORY_DOT[it.category] ?? "var(--ink-faint)"}
+            dot={it.isTag ? "var(--ink-faint)" : CATEGORY_DOT[it.category] ?? "var(--ink-faint)"}
             selected={isSel("item", it.id)}
             onClick={() => onSelect({ kind: "item", id: it.id })}
           />
@@ -673,7 +748,9 @@ function Library({
 
       <Section
         title="Recipes"
-        empty={(world.recipes ?? []).length === 0}
+        count={recipes.length}
+        open={sectionOpen("recipes")}
+        onToggle={() => toggle("recipes")}
         onAdd={() => onCreate("recipe")}
       >
         {recipes.map((r) => (
@@ -690,7 +767,9 @@ function Library({
 
       <Section
         title="Machine defs"
-        empty={(world.machineDefs ?? []).length === 0}
+        count={machineDefs.length}
+        open={sectionOpen("machineDefs")}
+        onToggle={() => toggle("machineDefs")}
         onAdd={() => onCreate("machineDef")}
       >
         {machineDefs.map((d) => (
@@ -711,19 +790,40 @@ function Library({
 
 function Section({
   title,
-  empty,
+  count,
+  open,
+  onToggle,
   onAdd,
   children,
 }: {
   title: string;
-  empty: boolean;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
   onAdd?: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
+  // Cap the rendered rows so a huge (imported) list stays responsive; the search
+  // box is how you reach the rest.
+  const rows = Children.toArray(children);
+  const shown = rows.slice(0, RAIL_ROW_CAP);
+  const overflow = rows.length - shown.length;
+
   return (
     <div className="rail-section">
       <div className="rail-section-head">
-        <p className="eyebrow quiet">{title}</p>
+        <button
+          type="button"
+          className="rail-section-toggle eyebrow quiet"
+          onClick={onToggle}
+          aria-expanded={open}
+        >
+          <span className={`rail-caret ${open ? "open" : ""}`} aria-hidden>
+            ▸
+          </span>
+          {title}
+          <span className="rail-count mono">{count}</span>
+        </button>
         {onAdd && (
           <button
             type="button"
@@ -735,7 +835,17 @@ function Section({
           </button>
         )}
       </div>
-      {empty ? <div className="leaf">none</div> : children}
+      {open &&
+        (count === 0 ? (
+          <div className="leaf">none</div>
+        ) : (
+          <>
+            {shown}
+            {overflow > 0 && (
+              <div className="leaf rail-more mono">+{overflow} more — search to narrow</div>
+            )}
+          </>
+        ))}
     </div>
   );
 }
