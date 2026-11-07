@@ -238,7 +238,8 @@ def test_names_from_lang_with_prettify_fallback(mi_root):
 def test_machine_defs_group_with_electric_source_and_derived_slots(mi_root):
     lib = import_mi_library(mi_root).library
     defs = {d.id: d for d in lib.machine_defs}
-    assert set(defs) == {
+    # The parsed processing machines (energy defs are mi.energy.* — see below).
+    assert {k for k in defs if k.startswith("mi.machine.")} == {
         "mi.machine.macerator",
         "mi.machine.mixer",
         "mi.machine.assembler",
@@ -247,14 +248,22 @@ def test_machine_defs_group_with_electric_source_and_derived_slots(mi_root):
     asm = defs["mi.machine.assembler"]
     assert asm.energy_source.value == "electric"
     assert asm.base_energy_consumption is None  # energy now rides the recipe
+    # Electricity is a routed carrier: the consumer draws it as an item.
+    assert asm.source_item_id == "mi:electricity"
     # Catalog (P5): the targeted types are LV machines, so the overclock ceiling
     # is the LV tier's EU/t (32, read from the jar's CableTier).
     assert asm.voltage_tier == "LV"
     assert asm.max_eu_per_tick == 32
     assert asm.allowed_recipe_ids == ["mi:assembler/gear"]
     layout = {(g.category.value, g.direction.value): g.slots for g in asm.slots}
-    # Derived from the one assembler recipe: 2 solid in, 1 solid out, 1 fluid in.
-    assert layout == {("solid", "in"): 2, ("solid", "out"): 1, ("liquid", "in"): 1}
+    # Derived from the one assembler recipe (2 solid in, 1 solid out, 1 fluid in)
+    # plus the routed-electricity energy-in port.
+    assert layout == {
+        ("solid", "in"): 2,
+        ("solid", "out"): 1,
+        ("liquid", "in"): 1,
+        ("energy", "in"): 1,
+    }
 
 
 def test_catalog_tier_caps_match_jar_cable_tiers():
@@ -309,6 +318,52 @@ def test_forge_hammer_ingredient_result_shape(tmp_path):
     assert ore.inputs[0].tag == "c:ores/gold"
 
 
+def test_energy_machines_generated_as_converters(mi_root):
+    lib = import_mi_library(mi_root).library
+    defs = {d.id: d for d in lib.machine_defs}
+    items = {i.id: i for i in lib.items}
+
+    # All 15 energy machines are present as converter defs.
+    energy = {k for k in defs if k.startswith("mi.energy.")}
+    assert len(energy) == 15
+    assert "mi.energy.large_steam_boiler" in energy
+    assert "mi.energy.plasma_turbine" in energy
+
+    # Electricity is a new energy-category carrier; steam/water/plasma exist.
+    assert items["mi:electricity"].category is Category.ENERGY
+    assert items["mi:electricity"].eu is None
+    assert items[f"{NS}:steam"].category is Category.LIQUID
+
+    # Boiler: fuel (player-chosen, unset) → steam, water material 16:1, w 0.8.
+    # Rate is the jar's 256 EU/t stored ×20 for the per-second engine.
+    boiler = defs["mi.energy.large_steam_boiler"]
+    assert boiler.energy_source.value == "fuel"
+    assert boiler.source_item_id is None
+    assert boiler.output_item_id == f"{NS}:steam"
+    assert boiler.input_item_id == "minecraft:water"
+    assert boiler.material_ratio == 16
+    assert boiler.efficiency == 0.8
+    assert boiler.max_fluid_rate == 256 * 20
+
+    # HV steam turbine: steam → electricity, 512 EU/t ×20.
+    turbine = defs["mi.energy.hv_steam_turbine"]
+    assert turbine.source_item_id == f"{NS}:steam"
+    assert turbine.output_item_id == "mi:electricity"
+    assert turbine.max_fluid_rate == 512 * 20
+
+    # LV diesel generator: diesel fuel → electricity, 64 EU/t ×20.
+    gen = defs["mi.energy.lv_diesel_generator"]
+    assert gen.energy_source.value == "fuel"
+    assert gen.source_item_id == f"{NS}:diesel"
+    assert gen.max_fluid_rate == 64 * 20
+
+
+def test_include_energy_false_skips_energy_machines(mi_root):
+    lib = import_mi_library(mi_root, include_energy=False).library
+    assert not any(d.id.startswith("mi.energy.") for d in lib.machine_defs)
+    assert all(i.id != "mi:electricity" for i in lib.items)
+
+
 def test_uncatalogued_type_imports_without_a_ceiling(tmp_path):
     # A type not in the catalog (here a multiblock) still imports (generic), just
     # with no clamp — the honest default for machines whose ceiling isn't a fixed
@@ -344,8 +399,17 @@ def test_api_import_mi_dir_merges_and_reports_stats(mi_root):
         "macerator",
         "mixer",
     }
-    # The merge landed in the api's live World.
-    assert len(api._world.machine_defs) == 2
+    # The merge landed in the api's live World: 2 processing defs + the energy
+    # machines (boilers/turbines/generators, added to every import).
+    defs = {d.id for d in api._world.machine_defs}
+    assert {d for d in defs if d.startswith("mi.machine.")} == {
+        "mi.machine.macerator",
+        "mi.machine.mixer",
+    }
+    assert data["stats"]["energyMachines"] == len(
+        [d for d in defs if d.startswith("mi.energy.")]
+    )
+    assert data["stats"]["energyMachines"] == 15
 
 
 # --------------------------------------------------------------------------- #

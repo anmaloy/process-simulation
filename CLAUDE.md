@@ -180,8 +180,6 @@ instead of being mistaken for yield. `supplied` is keyed by the sink's demand ke
 no tags in play each key is matched only by its own id, so a plain concrete chain
 resolves exactly as before. So a producer of `minecraft:iron_ingot` now balances a
 consumer whose recipe input is the tag `c:ingots/iron`.
-(Still deferred: generators and widening the MI import past the four LV machine
-types remain follow-ups.)
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 2; v1 files still load — every bump has been
@@ -222,6 +220,26 @@ they scale with their energy hatches, not a fixed tier. The **forge hammer** is 
 manual tool using a vanilla-style single `ingredient` → `result` shape (not the
 `*_inputs`/`*_outputs` arrays) with no `eu`/`duration`; the parser normalizes that
 shape so its I/O imports, with a zero cycle time (no automatic rate).
+
+**Energy generation is imported too** (`ENERGY_MACHINES`, `include_energy` default
+on). MI's power machines are **not** recipe-driven — their rates live in the jar's
+Java, so they are added as hand-authored **converter** defs (`mi.energy.*`) with
+numbers read verbatim (`SingleBlockSpecialMachines` / `MultiblockMachines` /
+`SteamHeaterComponent` / `MachineTier`): **6 boilers** (bronze 8, steel 16, large
+256, advanced 1024, HP 2048, HP-advanced 8192 EU/t — fuel → steam, water material
+at `steamPerWater` 16:1, waste `w`=0.8), **5 steam turbines** (LV 32, MV 128,
+HV 512, large 16384 — steam → electricity 1:1; plus the plasma turbine, 1048576,
+helium plasma → electricity at 100000 EU/mB), and **4 diesel generators** (LV 64,
+MV 256, HV 1024, large 16384 — a fluid fuel → electricity by its `eu`). MI rates
+are per **tick**; stored `×20` as the per-second `maxFluidRate`. A boiler leaves
+its fuel (`sourceItemId`) unset for the player to pick; its steam/water rates are
+fixed. MI's diesel/plasma generator-efficiency multipliers are **not** modelled —
+the planner is energy-conserving (1 EU fuel → 1 EU out). **Electricity is a routed
+carrier** (resolved decision #3): a new energy-category `mi:electricity` item is
+added, generators emit it over energy pipes, and imported consumers draw it
+(`sourceItemId = mi:electricity` + an energy-in port), so an unwired machine is
+unpowered until a generator feeds it. (The committed `examples/` project predates
+this and uses the scalar-mains fallback, still a valid mode.)
 
 ### API surface (P4 — frozen contract)
 
@@ -277,10 +295,14 @@ model's camelCase wire format.
   recipes by `type` into electric-consumer machine defs with a data-derived slot
   layout and the `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`;
   single-block electric machines are LV = 32 EU/t, from the jar's `CableTier` /
-  `MachineTier`; multiblocks import unclamped). It resolves tag membership (each
-  tag item's `members`, registering missing member items). `stats` reports the
-  counts (files scanned, recipes imported/skipped, items, tags, member items
-  added, defs, per-type).
+  `MachineTier`; multiblocks import unclamped). It also adds the non-recipe
+  **energy-generation** converter defs (`ENERGY_MACHINES`: boilers, steam/plasma
+  turbines, diesel generators) and the routed-electricity carrier, and sets
+  imported consumers to draw it (see "Energy generation is imported too" above);
+  pass `include_energy: false` to skip them. It resolves tag membership (each tag
+  item's `members`, registering missing member items). `stats` reports the counts
+  (files scanned, recipes imported/skipped, items, tags, member items added,
+  defs, `energyMachines`, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the P5 TS
 bridge mirrors this table.
