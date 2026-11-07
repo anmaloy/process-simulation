@@ -347,21 +347,30 @@ and direction sets how much a machine can hold.
 
 For a node running recipe `R` at `overclock` with parallel `count`:
 
+`overclock` is first **clamped** by the machine's power ceiling (decision #2):
+`overclock ≤ maxEuPerTick / euPerTick` when both are set — a capped machine runs
+its recipe slower, since speed and energy move together. A term `s` carries an
+optional `probability` (absent = 1); a `probability = 0` term is a catalyst
+(referenced, not consumed/produced) and is left absent, never a zero rate:
+
 ```
 cyclesPerSec   = overclock / R.timeSeconds
-outputRate(s)  = s.quantity * cyclesPerSec * count   # per output stack
-inputDemand(s) = s.quantity * cyclesPerSec * count   # per input stack
+outputRate(s)  = s.quantity * p(s) * cyclesPerSec * count   # p(s)=probability||1
+inputDemand(s) = s.quantity * p(s) * cyclesPerSec * count
 ```
 
-Energy per node — a machine draws its `baseEnergyConsumption` while running; a
-converter earns a `produce` term by making an energy-category output. Both the
-draw and the output are **routed carriers** (items), and the scalar energy terms
-are *derived* from those energy-category flows. An absent term stays absent (not
-zero):
+Energy per node — the draw is **hybrid** (decision #2): a recipe's own
+`euPerTick` overrides the machine's `baseEnergyConsumption` default. `euPerTick`
+is per **tick**, so the engine multiplies by 20 for its per-second canonical
+draw; `baseEnergyConsumption` is already per-second. A converter earns a
+`produce` term by making an energy-category output. Both the draw and the output
+are **routed carriers** (items), and the scalar energy terms are *derived* from
+those energy-category flows. An absent term stays absent (not zero):
 
 ```
-consume   = baseEnergyConsumption * overclock * count   # routed as its carrier
-produce   = (converter energy-carrier output)           # see "Carrier tiers"
+euPerTick = R.euPerTick  (else baseEnergyConsumption / 20)   # per-tick draw
+consume   = euPerTick * 20 * overclock * count               # routed as carrier
+produce   = (converter energy-carrier output)                # see "Carrier tiers"
 netEnergy = produce - consume     # derived from energy-category carriers
 ```
 
@@ -500,7 +509,9 @@ Insert favors higher, extract favors lower. Don't "simplify" this into one rule.
 A single scalar multiplier, default 1, applied linearly. On machines it scales
 cycles/sec, energy consumption, and energy production together. On pipes it scales
 movement capacity. Optional min/max bounds per definition for UI clamping. No
-non-linear curve.
+non-linear curve. The engine additionally clamps a machine's effective overclock
+to its power ceiling (`euPerTick × overclock ≤ maxEuPerTick`, decision #2) — a
+machine can't run faster than its tier/upgrades can feed it.
 
 ## Resolved decisions
 

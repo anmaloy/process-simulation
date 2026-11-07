@@ -318,3 +318,74 @@ def test_to_dict_includes_present_terms_and_conversion() -> None:
     assert d["energyProduce"] == 200.0
     assert d["netEnergy"] == 200.0
     assert d["fuelConversion"]["fluidOut"] == 200
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2 — hybrid per-recipe energy, power-tier overclock clamp, probability.
+# --------------------------------------------------------------------------- #
+
+
+def test_recipe_eu_per_tick_overrides_machine_base() -> None:
+    # euPerTick is per TICK; the engine is per second, so draw = euPerTick×20.
+    recipe = Recipe(id="r", time_seconds=1.0, eu_per_tick=2, outputs=[Stack("x", 1)])
+    md = MachineDef(
+        id="d1", energy_source=EnergySource.ELECTRIC, base_energy_consumption=999
+    )
+    comp = compute_node(_node(recipe_id="r"), md, recipe)
+    assert comp.energy_consume == 40.0  # 2 EU/t × 20, not the 999 default
+    assert comp.net_energy == -40.0
+
+
+def test_recipe_eu_per_tick_scales_with_overclock_and_count() -> None:
+    recipe = Recipe(id="r", time_seconds=1.0, eu_per_tick=3, outputs=[Stack("x", 1)])
+    md = MachineDef(id="d1", energy_source=EnergySource.ELECTRIC)
+    comp = compute_node(_node(recipe_id="r", overclock=2.0, count=2), md, recipe)
+    assert comp.energy_consume == 3 * 20 * 2 * 2  # 240 EU/s
+
+
+def test_machine_base_energy_falls_back_without_recipe_eu() -> None:
+    # A recipe with no euPerTick keeps the machine default (back-compat).
+    recipe = Recipe(id="r", time_seconds=1.0, outputs=[Stack("x", 1)])
+    md = MachineDef(
+        id="d1", energy_source=EnergySource.ELECTRIC, base_energy_consumption=20
+    )
+    comp = compute_node(_node(recipe_id="r"), md, recipe)
+    assert comp.energy_consume == 20.0  # base is per-second, unchanged
+
+
+def test_overclock_clamped_by_power_tier_ceiling() -> None:
+    # euPerTick 4, node asks ×4, but the tier feeds only 8 EU/t → max ×2.
+    # Speed and energy move together, so the recipe runs at the clamped ×2.
+    recipe = Recipe(id="r", time_seconds=1.0, eu_per_tick=4, outputs=[Stack("x", 1)])
+    md = MachineDef(
+        id="d1",
+        energy_source=EnergySource.ELECTRIC,
+        voltage_tier="LV",
+        max_eu_per_tick=8,
+    )
+    comp = compute_node(_node(recipe_id="r", overclock=4.0), md, recipe)
+    assert comp.cycles_per_sec == 2.0  # ×2, not the requested ×4
+    assert comp.outputs == {"x": 2.0}  # output throttled with the clamp
+    assert comp.energy_consume == 4 * 20 * 2  # 160 EU/s = cap (8 EU/t × 20)
+
+
+def test_overclock_uncapped_without_ceiling() -> None:
+    recipe = Recipe(id="r", time_seconds=1.0, eu_per_tick=4, outputs=[Stack("x", 1)])
+    md = MachineDef(id="d1", energy_source=EnergySource.ELECTRIC)
+    comp = compute_node(_node(recipe_id="r", overclock=4.0), md, recipe)
+    assert comp.cycles_per_sec == 4.0  # no ceiling → full overclock
+    assert comp.energy_consume == 4 * 20 * 4  # 320 EU/s
+
+
+def test_probability_scales_expected_output_and_catalyst_input() -> None:
+    recipe = Recipe(
+        id="r",
+        time_seconds=1.0,
+        inputs=[Stack("catalyst", 1, probability=0.0), Stack("ore", 2)],
+        outputs=[Stack("rare", 1, probability=0.5)],
+    )
+    comp = compute_node(_node(recipe_id="r"), MachineDef(id="d1"), recipe)
+    assert comp.outputs == {"rare": 0.5}  # expected: 1 × 0.5
+    # A probability-0 input is a catalyst: referenced but not consumed.
+    assert comp.inputs == {"ore": 2.0}
+    assert "catalyst" not in comp.inputs
