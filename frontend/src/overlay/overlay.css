@@ -63,7 +63,9 @@
   z-index: 6;
   left: 16px;
   top: 16px;
-  width: 560px;
+  /* Scales with the viewport so it isn't oversized on a 1080p panel; the max
+     keeps it from dominating a 2k panel. */
+  width: clamp(300px, 22vw, 560px);
   max-width: calc(100% - 32px);
   max-height: calc(100% - 96px);
   display: flex;
@@ -250,16 +252,21 @@
   white-space: nowrap;
 }
 
-/* Duty badge — a machine running below full rate (starved input). */
+/* Duty badge — a machine running below full rate. Neutral for demand-limiting
+   (healthy), red only when the node is genuinely starved of an input. */
 .machine-node .node-duty-chip {
   font-family: var(--mono);
   font-size: 8.5px;
   letter-spacing: 0.06em;
   padding: 1px 6px;
   border-radius: 10px;
+  color: var(--ink-dim);
+  background: var(--panel-2);
+  white-space: nowrap;
+}
+.machine-node .node-duty-chip.bad {
   color: var(--s-bad);
   background: var(--f-bad);
-  white-space: nowrap;
 }
 
 /* Storage capacity line on a buffer node. */

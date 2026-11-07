@@ -290,7 +290,8 @@ export function MachineDefInspector({
             />
           </Field>
           <OptionalNumber
-            label="energy draw (EU/t)"
+            label="energy draw"
+            unit="EU/t"
             value={def.baseEnergyConsumption != null ? toPerTick(def.baseEnergyConsumption) : undefined}
             onSet={(v) => onChange(withField(def, "baseEnergyConsumption", toPerSecond(v)))}
             onClear={() => onChange(withoutField(def, "baseEnergyConsumption"))}
@@ -350,7 +351,8 @@ export function MachineDefInspector({
                 />
               </Field>
               <OptionalNumber
-                label={`output rate (${outputUnit})`}
+                label="output rate"
+                unit={outputUnit}
                 value={def.maxFluidRate != null ? toPerTick(def.maxFluidRate) : undefined}
                 onSet={(v) => onChange(withField(def, "maxFluidRate", toPerSecond(v)))}
                 onClear={() => onChange(withoutField(def, "maxFluidRate"))}
@@ -371,7 +373,8 @@ export function MachineDefInspector({
             </>
           ) : (
             <OptionalNumber
-              label="energy draw (EU/t)"
+              label="energy draw"
+              unit="EU/t"
               value={def.baseEnergyConsumption != null ? toPerTick(def.baseEnergyConsumption) : undefined}
               onSet={(v) => onChange(withField(def, "baseEnergyConsumption", toPerSecond(v)))}
               onClear={() => onChange(withoutField(def, "baseEnergyConsumption"))}
@@ -401,7 +404,7 @@ export function MachineDefInspector({
               options={CATEGORY_OPTIONS}
             />
           </Field>
-          <Field label={`capacity (${UNIT[def.storage.category]})`} hint="per unit; parallel count multiplies it">
+          <Field label="capacity" unit={UNIT[def.storage.category]} hint="per unit; parallel count multiplies it">
             <NumberInput
               value={def.storage.capacity}
               onChange={(v) =>

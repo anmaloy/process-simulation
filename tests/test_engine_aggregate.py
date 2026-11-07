@@ -54,13 +54,59 @@ def test_furnace_chest_external_io(furnace_chest: World) -> None:
     assert _close(report.node_duty["furnace1"], 1.0)  # fully supplied
 
 
-def test_furnace_chest_overflow_status(furnace_chest: World) -> None:
+def test_furnace_chest_product_is_yield_not_overflow(furnace_chest: World) -> None:
     report = compute_world(furnace_chest)
     furnace = report.balances["furnace1"]
-    assert furnace.outputs["ingot"].status is Status.OVERFLOW
-    # Ore is a boundary input (no internal producer) → not flagged a shortfall.
+    # Ingots go to a chest (a transparent buffer): they are a product that leaves
+    # the scope as yield, not an "overflow". The furnace runs fully supplied
+    # (ore manually inserted) with no bottleneck.
+    assert furnace.outputs["ingot"].status is Status.OK
+    assert furnace.status is Status.OK
     assert furnace.inputs["ore"].status is Status.OK
     assert report.bottlenecks == []
+
+
+def _lone_boiler(**node_kw) -> World:
+    return World(
+        items=[
+            Item("coal", "Coal", Category.SOLID, eu=1000),
+            Item("water", "Water", Category.LIQUID),
+            Item("steam", "Steam", Category.LIQUID),
+        ],
+        machine_defs=[
+            MachineDef(
+                id="boiler",
+                energy_source=EnergySource.FUEL,
+                source_item_id="coal",
+                input_item_id="water",
+                output_item_id="steam",
+                max_fluid_rate=100,
+                material_ratio=16,
+            )
+        ],
+        nodes=[MachineNode(id="b", machine_def_id="boiler", **node_kw)],
+    )
+
+
+def test_unconnected_inputs_stall_the_node() -> None:
+    # A boiler with nothing wired to its fuel/water inputs can't run: that is a
+    # shortfall, not an overflow of steam it cannot actually make.
+    report = compute_world(_lone_boiler())
+    assert _close(report.node_duty["b"], 0.0)
+    assert report.balances["b"].status is Status.SHORTFALL
+    assert {b.item_id for b in report.bottlenecks} == {"coal", "water"}
+    assert report.external_outputs == {}  # produces nothing
+
+
+def test_manual_insertion_runs_on_assumed_feedstock() -> None:
+    # Flagged for manual insertion, the same boiler assumes its inputs are fed by
+    # hand and runs: coal + water become feedstock and steam the yield.
+    report = compute_world(_lone_boiler(assume_inputs=True))
+    assert _close(report.node_duty["b"], 1.0)
+    assert report.balances["b"].status is Status.OK
+    assert _close(report.external_inputs["coal"], 100 / 1000)  # eu-metered fuel
+    assert _close(report.external_inputs["water"], 100 / 16)  # material ratio 16
+    assert _close(report.external_outputs["steam"], 100)
 
 
 # --------------------------------------------------------------------------- #
@@ -70,19 +116,21 @@ def test_furnace_chest_overflow_status(furnace_chest: World) -> None:
 
 def test_powered_process_chain_flow(powered_process: World) -> None:
     report = compute_world(powered_process)
-    # smelter ships 0.5 ingot/s; presser consumes 0.25/s → 0.25 routed internally.
+    # The smelter demand-gates to the slower presser: it makes exactly the
+    # 0.25 ingot/s the presser draws — no pile-up — so it runs at 50% duty.
+    assert _close(report.node_duty["smelter1"], 0.5)
     presser = report.balances["presser1"]
     assert _close(presser.inputs["ingot"].supplied, 0.25)
     assert presser.inputs["ingot"].status is Status.OK
-    # Leftover ingot (0.25) and all plate (0.25) leave the scope.
-    assert _close(report.external_outputs["ingot"], 0.25)
+    # All ingot is consumed internally (no leftover); plate is the scope's product.
+    assert "ingot" not in report.external_outputs
     assert _close(report.external_outputs["plate"], 0.25)
-    # Ore and the generator's coal are the feedstock inputs.
-    assert _close(report.external_inputs["ore"], 0.5)
+    # Ore (at the smelter's throttled draw) and the generator's coal are feedstock.
+    assert _close(report.external_inputs["ore"], 0.25)
     assert _close(report.external_inputs["coal"], 200 / 1000)  # gen burns coal by eu
     assert "ingot" not in report.external_inputs  # demand met internally
-    # Energy: generator makes 200 electricity, smelter/presser draw 30 + 60.
-    assert _close(report.net_energy, 110.0)
+    # Energy: generator makes 200 electricity; smelter draws 30×0.5, presser 60.
+    assert _close(report.net_energy, 125.0)
     assert report.bottlenecks == []
 
 
@@ -113,7 +161,9 @@ def test_scopes_compose(powered_process: World) -> None:
     gen_report = compute_scope(powered_process, gen)
     world_report = compute_world(powered_process)
 
-    assert _close(chain_report.net_energy, -90.0)
+    # Chain: smelter demand-gates to the presser (duty 0.5), drawing 30×0.5 EU;
+    # presser draws 60 → −75 (not −90, since the smelter no longer overproduces).
+    assert _close(chain_report.net_energy, -75.0)
     assert _close(gen_report.net_energy, 200.0)
     # World energy = sum of its processes' energy.
     assert _close(
@@ -130,7 +180,7 @@ def test_scope_report_serializes(powered_process: World) -> None:
         "balances",
         "pipeFlows",
     }
-    assert d["netEnergy"] == 110.0
+    assert d["netEnergy"] == 125.0
 
 
 # --------------------------------------------------------------------------- #
@@ -334,7 +384,7 @@ def _power_world(wire_capacity: float) -> World:
         recipes=[make],
         machine_defs=[gen, mach],
         nodes=[
-            MachineNode(id="gen1", machine_def_id="gen"),
+            MachineNode(id="gen1", machine_def_id="gen", assume_inputs=True),
             MachineNode(id="mach1", machine_def_id="mach", recipe_id="make"),
         ],
         pipes=[
@@ -383,7 +433,8 @@ def test_system_scope(powered_process: World) -> None:
     )
     report = compute_system(powered_process, "sys1")
     assert set(report.node_ids) == {"smelter1", "presser1"}
-    assert _close(report.net_energy, -90.0)
+    # Smelter demand-gates to the presser (duty 0.5): 30×0.5 + 60 = −75.
+    assert _close(report.net_energy, -75.0)
 
 
 def test_system_scope_collapse_invariant(powered_process: World) -> None:

@@ -82,10 +82,12 @@ export const DEV_WORLD: World = {
     },
   ],
   nodes: [
-    { id: "boiler_1", machineDefId: "boiler", x: -120, y: 0 },
+    // The boiler (coal) and furnace (ore) sit at the system boundary — their
+    // feedstock is inserted by hand, so they're flagged manual insertion.
+    { id: "boiler_1", machineDefId: "boiler", assumeInputs: true, x: -120, y: 0 },
     { id: "steam_tank_1", machineDefId: "steam_tank", x: 140, y: 0 },
     { id: "turbine_1", machineDefId: "turbine", x: 400, y: 0 },
-    { id: "electric_furnace_1", machineDefId: "electric_furnace", recipeId: "smelt_iron", x: 400, y: 200 },
+    { id: "electric_furnace_1", machineDefId: "electric_furnace", recipeId: "smelt_iron", assumeInputs: true, x: 400, y: 200 },
     { id: "chest_1", machineDefId: "chest", x: 680, y: 200 },
   ],
   pipes: [

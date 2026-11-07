@@ -34,7 +34,7 @@
     }
   ],
   "nodes": [
-    {"id": "furnace1", "machineDefId": "furnace", "recipeId": "smelt", "overclock": 1, "count": 1},
+    {"id": "furnace1", "machineDefId": "furnace", "recipeId": "smelt", "overclock": 1, "count": 1, "assumeInputs": true},
     {"id": "chest1", "machineDefId": "chest"}
   ],
   "pipes": [

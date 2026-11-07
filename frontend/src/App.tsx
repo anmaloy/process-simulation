@@ -23,7 +23,7 @@ import type {
 import { Canvas, categoryColor, DEF_DRAG_MIME, type CanvasSelection } from "./canvas";
 import { Inspector, type InspectorSelection } from "./panels";
 import { BalanceReadout, Legends } from "./overlay";
-import { centroidOf, collapseState, freshSystemId } from "./systems";
+import { centroidOf, collapseState, flattenSystem, freshSystemId } from "./systems";
 import { idFromName, renameEntity } from "./ui";
 import type { System } from "./bridge";
 import "./canvas/canvas.css";
@@ -382,10 +382,25 @@ export function App() {
     [applyEdits],
   );
 
-  // Inspector edit: upsert the entity and recompute.
+  // Inspector edit: upsert the entity and recompute. When a system transitions
+  // to collapsed (from any surface), re-anchor its folded node to the current
+  // member centroid so the group doesn't fold away to a stale/off-screen spot
+  // and read as "disappeared".
   const onEntityChange = useCallback(
-    (kind: EntityKind, entity: object) => applyEdits([upsert(kind, entity)]),
-    [applyEdits],
+    (kind: EntityKind, entity: object) => {
+      let next = entity;
+      if (kind === "system" && world) {
+        const sys = entity as System;
+        const prev = world.systems?.find((s) => s.id === sys.id);
+        if (prev && !prev.collapsed && sys.collapsed) {
+          const memberIds = [...flattenSystem(world, sys.id).nodeIds];
+          const { x, y } = centroidOf(world, memberIds);
+          next = { ...sys, x, y };
+        }
+      }
+      return applyEdits([upsert(kind, next)]);
+    },
+    [applyEdits, world],
   );
 
   const onEntityDelete = useCallback(

@@ -118,23 +118,31 @@ export function PipeInspector({
           <StaticValue value={pipe.category} />
         </span>
       </Field>
-      <Field label="transfer rate" hint="caps sustained flow (× overclock); a pipe is just a transfer vehicle">
-        <NumberInput
-          value={pipe.movementCapacity}
-          onChange={(v) => onChange(withField(pipe, "movementCapacity", v))}
-          min={0}
-        />
-      </Field>
-      <OptionalNumber
-        label="overclock"
-        value={pipe.overclock}
-        onSet={(v) => onChange(withField(pipe, "overclock", v))}
-        onClear={() => onChange(withoutField(pipe, "overclock"))}
-        fallback={1}
-        min={0}
-        step={0.25}
-        hint="scales movement capacity"
-      />
+      {pipe.category === "liquid" ? (
+        <Field label="transfer rate" hint="fluid pipes carry an unlimited rate">
+          <StaticValue value="unlimited" dim />
+        </Field>
+      ) : (
+        <>
+          <Field label="transfer rate" hint="caps sustained flow (× overclock); a pipe is just a transfer vehicle">
+            <NumberInput
+              value={pipe.movementCapacity}
+              onChange={(v) => onChange(withField(pipe, "movementCapacity", v))}
+              min={0}
+            />
+          </Field>
+          <OptionalNumber
+            label="overclock"
+            value={pipe.overclock}
+            onSet={(v) => onChange(withField(pipe, "overclock", v))}
+            onClear={() => onChange(withoutField(pipe, "overclock"))}
+            fallback={1}
+            min={0}
+            step={0.25}
+            hint="scales transfer rate"
+          />
+        </>
+      )}
 
       <PipeEndEditor
         title="end A"

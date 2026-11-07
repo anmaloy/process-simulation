@@ -145,7 +145,10 @@ function ReadoutBody({
   const name = (id: string) => itemName.get(id) ?? id;
   const cat = (id: string) => itemCat.get(id);
 
-  // Lowest running fraction across the scope's nodes (yield headroom).
+  // Nodes genuinely starved of an input (a problem) vs. nodes merely running
+  // below full rate because downstream demand is lower (healthy, demand-gated).
+  const balances = Object.values(report.balances ?? {});
+  const starved = balances.filter((b) => b.status === "shortfall").length;
   const duties = Object.values(report.nodeDuty ?? {});
   const minDuty = duties.length ? Math.min(...duties) : 1;
   const throttled = duties.filter((d) => d < 0.999).length;
@@ -172,13 +175,22 @@ function ReadoutBody({
           {report.netEnergy == null ? "—" : formatEnergy(report.netEnergy)}
         </span>
       </div>
-      {throttled > 0 && (
+      {starved > 0 ? (
         <div className="readout-row">
-          <span className="readout-metric-label">Throughput</span>
+          <span className="readout-metric-label">Starved</span>
           <span className="readout-metric mono" style={{ color: "var(--s-bad)" }}>
-            {Math.round(minDuty * 100)}% · {throttled} throttled
+            {Math.round(minDuty * 100)}% · {starved} short
           </span>
         </div>
+      ) : (
+        throttled > 0 && (
+          <div className="readout-row">
+            <span className="readout-metric-label">Throughput</span>
+            <span className="readout-metric mono" style={{ color: "var(--ink-dim)" }}>
+              {Math.round(minDuty * 100)}% · {throttled} demand-limited
+            </span>
+          </div>
+        )
       )}
 
       <ItemList title="Feedstock in" entries={inputs} name={name} cat={cat} />

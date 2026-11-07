@@ -6,6 +6,7 @@
 
 import type { MachineNode, World } from "../bridge";
 import {
+  Checkbox,
   Field,
   Optional,
   OptionalNumber,
@@ -84,6 +85,28 @@ export function NodeInspector({
         step={1}
         hint="default 1"
       />
+
+      <div className="field">
+        <span className="field-label mono">boundary</span>
+        <Checkbox
+          checked={node.assumeInputs ?? false}
+          onChange={(v) =>
+            onChange(v ? withField(node, "assumeInputs", true) : withoutField(node, "assumeInputs"))
+          }
+          label="manual insertion — assume inputs available"
+        />
+        <Checkbox
+          checked={node.assumeOutputs ?? false}
+          onChange={(v) =>
+            onChange(v ? withField(node, "assumeOutputs", true) : withoutField(node, "assumeOutputs"))
+          }
+          label="manual extraction — assume outputs removed"
+        />
+        <span className="field-hint">
+          a machine runs only when its inputs are supplied and its outputs are taken; a boundary
+          machine is fed or emptied by hand
+        </span>
+      </div>
     </div>
   );
 }

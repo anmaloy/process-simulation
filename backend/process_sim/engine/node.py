@@ -159,7 +159,9 @@ def compute_node(
         _consume_source(conv.fuel_drain)
         if machine_def.input_item_id is not None:
             material_ratio = machine_def.material_ratio or 1.0
-            _accumulate(inputs, machine_def.input_item_id, conv.fluid_out / material_ratio)
+            _accumulate(
+                inputs, machine_def.input_item_id, conv.fluid_out / material_ratio
+            )
         _accumulate(outputs, machine_def.output_item_id, conv.fluid_out)  # type: ignore[arg-type]
 
     # Energy terms are *derived* from the energy-category carriers that now flow

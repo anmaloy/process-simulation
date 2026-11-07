@@ -194,6 +194,17 @@ class MachineNode(Serializable):
     """A placed machine bound to a def, an optional recipe, overclock, and count.
 
     ``x``/``y`` are canvas coordinates, absent until placed by the UI.
+
+    The scope is modelled as an automatic system: a machine runs only to the
+    extent its inputs are actually delivered by connected pipes and its outputs
+    are actually taken downstream. Two **boundary** flags opt a node out of that,
+    for the edge of the system where a player feeds or empties it by hand:
+
+    - ``assume_inputs`` (manual insertion): treat any input not supplied by a
+      pipe as available, so the machine can run without every feed wired up.
+    - ``assume_outputs`` (manual extraction): treat the outputs as removed, so
+      the machine can run even when nothing downstream consumes them (its output
+      is the system's product).
     """
 
     id: str
@@ -201,6 +212,8 @@ class MachineNode(Serializable):
     recipe_id: str | None = None
     overclock: float = 1.0
     count: int = 1
+    assume_inputs: bool = False
+    assume_outputs: bool = False
     x: float | None = None
     y: float | None = None
 
@@ -212,6 +225,8 @@ class MachineNode(Serializable):
             recipe_id=d.get("recipeId"),
             overclock=d.get("overclock", 1.0),
             count=d.get("count", 1),
+            assume_inputs=d.get("assumeInputs", False),
+            assume_outputs=d.get("assumeOutputs", False),
             x=d.get("x"),
             y=d.get("y"),
         )
