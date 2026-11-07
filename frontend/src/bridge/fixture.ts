@@ -34,6 +34,7 @@ export const DEV_WORLD: World = {
       outputItemId: "steam",
       efficiency: 0.8,
       maxFluidRate: 256,
+      materialRatio: 16,
       slots: [
         { category: "solid", direction: "in", slots: 1, stackSize: 64 },
         { category: "liquid", direction: "in", slots: 1, stackSize: 16000 },

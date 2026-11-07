@@ -141,7 +141,10 @@ class MachineDef(Serializable):
     (``w``, waste fraction, default 0 = lossless): it spends its source's energy
     to turn an optional ``input_item_id`` **material** into that output carrier (a
     boiler heats water → steam burning fuel; a turbine spends steam → electricity
-    with no separate material). A plain **consumer** sets only
+    with no separate material). ``material_ratio`` is how many units of output one
+    unit of that material yields (default absent = ``1``, a 1:1 conversion); a
+    boiler making 16 steam per water sets it to ``16``. A plain **consumer** sets
+    only
     ``base_energy_consumption`` — the EU/s it draws while running its recipe.
     A **storage** def sets ``storage`` and acts as a buffer. All energy fields are
     absent on a passive machine.
@@ -156,6 +159,7 @@ class MachineDef(Serializable):
     output_item_id: str | None = None
     efficiency: float | None = None
     max_fluid_rate: float | None = None
+    material_ratio: float | None = None
     storage: StorageSpec | None = None
     allowed_recipe_ids: list[str] = field(default_factory=list)
     slots: list[SlotGroup] = field(default_factory=list)
@@ -176,6 +180,7 @@ class MachineDef(Serializable):
             output_item_id=d.get("outputItemId"),
             efficiency=d.get("efficiency"),
             max_fluid_rate=d.get("maxFluidRate"),
+            material_ratio=d.get("materialRatio"),
             storage=StorageSpec.from_dict(storage) if storage is not None else None,
             allowed_recipe_ids=list(d.get("allowedRecipeIds", [])),
             slots=[SlotGroup.from_dict(s) for s in d.get("slots", [])],

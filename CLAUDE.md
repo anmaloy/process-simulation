@@ -312,7 +312,9 @@ tests/           # pytest for engine/model; frontend tests added later
   `efficiency` (`w`, waste fraction) — it spends its source's energy to turn an
   optional `inputItemId` **material** into that output carrier (a boiler burns
   fuel to heat water → steam; a turbine spends steam → electricity with no
-  separate material). A **storage** def sets `storage`
+  separate material). The material is consumed at `materialRatio` output units
+  per material unit (optional, default `1` = 1:1); a boiler making 16 steam per
+  water sets it to `16`. A **storage** def sets `storage`
   (`{category, capacity}`) and is a transparent buffer. Nothing here names a
   specific fluid — the carriers are just items (content).
 - **MachineNode** — a placed machine bound to a recipe, an overclock multiplier,
@@ -365,8 +367,12 @@ out of the material feedstock/yield lists (it is the grid, reported as
 The fuel→output conversion math is unchanged (see `engine/energy.py`): with max
 rate `R`, draw `D`, waste `w`, the converter consumes its source for *energy* (a
 fuel by its `eu`, else a liquid 1:1) and, when `inputItemId` is set, consumes
-that **material** 1:1 with the output volume (water → steam), emitting the output
-carrier as a routed item.
+that **material** at `materialRatio` output units per material unit (default 1 =
+1:1), emitting the output carrier as a routed item. Default content models the
+Modern Industrialization boiler, whose `materialRatio` is 16 (1 mB water → 16 mB
+steam, validated against the mod source: `SteamHeaterComponent` /
+`MIServerConfig.steamPerWater`); steam itself is 1 mB = 1 EU, so a machine at
+1 EU/t draws 1 mB/t = 20 mB/s of steam.
 
 **Units.** The engine is canonical **per second**. A tick is 1/20 s, so the UI
 edits/shows energy and converter output rates **per tick** (EU/t, mB/t), while

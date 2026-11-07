@@ -43,7 +43,7 @@ export function ItemInspector({
         present={item.eu != null}
         onAdd={() => onChange(withField(item, "eu", 1000))}
         onClear={() => onChange(withoutField(item, "eu"))}
-        hint="stored EU per unit; set only for fuels (not steam/electricity)"
+        hint="stored EU per unit; set only for fuels"
       >
         <NumberInput
           value={item.eu ?? 0}

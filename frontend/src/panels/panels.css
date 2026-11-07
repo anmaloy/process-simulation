@@ -329,7 +329,7 @@ select.field-input {
 
 /* The stage makes room for the docked inspector when something is selected. */
 .shell.has-inspector {
-  grid-template-columns: 300px 1fr 344px;
+  grid-template-columns: 300px 1fr 540px;
 }
 .inspector-dock {
   padding: 16px 16px 16px 0;

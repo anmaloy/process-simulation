@@ -54,12 +54,14 @@ export interface MachineDef {
   sourceItemId?: string;
   /** EU/s drawn while running (a plain consumer). */
   baseEnergyConsumption?: number;
-  /** A converter's material input (e.g. water) that becomes the output. */
+  /** A converter's material input that becomes the output. */
   inputItemId?: string;
-  /** A converter's output carrier (steam, or electricity). */
+  /** A converter's output carrier. */
   outputItemId?: string;
   efficiency?: number;
   maxFluidRate?: number;
+  /** Output units produced per unit of material consumed (absent = 1, i.e. 1:1). */
+  materialRatio?: number;
   /** Set to make this def a storage buffer. */
   storage?: StorageSpec;
   allowedRecipeIds?: string[];

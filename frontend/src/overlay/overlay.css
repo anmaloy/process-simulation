@@ -63,12 +63,12 @@
   z-index: 6;
   left: 16px;
   top: 16px;
-  width: 288px;
+  width: 560px;
   max-width: calc(100% - 32px);
-  max-height: calc(100% - 150px);
+  max-height: calc(100% - 96px);
   display: flex;
   flex-direction: column;
-  padding: 14px 16px 16px;
+  padding: 16px 20px 18px;
   border-radius: 14px;
 }
 
