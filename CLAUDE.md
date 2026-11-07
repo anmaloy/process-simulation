@@ -163,6 +163,12 @@ never an unhandled crash. `import_library` resolves id collisions by
 `ConflictPolicy` (`rename` default, `skip`, `error`), rewriting intra-library
 references, and never mutates the target World.
 
+`io/mi_import.py` imports **Modern Industrialization** recipe data: it reads an
+extracted MI jar directory, parses the machine recipes for a chosen set of types
+into a `Library` (items/recipes/machine defs), and merges it with
+`import_library`. See the `import_mi_dir` API entry below for the parsing and
+unit rules; tier EU caps are deferred to the P5 machine catalog.
+
 ### API surface (P4 — frozen contract)
 
 `api.py` exposes a single `Api` class; pywebview binds one long-lived instance
@@ -192,6 +198,7 @@ model's camelCase wire format.
 | `load_library(path)` | path string | Library envelope |
 | `import_library(library, on_conflict="rename")` | Library envelope, policy | `{world, idRemap, skippedIds}` |
 | `import_library_file(path, on_conflict="rename")` | path string, policy | `{world, idRemap, skippedIds}` |
+| `import_mi_dir(path, options)` | path string, `{machineTypes?, name?, onConflict?}` | `{world, idRemap, skippedIds, stats}` |
 
 - **`edit`** is `{"op": "upsert", "kind": <kind>, "entity": {...}}` (replaces the
   entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
@@ -205,6 +212,18 @@ model's camelCase wire format.
   resolved flow + a starved-edge `shortfall` flag, added for the P8 overlay).
 - **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
   `error`.
+- **`import_mi_dir`** reads an **extracted Modern Industrialization jar
+  directory** (`io/mi_import.py`) and merges the recipes for the chosen
+  `machineTypes` (default subset: macerator, mixer, assembler, chemical_reactor)
+  into the current World via `import_library`. The parser normalizes MI's shapes
+  (object-or-list I/O, bare/namespaced ids, `tag` refs → `isTag` items,
+  `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
+  per-tick on the recipe), builds items/tags/fluids with names from `lang` and
+  fuel `eu` from the `fluid_fuels` data map, and groups recipes by `type` into
+  electric-consumer machine defs with a data-derived slot layout. Tier EU caps
+  (`maxEuPerTick`) are left unset here — authored in the machine catalog (P5).
+  `stats` reports the counts (files scanned, recipes imported/skipped, items,
+  tags, defs, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the P5 TS
 bridge mirrors this table.

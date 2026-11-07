@@ -65,10 +65,12 @@ from typing import Any
 
 from .engine import compute_scope, compute_system, compute_world, trace_process
 from .io import (
+    DEFAULT_MACHINE_TYPES,
     ConflictPolicy,
     ProcessSimIOError,
     export_library,
     import_library,
+    import_mi_library,
     library_from_dict,
     library_to_dict,
     load_library,
@@ -329,6 +331,42 @@ class Api:
         self._world = result.world
         self._persist()
         return _ok(self._import_payload(result))
+
+    def import_mi_dir(
+        self, path: str, options: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Import Modern Industrialization recipes from an extracted jar dir.
+
+        Builds a library from the MI recipe data under ``path`` (for the chosen
+        ``machineTypes``, default the phase-3 subset) and merges it into the
+        current World, resolving id collisions per ``onConflict``. The payload is
+        the usual import shape plus ``stats`` describing what was read.
+        """
+
+        options = options or {}
+        machine_types = options.get("machineTypes")
+        try:
+            imported = import_mi_library(
+                path,
+                machine_types=(
+                    tuple(machine_types)
+                    if machine_types is not None
+                    else DEFAULT_MACHINE_TYPES
+                ),
+                name=options.get("name"),
+            )
+            result = import_library(
+                self._world,
+                imported.library,
+                on_conflict=ConflictPolicy(options.get("onConflict", "rename")),
+            )
+        except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
+            return _err(exc)
+        self._world = result.world
+        self._persist()
+        payload = self._import_payload(result)
+        payload["stats"] = imported.stats
+        return _ok(payload)
 
     @staticmethod
     def _import_payload(result: Any) -> dict[str, Any]:

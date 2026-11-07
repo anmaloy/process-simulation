@@ -30,6 +30,11 @@ from .library import (
     load_library,
     save_library,
 )
+from .mi_import import (
+    DEFAULT_MACHINE_TYPES,
+    MiImport,
+    import_mi_library,
+)
 from .project import (
     load_project,
     project_from_dict,
@@ -61,4 +66,8 @@ __all__ = [
     "library_from_dict",
     "save_library",
     "load_library",
+    # Modern Industrialization import
+    "DEFAULT_MACHINE_TYPES",
+    "MiImport",
+    "import_mi_library",
 ]
