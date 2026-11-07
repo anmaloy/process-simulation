@@ -169,10 +169,19 @@ resolved I/O. The finder is membership-aware — a tag resource also offers its
 member items, so a concrete item (e.g. "Iron Ore") reaches a recipe keyed on a
 tag. The library **rail** is collapsible per-section with a search box and a
 per-section row cap, so an imported world of thousands of entities stays usable.
-(Still deferred: the engine's flow solver keys supply/demand per resource id, so
-a wired chain does **not** yet balance a concrete producer against a tag
-consumer — tag *flow* resolution, generators, and widening the import past the
-four types remain follow-ups.)
+
+**Tag flow resolution is done** (`engine/aggregate.py`): the scope solver is now
+membership-aware. Flow is resolved **per demand key** (a recipe input id —
+concrete or tag); a tag demand draws from any produced concrete supply the tag
+includes (`_satisfies`), a source's output is *committed* as it is drained so one
+supply can't feed two demand keys twice, and that absorbed supply backpressures
+instead of being mistaken for yield. `supplied` is keyed by the sink's demand key
+(the tag id for a tag input), `drained` by the source's concrete supply key. With
+no tags in play each key is matched only by its own id, so a plain concrete chain
+resolves exactly as before. So a producer of `minecraft:iron_ingot` now balances a
+consumer whose recipe input is the tag `c:ingots/iron`.
+(Still deferred: generators and widening the MI import past the four LV machine
+types remain follow-ups.)
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 2; v1 files still load — every bump has been
