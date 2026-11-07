@@ -153,10 +153,13 @@ def compute_node(
         fuel_conversion = conv
         # The source carrier supplies the *energy*; an optional material input is
         # what actually becomes the output (a boiler burns fuel to turn water
-        # into steam), consumed 1:1 with the output volume.
+        # into steam). The material is consumed at ``material_ratio`` units of
+        # output per unit of material (default 1 = 1:1); a boiler making 16 steam
+        # per water sets it to 16, so water demand is fluid_out / 16.
         _consume_source(conv.fuel_drain)
         if machine_def.input_item_id is not None:
-            _accumulate(inputs, machine_def.input_item_id, conv.fluid_out)
+            material_ratio = machine_def.material_ratio or 1.0
+            _accumulate(inputs, machine_def.input_item_id, conv.fluid_out / material_ratio)
         _accumulate(outputs, machine_def.output_item_id, conv.fluid_out)  # type: ignore[arg-type]
 
     # Energy terms are *derived* from the energy-category carriers that now flow

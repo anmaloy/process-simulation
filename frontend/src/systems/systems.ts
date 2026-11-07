@@ -9,7 +9,7 @@
 
 import type { Category, Direction, Pipe, System, World } from "../bridge";
 import { parsePortId, portId } from "../canvas/ports";
-import { freshId, worldToNodes } from "../canvas/graph";
+import { defaultMovementCapacity, freshId, worldToNodes } from "../canvas/graph";
 
 // A collapsed system is rendered as a React Flow node whose id is the system id
 // behind this prefix, so it can never collide with a machine-node id.
@@ -185,7 +185,10 @@ export function pipeFromConnection(conn: ConnectionLike, world: World): Pipe | n
   return {
     id,
     category: from.category,
-    movementCapacity: 10,
+    // Default sustained throughput by category (liquids effectively instant,
+    // solids 16/s, electric 5120 EU/s) — not a flat 10, which throttled every
+    // drawn pipe and starved machines whose demand exceeded it.
+    movementCapacity: defaultMovementCapacity(from.category),
     overclock: 1,
     a: { nodeId: from.nodeId, role: "out", port: from.port },
     b: { nodeId: to.nodeId, role: "in", port: to.port },

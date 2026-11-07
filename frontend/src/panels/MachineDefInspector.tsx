@@ -286,7 +286,7 @@ export function MachineDefInspector({
               value={def.sourceItemId ?? ""}
               onChange={(v) => onChange(withField(def, "sourceItemId", v))}
               options={itemOpts(energyItems)}
-              placeholder={energyItems.length ? "pick electricity…" : "create an energy item"}
+              placeholder={energyItems.length ? "pick an energy item…" : "create an energy item"}
             />
           </Field>
           <OptionalNumber
@@ -308,7 +308,7 @@ export function MachineDefInspector({
               value={def.sourceItemId ?? ""}
               onChange={(v) => onChange(withField(def, "sourceItemId", v))}
               options={itemOpts(sourceItems)}
-              placeholder={sourceItems.length ? "burns for energy…" : "no matching items"}
+              placeholder={sourceItems.length ? "consumed for energy…" : "no matching items"}
             />
           </Field>
           <Field label="converter">
@@ -320,7 +320,7 @@ export function MachineDefInspector({
           </Field>
           {isConverter ? (
             <>
-              <Field label="material in" hint="consumed and turned into the output (e.g. water → steam); leave unset if the source itself is spent">
+              <Field label="material in" hint="consumed and turned into the output; leave unset if the source itself is spent">
                 <Combobox
                   value={def.inputItemId ?? ""}
                   onChange={(v) =>
@@ -330,6 +330,17 @@ export function MachineDefInspector({
                   placeholder="pick a material…"
                 />
               </Field>
+              {def.inputItemId && (
+                <OptionalNumber
+                  label="output per material"
+                  value={def.materialRatio}
+                  onSet={(v) => onChange(withField(def, "materialRatio", v))}
+                  onClear={() => onChange(withoutField(def, "materialRatio"))}
+                  fallback={1}
+                  min={0}
+                  hint="output units made per unit of material consumed; unset = 1:1"
+                />
+              )}
               <Field label="produces">
                 <Combobox
                   value={def.outputItemId ?? ""}

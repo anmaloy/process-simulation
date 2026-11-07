@@ -273,6 +273,18 @@ def test_boiler_consumes_water_material_for_steam() -> None:
     assert math.isclose(comp.inputs["coal"], 256 / 1000)
 
 
+def test_boiler_material_ratio_scales_material_draw() -> None:
+    # With material_ratio 16, one unit of water yields 16 units of steam, so a
+    # boiler making 256 steam draws 256 / 16 = 16 water (the real MI ratio).
+    md = _boiler(input_item_id="water", max_fluid_rate=256, material_ratio=16)
+    items = {**ITEMS, "water": Item("water", "Water", Category.LIQUID)}
+    comp = compute_node(_node(machine_def_id="boiler"), md, None, items=items)
+    assert comp.outputs["steam"] == 256  # steam out unchanged
+    assert math.isclose(comp.inputs["water"], 256 / 16)  # material at the ratio
+    # Energy (coal) draw is independent of the material ratio.
+    assert math.isclose(comp.inputs["coal"], 256 / 1000)
+
+
 def test_non_converter_node_has_no_conversion() -> None:
     # No output item ⇒ not a converter, even with a max fluid rate present.
     comp = compute_node(_node(), MachineDef(id="d1", max_fluid_rate=256), None)
