@@ -670,3 +670,98 @@ select.field-input {
 .palette-combo {
   width: 220px;
 }
+
+/* Recipe consolidation — input/output-driven finder + resolved summary (P7). */
+.recipe-pick .clear-btn {
+  margin-left: 8px;
+  font-size: 11px;
+}
+.recipe-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.02));
+}
+.recipe-summary-name {
+  color: var(--ink);
+  font-size: 12px;
+}
+.recipe-io {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.recipe-io-label {
+  color: var(--ink-faint);
+  font-size: 11px;
+  min-width: 34px;
+  text-transform: uppercase;
+}
+.recipe-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.recipe-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.recipe-chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.recipe-chip-p {
+  color: var(--ink-faint);
+}
+.recipe-finder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.recipe-finder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.recipe-finder-row .combo {
+  flex: 1;
+}
+.recipe-matches {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.recipe-match {
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.recipe-match:hover {
+  border-color: var(--spine);
+}
+.recipe-match.bound {
+  border-color: var(--spine);
+  box-shadow: 0 0 0 1px var(--spine) inset;
+}
+.recipe-match-io {
+  font-size: 11px;
+  line-height: 1.3;
+}
+.recipe-unset {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 11px;
+}
