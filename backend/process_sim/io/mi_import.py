@@ -401,6 +401,12 @@ def import_mi_library(
         _machine_def(t, agg, lang) for t, agg in by_type.items() if agg["recipe_ids"]
     ]
 
+    # Resolve tag membership from the game's tag definitions, so a concrete item
+    # can later stand in for a recipe that references a tag (e.g. iron_ore → a
+    # recipe keyed on c:ores/iron). Also register any member item not already
+    # imported, so it is a named, selectable resource.
+    member_items_added = _resolve_tag_membership(root, registry, lang)
+
     library = Library(
         name=name or "Modern Industrialization",
         items=sorted(registry.items.values(), key=lambda i: i.id),
@@ -413,10 +419,69 @@ def import_mi_library(
         "recipesSkipped": recipes_skipped,
         "items": sum(1 for i in registry.items.values() if not i.is_tag),
         "tags": sum(1 for i in registry.items.values() if i.is_tag),
+        "memberItemsAdded": member_items_added,
         "machineDefs": len(machine_defs),
         "byType": {t: len(agg["recipe_ids"]) for t, agg in by_type.items()},
     }
     return MiImport(library=library, stats=stats)
+
+
+def _tag_file(root: Path, tag_id: str) -> Path:
+    """Path to a tag's definition: ``<ns>:<path>`` → data/<ns>/tags/item/<path>.json."""
+
+    ns, _, path = tag_id.partition(":")
+    return root / "data" / ns / "tags" / "item" / f"{path}.json"
+
+
+def _tag_members(root: Path, tag_id: str, seen: set[str]) -> set[str]:
+    """Flatten a tag's member item ids, recursing into nested ``#tag`` refs."""
+
+    if tag_id in seen:
+        return set()
+    seen.add(tag_id)
+    data = _load_json(_tag_file(root, tag_id))
+    values = data.get("values") if isinstance(data, dict) else data
+    if not isinstance(values, list):
+        return set()
+    out: set[str] = set()
+    for v in values:
+        if isinstance(v, dict):
+            v = v.get("id") or v.get("tag")
+        if not isinstance(v, str):
+            continue
+        if v.startswith("#"):
+            out |= _tag_members(root, v[1:], seen)
+        else:
+            out.add(_resolve_id(v, "minecraft"))
+    return out
+
+
+def _resolve_tag_membership(
+    root: Path, registry: _ItemRegistry, lang: dict[str, str]
+) -> int:
+    """Populate each tag item's ``members`` and register any missing member item.
+
+    Returns the count of member items newly created. Member items inherit the
+    tag's category (MI item tags are solids; a fluid tag's members are liquids).
+    """
+
+    added = 0
+    tag_items = [i for i in registry.items.values() if i.is_tag]
+    for tag in tag_items:
+        members = sorted(_tag_members(root, tag.id, set()))
+        if not members:
+            continue
+        tag.members = members
+        for mid in members:
+            if mid in registry.items:
+                continue
+            if tag.category is Category.LIQUID:
+                name = _fluid_name(mid, lang)
+            else:
+                name = _item_name(mid, lang)
+            registry.items[mid] = Item(id=mid, name=name, category=tag.category)
+            added += 1
+    return added
 
 
 def _recipe_name(

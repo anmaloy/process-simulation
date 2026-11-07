@@ -19,6 +19,8 @@ export interface Item {
   eu?: number;
   /** A tag (group) resource — "any item in this set" — not a concrete item. */
   isTag?: boolean;
+  /** For a tag: the concrete item ids it includes (so a member can stand in). */
+  members?: string[];
 }
 
 export interface Stack {
@@ -223,6 +225,8 @@ export interface MiImportStats {
   recipesSkipped: number;
   items: number;
   tags: number;
+  /** Concrete member items registered while resolving tag membership. */
+  memberItemsAdded?: number;
   machineDefs: number;
   byType: Record<string, number>;
 }

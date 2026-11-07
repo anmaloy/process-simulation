@@ -27,6 +27,17 @@ function resourceOf(s: Stack): string | undefined {
   return s.itemId ?? s.tag ?? undefined;
 }
 
+/** Membership-aware match: a chosen concrete item satisfies a tag that lists it. */
+function satisfies(
+  recipeResourceId: string,
+  chosenId: string,
+  itemsById: Map<string, { members?: string[] }>,
+): boolean {
+  if (recipeResourceId === chosenId) return true;
+  const members = itemsById.get(recipeResourceId)?.members;
+  return members ? members.includes(chosenId) : false;
+}
+
 export function NodeInspector({
   node,
   world,
@@ -113,6 +124,7 @@ export function NodeInspector({
           <RecipeFinder
             pool={pool}
             boundId={node.recipeId}
+            itemsById={itemsById}
             resourceName={resourceName}
             resourceDot={resourceDot}
             onPick={pick}
@@ -217,12 +229,14 @@ function RecipeSummary({
 function RecipeFinder({
   pool,
   boundId,
+  itemsById,
   resourceName,
   resourceDot,
   onPick,
 }: {
   pool: Recipe[];
   boundId: string | undefined;
+  itemsById: Map<string, { members?: string[] }>;
   resourceName: (id: string) => string;
   resourceDot: (id: string) => string;
   onPick: (id: string) => void;
@@ -230,13 +244,17 @@ function RecipeFinder({
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
 
-  // Distinct input / output resources across the pool, as combo options.
+  // Distinct input / output resources across the pool, as combo options. A tag
+  // resource also contributes its member items, so you can reach a tag recipe by
+  // naming a concrete item it accepts (e.g. "Iron Ore" → a c:ores/iron recipe).
   const options = (pickSide: "inputs" | "outputs"): ComboOption[] => {
     const ids = new Set<string>();
     for (const r of pool) {
       for (const s of r[pickSide] ?? []) {
         const id = resourceOf(s);
-        if (id) ids.add(id);
+        if (!id) continue;
+        ids.add(id);
+        for (const m of itemsById.get(id)?.members ?? []) ids.add(m);
       }
     }
     return [...ids]
@@ -247,7 +265,10 @@ function RecipeFinder({
   const outputOpts = useMemo(() => options("outputs"), [pool]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const has = (r: Recipe, side: "inputs" | "outputs", id: string) =>
-    (r[side] ?? []).some((s) => resourceOf(s) === id);
+    (r[side] ?? []).some((s) => {
+      const rid = resourceOf(s);
+      return rid != null && satisfies(rid, id, itemsById);
+    });
 
   const matches = useMemo(() => {
     if (!input && !output) return [];

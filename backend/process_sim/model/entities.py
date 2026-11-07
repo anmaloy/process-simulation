@@ -49,15 +49,18 @@ class Item(Serializable):
     category: Category
     eu: float | None = None
     is_tag: bool | None = None
+    members: list[str] | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Item:
+        members = d.get("members")
         return cls(
             id=d["id"],
             name=d["name"],
             category=Category(d["category"]),
             eu=d.get("eu"),
             is_tag=d.get("isTag"),
+            members=list(members) if members else None,
         )
 
 

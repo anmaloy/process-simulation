@@ -416,3 +416,18 @@ def test_machine_def_power_tier_round_trips_and_is_sparse() -> None:
     # A machine with no modelled ceiling omits both.
     plain = MachineDef(id="plain").to_dict()
     assert "voltageTier" not in plain and "maxEuPerTick" not in plain
+
+
+def test_item_tag_members_round_trip_and_sparse() -> None:
+    tag = Item(
+        id="c:dusts/iron",
+        name="Iron Dusts",
+        category=Category.SOLID,
+        is_tag=True,
+        members=["mi:iron_dust", "mi:iron_tiny_dust"],
+    )
+    d = tag.to_dict()
+    assert d["members"] == ["mi:iron_dust", "mi:iron_tiny_dust"]
+    assert Item.from_dict(d).members == ["mi:iron_dust", "mi:iron_tiny_dust"]
+    # A concrete item carries no member list in the wire format.
+    assert "members" not in Item(id="x", name="X", category=Category.SOLID).to_dict()
