@@ -1,11 +1,13 @@
 """Import Modern Industrialization recipe data into a process-sim library.
 
 Modern Industrialization (MI) ships its machine recipes as data JSON inside its
-mod jar; this reads an **extracted** jar directory and turns those recipes (for a
-chosen set of machine types) into a :class:`~process_sim.io.library.Library` — the
-reusable subset of items, recipes, and machine defs — that
-:func:`~process_sim.io.library.import_library` then merges into a World with the
-usual id-collision handling.
+mod jar; this reads an **extracted** jar directory and turns those recipes into a
+:class:`~process_sim.io.library.Library` — the reusable subset of items, recipes,
+and machine defs — that :func:`~process_sim.io.library.import_library` then merges
+into a World with the usual id-collision handling. By default **every** MI machine
+recipe type is imported (:data:`DEFAULT_MACHINE_TYPES`); a caller may pass a
+narrower tuple. Energy *generation* (boilers, steam turbines, diesel generators)
+is not recipe-driven in MI and is added separately as converter defs.
 
 What a MI recipe looks like (the shape this parser normalizes)::
 
@@ -19,6 +21,10 @@ Each of the four I/O keys may be a **single object or a list**; ``amount``
 defaults to 1; an entry names an ``item``, a ``fluid``, or a ``tag`` (a group
 reference, imported as an ``is_tag`` item); ids may be namespaced
 (``modern_industrialization:iron_dust``) or bare (``water`` → ``minecraft:water``).
+The **forge hammer** is the one targeted type using a vanilla-style single
+``ingredient`` → ``result`` shape (``count``/``id`` instead of the arrays); it is
+a manual tool with no ``eu``/``duration``, so it imports its I/O with a zero cycle
+time (no automatic rate).
 
 Units follow the engine's conventions: ``duration`` ticks → ``time_seconds``
 (÷20), ``eu`` is kept **per tick** on ``Recipe.eu_per_tick`` (the engine scales
@@ -66,13 +72,41 @@ __all__ = [
     "import_mi_library",
 ]
 
-#: The machine types imported by default (the phase-3 targeted subset). The
-#: parser is generic — pass any MI recipe ``type`` names to widen the import.
+#: Every Modern Industrialization machine recipe ``type`` (the ``modern_
+#: industrialization:*`` recipes in the jar). Importing all of them is the
+#: default — a *full* import. Vanilla crafting/smelting types are not MI machines
+#: and are always skipped. The parser is generic, so a caller may still pass a
+#: narrower tuple. (Energy generation — boilers, steam turbines, diesel
+#: generators — is **not** recipe-driven in MI; those are added as converter
+#: defs from :data:`ENERGY_MACHINES`, not parsed here.)
 DEFAULT_MACHINE_TYPES: tuple[str, ...] = (
+    # Single-block electric crafting machines (LV tier — see MACHINE_CATALOG).
     "macerator",
     "mixer",
     "assembler",
+    "packer",
+    "unpacker",
     "chemical_reactor",
+    "cutting_machine",
+    "compressor",
+    "distillery",
+    "centrifuge",
+    "wiremill",
+    "electrolyzer",
+    "polarizer",
+    # Manual tool recipes (no powered machine): forge hammer.
+    "forge_hammer",
+    # Multiblock machines (no fixed EU ceiling — scaled by energy hatches).
+    "blast_furnace",
+    "heat_exchanger",
+    "vacuum_freezer",
+    "implosion_compressor",
+    "pressurizer",
+    "quarry",
+    "distillation_tower",
+    "fusion_reactor",
+    "oil_drilling_rig",
+    "coke_oven",
 )
 
 #: Modern Industrialization voltage-tier EU/tick, read verbatim from the jar's
@@ -102,15 +136,28 @@ class MachineSpec:
     max_eu_per_tick: float | None = None
 
 
-#: Per-type machine metadata for the imported subset. MI's basic electric
-#: processing machines are Low-Voltage blocks (upgradable), so each targeted type
-#: gets the LV ceiling (32 EU/t); a node can be retiered in the inspector. A type
-#: absent here imports with no ceiling (overclock unclamped).
+#: Per-type machine metadata. MI's basic electric processing machines are
+#: single-block Low-Voltage blocks (upgradable), so each gets the LV ceiling
+#: (32 EU/t, the ``electric`` variant registered in the jar's
+#: ``SingleBlockCraftingMachines``); a node can be retiered in the inspector. A
+#: type absent here imports with no ceiling (overclock unclamped) — used for the
+#: multiblocks (which scale with their energy hatches, not a fixed tier) and the
+#: manual forge hammer.
+_LV = MachineSpec("LV", CABLE_TIER_EU["LV"])
 MACHINE_CATALOG: dict[str, MachineSpec] = {
-    "macerator": MachineSpec("LV", CABLE_TIER_EU["LV"]),
-    "mixer": MachineSpec("LV", CABLE_TIER_EU["LV"]),
-    "assembler": MachineSpec("LV", CABLE_TIER_EU["LV"]),
-    "chemical_reactor": MachineSpec("LV", CABLE_TIER_EU["LV"]),
+    "macerator": _LV,
+    "mixer": _LV,
+    "assembler": _LV,
+    "packer": _LV,
+    "unpacker": _LV,
+    "chemical_reactor": _LV,
+    "cutting_machine": _LV,
+    "compressor": _LV,
+    "distillery": _LV,
+    "centrifuge": _LV,
+    "wiremill": _LV,
+    "electrolyzer": _LV,
+    "polarizer": _LV,
 }
 
 _MI_NS = "modern_industrialization"
@@ -250,6 +297,14 @@ def _entries(recipe: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_count(entry: dict[str, Any]) -> dict[str, Any]:
+    """Map a vanilla-style ``count`` onto the ``amount`` key the parser reads."""
+
+    if "count" in entry and "amount" not in entry:
+        entry = {**entry, "amount": entry["count"]}
+    return entry
+
+
 class _ItemRegistry:
     """Accumulates the unique items/fluids/tags referenced, as model Items."""
 
@@ -354,6 +409,19 @@ def import_mi_library(
         item_out = _entries(data, "item_outputs")
         fluid_in = _entries(data, "fluid_inputs")
         fluid_out = _entries(data, "fluid_outputs")
+        # The forge hammer uses a vanilla-style single ``ingredient`` → ``result``
+        # shape instead of the ``*_inputs``/``*_outputs`` arrays. Normalize it to
+        # the item-entry shape the loops below expect (``count`` → ``amount``,
+        # ``result.id`` → ``item``).
+        ingredient = data.get("ingredient")
+        if isinstance(ingredient, dict):
+            item_in = [*item_in, _normalize_count(ingredient)]
+        result = data.get("result")
+        if isinstance(result, dict) and result.get("id") is not None:
+            item_out = [
+                *item_out,
+                {"item": result["id"], "amount": result.get("count", 1)},
+            ]
 
         inputs: list[Stack] = []
         outputs: list[Stack] = []

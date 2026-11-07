@@ -272,22 +272,61 @@ def test_catalog_tier_caps_match_jar_cable_tiers():
         assert spec.voltage_tier == "LV" and spec.max_eu_per_tick == 32
 
 
-def test_uncatalogued_type_imports_without_a_ceiling(tmp_path):
-    # A type not in the catalog still imports (generic), just with no clamp.
+def test_forge_hammer_ingredient_result_shape(tmp_path):
+    # The forge hammer uses a vanilla-style single ingredient/result shape (no
+    # *_inputs/_outputs arrays, no eu/duration — it's a manual tool). The parser
+    # normalizes count->amount and result.id->item so its I/O imports correctly.
     recipe = tmp_path / "data" / NS / "recipe"
     _write(
-        recipe / "polarizer" / "x.json",
+        recipe / "forge_hammer" / "bolt.json",
         {
-            "type": f"{NS}:polarizer",
-            "duration": 100,
-            "eu": 2,
-            "item_inputs": [{"item": f"{NS}:iron_rod"}],
-            "item_outputs": [{"item": f"{NS}:iron_magnetic_rod"}],
+            "type": f"{NS}:forge_hammer",
+            "ingredient": {"item": f"{NS}:bronze_double_ingot"},
+            "result": {"count": 4, "id": f"{NS}:bronze_bolt"},
         },
     )
-    lib = import_mi_library(tmp_path, machine_types=("polarizer",)).library
-    pol = next(d for d in lib.machine_defs if d.id == "mi.machine.polarizer")
-    assert pol.voltage_tier is None and pol.max_eu_per_tick is None
+    lib = import_mi_library(tmp_path, machine_types=("forge_hammer",)).library
+    r = next(r for r in lib.recipes if r.machine_type == "forge_hammer")
+    assert [(s.resource_id, s.quantity) for s in r.inputs] == [
+        (f"{NS}:bronze_double_ingot", 1.0)
+    ]
+    assert [(s.resource_id, s.quantity) for s in r.outputs] == [
+        (f"{NS}:bronze_bolt", 4.0)
+    ]
+    # No duration in the data → a manual (zero-time) recipe, no energy draw.
+    assert r.time_seconds == 0.0 and r.eu_per_tick is None
+    # A tag ingredient also parses (ores → raw metal).
+    _write(
+        recipe / "forge_hammer" / "ore.json",
+        {
+            "type": f"{NS}:forge_hammer",
+            "ingredient": {"tag": "c:ores/gold"},
+            "result": {"count": 2, "id": "minecraft:raw_gold"},
+        },
+    )
+    lib2 = import_mi_library(tmp_path, machine_types=("forge_hammer",)).library
+    ore = next(r for r in lib2.recipes if r.id.endswith("forge_hammer/ore"))
+    assert ore.inputs[0].tag == "c:ores/gold"
+
+
+def test_uncatalogued_type_imports_without_a_ceiling(tmp_path):
+    # A type not in the catalog (here a multiblock) still imports (generic), just
+    # with no clamp — the honest default for machines whose ceiling isn't a fixed
+    # single-block tier.
+    recipe = tmp_path / "data" / NS / "recipe"
+    _write(
+        recipe / "vacuum_freezer" / "x.json",
+        {
+            "type": f"{NS}:vacuum_freezer",
+            "duration": 100,
+            "eu": 2,
+            "fluid_inputs": [{"fluid": f"{NS}:helium", "amount": 100}],
+            "fluid_outputs": [{"fluid": f"{NS}:liquid_helium", "amount": 100}],
+        },
+    )
+    lib = import_mi_library(tmp_path, machine_types=("vacuum_freezer",)).library
+    vf = next(d for d in lib.machine_defs if d.id == "mi.machine.vacuum_freezer")
+    assert vf.voltage_tier is None and vf.max_eu_per_tick is None
 
 
 # --------------------------------------------------------------------------- #

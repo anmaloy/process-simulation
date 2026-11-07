@@ -202,12 +202,26 @@ unit rules. It also resolves **tag membership** from the game's tag definitions
 (`data/<ns>/tags/item/<path>.json`, nested `#tag`s flattened): each tag item
 gets its concrete `members`, and any member not already imported is registered
 as a named item — so a concrete item can stand in for a recipe keyed on a tag.
-A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes
-don't carry — the base electric tier and its `maxEuPerTick` ceiling; the
-targeted subset is all **LV** (32 EU/t). The tier EU/t values (`CABLE_TIER_EU`:
-LV 32, MV 128, HV 1024, EV 8192, SV 128000000) were read verbatim from the jar's
-`CableTier` static initializer, not guessed. `examples/` holds a small sample
-project (`mi_lv_battery_line.psim.json`) generated from a real import.
+A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes don't carry —
+the base electric tier and its `maxEuPerTick` ceiling. The tier EU/t values
+(`CABLE_TIER_EU`: LV 32, MV 128, HV 1024, EV 8192, SV 128000000) and the machine
+tiers were read verbatim from the jar (`CableTier` / `MachineTier` static
+initializers), not guessed. `examples/` holds a small sample project
+(`mi_lv_battery_line.psim.json`) generated from a real import.
+
+**Full import is the default** (`DEFAULT_MACHINE_TYPES`): all 24 MI machine recipe
+types are imported, not a four-type subset (validated against the 2.5.11 jar —
+2268 recipes, 1486 items, 403 tags, 24 machine defs). The 13 single-block electric
+machines (macerator, mixer, assembler, packer, unpacker, chemical_reactor,
+cutting_machine, compressor, distillery, centrifuge, wiremill, electrolyzer,
+polarizer) get the **LV** ceiling (32 EU/t, their electric variant in the jar's
+`SingleBlockCraftingMachines`); the multiblocks (blast_furnace, heat_exchanger,
+vacuum_freezer, implosion_compressor, pressurizer, quarry, distillation_tower,
+fusion_reactor, oil_drilling_rig, coke_oven) import with **no ceiling** — in MI
+they scale with their energy hatches, not a fixed tier. The **forge hammer** is a
+manual tool using a vanilla-style single `ingredient` → `result` shape (not the
+`*_inputs`/`*_outputs` arrays) with no `eu`/`duration`; the parser normalizes that
+shape so its I/O imports, with a zero cycle time (no automatic rate).
 
 ### API surface (P4 — frozen contract)
 
@@ -254,18 +268,19 @@ model's camelCase wire format.
   `error`.
 - **`import_mi_dir`** reads an **extracted Modern Industrialization jar
   directory** (`io/mi_import.py`) and merges the recipes for the chosen
-  `machineTypes` (default subset: macerator, mixer, assembler, chemical_reactor)
-  into the current World via `import_library`. The parser normalizes MI's shapes
-  (object-or-list I/O, bare/namespaced ids, `tag` refs → `isTag` items,
-  `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
-  per-tick on the recipe), builds items/tags/fluids with names from `lang` and
-  fuel `eu` from the `fluid_fuels` data map, and groups recipes by `type` into
-  electric-consumer machine defs with a data-derived slot layout and the
-  `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`; the subset is
-  LV = 32 EU/t, from the jar's `CableTier`). It resolves tag membership (each tag
-  item's `members`, registering missing member items). `stats` reports the counts
-  (files scanned, recipes imported/skipped, items, tags, member items added,
-  defs, per-type).
+  `machineTypes` (default: **all 24** MI machine recipe types) into the current
+  World via `import_library`. The parser normalizes MI's shapes (object-or-list
+  I/O, the forge hammer's `ingredient`/`result` shape, bare/namespaced ids, `tag`
+  refs → `isTag` items, `probability`, default `amount` 1), converts units
+  (ticks→seconds, `eu` kept per-tick on the recipe), builds items/tags/fluids with
+  names from `lang` and fuel `eu` from the `fluid_fuels` data map, and groups
+  recipes by `type` into electric-consumer machine defs with a data-derived slot
+  layout and the `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`;
+  single-block electric machines are LV = 32 EU/t, from the jar's `CableTier` /
+  `MachineTier`; multiblocks import unclamped). It resolves tag membership (each
+  tag item's `members`, registering missing member items). `stats` reports the
+  counts (files scanned, recipes imported/skipped, items, tags, member items
+  added, defs, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the P5 TS
 bridge mirrors this table.
