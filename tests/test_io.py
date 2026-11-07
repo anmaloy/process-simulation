@@ -334,3 +334,34 @@ def test_garbled_payload_raises_malformed():
 def test_non_object_raises_malformed():
     with pytest.raises(MalformedFileError, match="object"):
         project_from_dict([1, 2, 3])
+
+
+def test_v1_project_still_loads_and_resaves_as_current(tmp_path):
+    # v2 is additive/optional over v1, so a v1 envelope is a valid payload and
+    # loads without a migration step; saving it back stamps the current version.
+    v1 = {
+        "schemaVersion": 1,
+        "kind": "project",
+        "world": {
+            "name": "legacy",
+            "items": [{"id": "iron", "name": "Iron", "category": "solid"}],
+            "recipes": [
+                {
+                    "id": "r",
+                    "timeSeconds": 1.0,
+                    "inputs": [{"itemId": "iron", "quantity": 1}],
+                    "outputs": [{"itemId": "iron", "quantity": 1}],
+                }
+            ],
+        },
+    }
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(v1))
+    world = load_project(path)
+    assert world.name == "legacy"
+    # The v1 recipe gains the new fields as absent, not as defaulted values.
+    assert world.recipes[0].eu_per_tick is None
+    assert world.recipes[0].machine_type is None
+
+    save_project(world, path)
+    assert json.loads(path.read_text())["schemaVersion"] == SCHEMA_VERSION

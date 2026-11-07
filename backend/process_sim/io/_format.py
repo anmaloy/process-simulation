@@ -17,6 +17,7 @@ from .errors import MalformedFileError, UnsupportedVersionError
 
 __all__ = [
     "SCHEMA_VERSION",
+    "MIN_READABLE_VERSION",
     "PROJECT_KIND",
     "LIBRARY_KIND",
     "read_json",
@@ -24,9 +25,19 @@ __all__ = [
     "validate_envelope",
 ]
 
-#: The schema this build reads and writes. Bump when the on-disk shape changes;
-#: a loader then rejects or migrates anything that isn't this exact version.
-SCHEMA_VERSION = 1
+#: The schema this build *writes*. Bump when the on-disk shape changes.
+#:
+#: v2 added the hybrid per-recipe energy term (``euPerTick`` / ``machineType``),
+#: tag resources (``isTag`` on items, ``tag`` on stacks), and machine power tiers
+#: (``voltageTier`` / ``maxEuPerTick``). Every v2 field is optional and additive,
+#: so a v1 payload *is* a valid v2 payload — migration from v1 is a no-op beyond
+#: the version stamp, and ``from_dict`` fills the new fields as absent.
+SCHEMA_VERSION = 2
+
+#: The oldest schema this build still reads. Files from here up to
+#: ``SCHEMA_VERSION`` load (migrating forward where needed); older ones are
+#: rejected with a clear error.
+MIN_READABLE_VERSION = 1
 
 PROJECT_KIND = "project"
 LIBRARY_KIND = "library"
@@ -79,11 +90,14 @@ def validate_envelope(data: Any, expected_kind: str) -> dict[str, Any]:
             f"file schema v{version} is newer than this build supports "
             f"(v{SCHEMA_VERSION}); upgrade the app to open it"
         )
-    if version < SCHEMA_VERSION:
+    if version < MIN_READABLE_VERSION:
         raise UnsupportedVersionError(
-            f"file schema v{version} is older than v{SCHEMA_VERSION} and no "
+            f"file schema v{version} is older than v{MIN_READABLE_VERSION} and no "
             "migration is available"
         )
+    # Versions in [MIN_READABLE_VERSION, SCHEMA_VERSION] are read directly: every
+    # bump so far has been additive/optional, so an older payload is a valid
+    # current one and ``from_dict`` fills the newer fields as absent.
 
     kind = data.get("kind")
     if kind != expected_kind:

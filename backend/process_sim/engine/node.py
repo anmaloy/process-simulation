@@ -108,9 +108,13 @@ def compute_node(
         cycles_per_sec = overclock / recipe.time_seconds
         rate = cycles_per_sec * count
         for s in recipe.outputs:
-            _accumulate(outputs, s.item_id, s.quantity * rate)
+            rid = s.resource_id
+            if rid is not None:
+                _accumulate(outputs, rid, s.quantity * rate)
         for s in recipe.inputs:
-            _accumulate(inputs, s.item_id, s.quantity * rate)
+            rid = s.resource_id
+            if rid is not None:
+                _accumulate(inputs, rid, s.quantity * rate)
 
     src_id = machine_def.source_item_id
 

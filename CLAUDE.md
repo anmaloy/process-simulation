@@ -153,7 +153,8 @@ app no longer resets on reopen. `DevApi` mirrors this with `localStorage` for th
 browser build.
 
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
-`schemaVersion` (currently 1) and `kind` (`project` or `library`) wrapping its
+`schemaVersion` (currently 2; v1 files still load — every bump has been
+additive/optional) and `kind` (`project` or `library`) wrapping its
 payload. A project file nests the whole World under `"world"`; a library file
 carries the reusable subset (items, recipes, machine defs) at top level.
 `load_project`/`load_library` raise `MalformedFileError` (bad JSON, wrong kind,
@@ -299,10 +300,18 @@ tests/           # pytest for engine/model; frontend tests added later
   An item may optionally carry a stored-energy value `eu` — its fuel content in
   EU. A fuel with `eu = 1000` consumed at 2 EU/s lasts 500 s. Optional and
   selectable at item construction: items without `eu` are not fuels.
-- **Stack** — an `{item, quantity}` pair, per recipe cycle unless noted.
-- **Recipe** — input stacks → output stacks over a production time. Recipes carry
-  **no** energy term: energy is a machine property (a machine draws a defined
-  amount while running), so it lives on the `MachineDef`, not the recipe.
+- **Stack** — a `{resource, quantity}` pair, per recipe cycle unless noted. The
+  resource is a concrete `itemId` **or** a `tag` (a group reference like
+  `c:gears/iron` = "any item in this set"; a tag is a first-class fungible
+  resource backed by an `Item` with `isTag: true`). A stack may carry an optional
+  `probability` (expected consume/produce chance; absent = always, `0` = a
+  referenced-but-unconsumed catalyst).
+- **Recipe** — input stacks → output stacks over a production time. Energy is
+  **hybrid** (see decision #2): a recipe may carry its own `euPerTick` (the
+  EU/tick its machine draws while making it) which overrides the machine's
+  `baseEnergyConsumption` default; a recipe without it falls back to the machine
+  draw. An optional `machineType` names the machine kind that runs it (MI's
+  recipe `type`, e.g. `macerator`).
 - **MachineDef** — a template: an **energy source**, allowed recipes, slot layout
   per category and direction, stack sizes, overclock bounds, and optional
   storage. `energySource` ∈ `electric` / `liquid` / `fuel` (absent = passive)
@@ -499,9 +508,15 @@ All of the original open questions are decided. Build to these.
 
 1. **Pipe priority asymmetry is final** — insert favors higher, extract favors
    lower, exactly as specified above and in the five cases. Not up for revision.
-2. **Energy is a machine property** — recipes carry no energy term; a machine
-   draws `baseEnergyConsumption` while running. A machine's `energySource`
-   (electric / liquid / fuel) picks the carrier it consumes.
+2. **Energy is hybrid (recipe overrides machine)** — revised to match Modern
+   Industrialization, which puts `eu`/`duration` on each recipe. A recipe's
+   `euPerTick` is the EU/tick its machine draws while making it and **overrides**
+   the machine's `baseEnergyConsumption`; a recipe without it falls back to the
+   machine draw, so pre-existing machine-energy projects keep working. A
+   machine's `energySource` (electric / liquid / fuel) still picks the carrier
+   consumed, and a machine carries a MI-style power ceiling (`voltageTier` +
+   `maxEuPerTick`) that clamps overclock so `euPerTick × overclock ≤
+   maxEuPerTick`.
 3. **All carriers are routed items (electricity included)** — fuel items store
    `eu`; a boiler burns fuel into steam, a turbine turns steam into electricity.
    Fuel, steam, **and** electricity flow through pipes under the normal
