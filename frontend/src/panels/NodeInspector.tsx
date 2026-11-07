@@ -77,7 +77,6 @@ export function NodeInspector({
   const bound = node.recipeId ? pool.find((r) => r.id === node.recipeId) : undefined;
   // If a recipe is bound, default to the resolved view; otherwise open the finder.
   const [changing, setChanging] = useState(false);
-  const showFinder = !bound || changing;
 
   const bounds: string[] = [];
   if (def?.overclockMin != null) bounds.push(`min ${def.overclockMin}`);
