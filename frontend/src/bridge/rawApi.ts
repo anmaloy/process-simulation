@@ -12,6 +12,8 @@ import type {
   ExportLibraryOptions,
   ImportResult,
   LibraryEnvelope,
+  MiImportOptions,
+  MiImportResult,
   RecomputeRequest,
   ScopeReport,
   World,
@@ -40,9 +42,13 @@ export interface RawApi {
     path: string,
     on_conflict?: ConflictPolicy,
   ): Promise<Envelope<ImportResult>>;
+  import_mi_dir(
+    path: string,
+    options?: MiImportOptions,
+  ): Promise<Envelope<MiImportResult>>;
 }
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function ok<T>(data: T): Envelope<T> {
   return { ok: true, data };
@@ -210,6 +216,13 @@ export class DevApi implements RawApi {
     return err(
       "ProcessSimIOError",
       "library import runs in the Python host (unavailable in the dev browser)",
+    );
+  }
+
+  async import_mi_dir(): Promise<Envelope<MiImportResult>> {
+    return err(
+      "ProcessSimIOError",
+      "MI import reads a jar directory in the Python host (unavailable in the dev browser)",
     );
   }
 }

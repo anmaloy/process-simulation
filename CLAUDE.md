@@ -152,6 +152,15 @@ override; a corrupt autosave is ignored, an explicit project file wins), so the
 app no longer resets on reopen. `DevApi` mirrors this with `localStorage` for the
 browser build.
 
+The MI-model rework (hybrid recipe energy, tag resources, power tiers) is wired
+through the frontend: the TS bridge mirrors the new fields and the `importMiDir`
+method; the `RecipeInspector` edits per-recipe `euPerTick` (EU/t) + `machineType`
+and each stack's resource (a concrete item **or** a tag) + `probability`; the
+`MachineDefInspector` edits `voltageTier` + `maxEuPerTick` (the overclock
+ceiling) and frames `baseEnergyConsumption` as the fallback draw; and an "Import
+MI" rail control runs `importMiDir` against an extracted jar directory (Python
+host only — the `DevApi` returns a clear error in the browser build).
+
 `io/` reads and writes **versioned envelopes**: every file is a JSON object with
 `schemaVersion` (currently 2; v1 files still load — every bump has been
 additive/optional) and `kind` (`project` or `library`) wrapping its

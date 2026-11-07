@@ -3,7 +3,7 @@
 // — and because other entities reference ids, a rename rewrites every reference
 // so the World stays consistent.
 
-import type { EntityKind, World } from "../bridge";
+import type { EntityKind, Stack, World } from "../bridge";
 
 /** Slugify a display name into a stable id token. */
 export function slugify(name: string): string {
@@ -66,14 +66,21 @@ export function renameEntity(
 
   if (kind === "item") {
     w.items = rename(w.items);
+    // A stack references an item by `itemId` or a tag by `tag` (a tag is itself
+    // an item that can be renamed), so rewrite whichever matches.
+    const reStack = (s: Stack): Stack => {
+      let next = s;
+      if (next.itemId === oldId) next = { ...next, itemId: newId };
+      if (next.tag === oldId) next = { ...next, tag: newId };
+      return next;
+    };
     for (const r of w.recipes ?? []) {
-      r.inputs = r.inputs?.map((s) => (s.itemId === oldId ? { ...s, itemId: newId } : s));
-      r.outputs = r.outputs?.map((s) =>
-        s.itemId === oldId ? { ...s, itemId: newId } : s,
-      );
+      r.inputs = r.inputs?.map(reStack);
+      r.outputs = r.outputs?.map(reStack);
     }
     for (const d of w.machineDefs ?? []) {
       if (d.sourceItemId === oldId) d.sourceItemId = newId;
+      if (d.inputItemId === oldId) d.inputItemId = newId;
       if (d.outputItemId === oldId) d.outputItemId = newId;
     }
   } else if (kind === "recipe") {
