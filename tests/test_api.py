@@ -107,6 +107,24 @@ def test_apply_edit_upsert_adds_then_replaces(furnace_chest):
     assert "eu" not in coal[0]
 
 
+def test_apply_edit_pipe_node_kind_round_trips():
+    api = Api()
+    res = api.apply_edit(
+        {
+            "op": "upsert",
+            "kind": "pipeNode",
+            "entity": {"id": "j1", "category": "energy", "x": 10, "y": 20},
+        }
+    )
+    assert res["ok"] is True
+    assert res["data"]["pipeNodes"] == [
+        {"id": "j1", "category": "energy", "x": 10, "y": 20}
+    ]
+    gone = api.apply_edit({"op": "remove", "kind": "pipeNode", "id": "j1"})
+    assert gone["ok"] is True
+    assert gone["data"].get("pipeNodes", []) == []
+
+
 def test_apply_edit_remove_drops_entity(furnace_chest):
     api = Api(furnace_chest)
     res = api.apply_edit({"op": "remove", "kind": "node", "id": "chest1"})

@@ -48,7 +48,7 @@ shapes are mirrored by the P5 TS client and recorded in ``CLAUDE.md``). Each
 ``edit`` ops: ``{"op": "upsert", "kind": <kind>, "entity": {...}}`` replaces the
 entity of that id in place (or appends it); ``{"op": "remove", "kind": <kind>,
 "id": <id>}`` drops it. ``kind`` is one of ``item``, ``recipe``, ``machineDef``,
-``node``, ``pipe``, ``system``.
+``node``, ``pipe``, ``pipeNode``, ``system``.
 
 ``recompute`` scopes: ``world`` (default), ``node`` (``nodeId`` — a single
 machine), ``process`` (``nodeId`` — its connected component), ``system``
@@ -83,6 +83,7 @@ from .model import (
     MachineDef,
     MachineNode,
     Pipe,
+    PipeNode,
     Recipe,
     System,
     World,
@@ -98,6 +99,7 @@ _KINDS: dict[str, tuple[str, Any]] = {
     "machineDef": ("machine_defs", MachineDef),
     "node": ("nodes", MachineNode),
     "pipe": ("pipes", Pipe),
+    "pipeNode": ("pipe_nodes", PipeNode),
     "system": ("systems", System),
 }
 

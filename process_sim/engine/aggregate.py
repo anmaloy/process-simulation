@@ -136,6 +136,11 @@ class _Index:
         self.nodes = {n.id: n for n in world.nodes}
         self.pipes = list(world.pipes)
         self.pipe_category = {p.id: p.category for p in world.pipes}
+        #: Pipe-junction ids. A junction is a transparent routing waypoint, not a
+        #: machine, so it never appears in a scope's node set or balances; it only
+        #: carries pipes through and is spliced out of the flow graph (like a
+        #: storage buffer) during aggregation.
+        self.pipe_nodes = {pn.id for pn in world.pipe_nodes}
         self.systems = {s.id: s for s in world.systems}
 
 
@@ -171,7 +176,11 @@ def _direction(pipe: Pipe) -> tuple[PipeEnd, PipeEnd] | None:
 
 @dataclass
 class _Edge:
-    pipe_id: str
+    #: Every pipe this (possibly spliced) edge traverses. A direct edge lists one
+    #: pipe; an edge spliced through storage/junction waypoints lists the whole
+    #: chain, so the resolved flow is reported on each segment (a trunk feeding a
+    #: junction shows the sum of what its branches carry).
+    pipe_ids: tuple[str, ...]
     source: str
     sink: str
     throughput: float
@@ -208,7 +217,7 @@ def _edges_in_scope(index: _Index, node_ids: set[str]) -> list[_Edge]:
         )
         edges.append(
             _Edge(
-                pipe_id=pipe.id,
+                pipe_ids=(pipe.id,),
                 source=src_end.node_id,
                 sink=sink_end.node_id,
                 throughput=throughput,
@@ -224,10 +233,10 @@ def _contract_storage(edges: list[_Edge], storage_ids: set[str]) -> list[_Edge]:
 
     A buffer is a transparent passthrough in the steady-state balance (capacity
     only absorbs transients), so a chain ``X → buffer → Y`` resolves as a direct
-    ``X → Y`` edge throttled by the tighter of the two pipes. The spliced edge is
-    attributed to the downstream pipe for the overlay, and carries the sink's
-    insert priority and the source's extract priority. Chains of buffers contract
-    iteratively until no edge touches a buffer.
+    ``X → Y`` edge throttled by the tighter of the two pipes. The spliced edge
+    carries both pipes' ids (so each segment reports its flow in the overlay) and
+    takes the sink's insert priority and the source's extract priority. Chains of
+    buffers contract iteratively until no edge touches a buffer.
     """
 
     if not storage_ids:
@@ -248,7 +257,7 @@ def _contract_storage(edges: list[_Edge], storage_ids: set[str]) -> list[_Edge]:
                     continue
                 spliced.append(
                     _Edge(
-                        pipe_id=oe.pipe_id,
+                        pipe_ids=ie.pipe_ids + oe.pipe_ids,
                         source=ie.source,
                         sink=oe.sink,
                         throughput=min(ie.throughput, oe.throughput),
@@ -430,11 +439,19 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
             if rate > _EPS:
                 consumed_items.update(match_sources.get(item_id, ()))
 
-    edges = _edges_in_scope(index, id_set)
-    edges = _contract_storage(edges, storage_ids)
+    # Pipe junctions are transparent routing waypoints: include them in the edge
+    # graph so a pipe machine→junction→machine isn't dropped for having a
+    # non-machine endpoint, then splice them out with the same contraction that
+    # dissolves storage buffers (a junction has no buffer and no throughput of its
+    # own — the caps/priorities stay on the pipes it joins).
+    junction_ids = index.pipe_nodes
+    edges = _edges_in_scope(index, id_set | junction_ids)
+    edges = _contract_storage(edges, storage_ids | junction_ids)
     item_edges_by_cat: dict[Category | None, list[_Edge]] = {}
     for e in edges:
-        cat = index.pipe_category.get(e.pipe_id)
+        # All segments of a spliced chain share a category (a junction only joins
+        # pipes of its own), so the first pipe's category keys the whole edge.
+        cat = index.pipe_category.get(e.pipe_ids[0])
         item_edges_by_cat.setdefault(cat, []).append(e)
 
     def _route(
@@ -511,12 +528,15 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
                     drained[edge.source][s_key] = (
                         drained[edge.source].get(s_key, 0.0) + share
                     )
-                acc = pipes.setdefault(
-                    edge.pipe_id, {"flow": 0.0, "sink": edge.sink, "items": set()}
-                )
-                acc["flow"] = float(acc["flow"]) + flow  # type: ignore[arg-type]
-                items_on_pipe: set[str] = acc["items"]  # type: ignore[assignment]
-                items_on_pipe.add(demand_key)
+                # Report the flow on every segment the edge traverses (a direct
+                # pipe, or each pipe in a spliced storage/junction chain).
+                for pid in edge.pipe_ids:
+                    acc = pipes.setdefault(
+                        pid, {"flow": 0.0, "sink": edge.sink, "items": set()}
+                    )
+                    acc["flow"] = float(acc["flow"]) + flow  # type: ignore[arg-type]
+                    items_on_pipe: set[str] = acc["items"]  # type: ignore[assignment]
+                    items_on_pipe.add(demand_key)
         return supplied, drained, pipes
 
     def _relax(
@@ -691,7 +711,12 @@ def trace_process(world: World, start_node_id: str) -> list[str]:
     index = _Index(world)
     if start_node_id not in index.nodes:
         return []
+    # Connectivity routes through pipe junctions: a junction is a traversable
+    # waypoint (so machine→junction→machine is one component) but is not itself a
+    # machine, so it is dropped from the returned node list by the final filter.
     adjacency: dict[str, set[str]] = {n.id: set() for n in world.nodes}
+    for jid in index.pipe_nodes:
+        adjacency[jid] = set()
     for pipe in world.pipes:
         a, b = pipe.a.node_id, pipe.b.node_id
         if a in adjacency and b in adjacency:
