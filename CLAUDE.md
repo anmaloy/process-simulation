@@ -113,17 +113,27 @@ model's camelCase wire format.
 - **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
   `error`.
 - **`import_mi_dir`** reads an **extracted Modern Industrialization jar
-  directory** (`io/mi_import.py`) and merges the recipes for the chosen
-  `machineTypes` (default: **all 24** MI machine recipe types) into the current
-  World via `import_library`. The parser normalizes MI's shapes (object-or-list
-  I/O, the forge hammer's `ingredient`/`result` shape, bare/namespaced ids, `tag`
-  refs → `isTag` items, `probability`, default `amount` 1), converts units
-  (ticks→seconds, `eu` kept per-tick on the recipe), builds items/tags/fluids with
-  names from `lang` and fuel `eu` from the `fluid_fuels` data map, and groups
-  recipes by `type` into electric-consumer machine defs with a data-derived slot
-  layout and the `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`;
-  single-block electric machines are LV = 32 EU/t, from the jar's `CableTier` /
-  `MachineTier`; multiblocks import unclamped). For the machines that also have
+  directory** (`io/mi_import.py`) and merges its machine recipes into the current
+  World via `import_library`. By **default it discovers and imports every
+  powered-machine recipe type it finds** — any namespaced type (not `minecraft:`,
+  not a bare vanilla type) whose recipes carry a machine shape — so a *different
+  mod* with the same recipe structure imports with no code change; the type set
+  is no longer a hand-maintained allowlist (`DEFAULT_MACHINE_TYPES` is kept only
+  as a ready-made subset). Pass `machineTypes` (bare type names) to narrow it. The
+  parser normalizes MI's shapes (object-or-list I/O, the forge hammer's
+  `ingredient`/`result` shape, bare/namespaced ids, `tag` refs → `isTag` items,
+  `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
+  per-tick on the recipe), merges every mod's `lang` for display names, reads item
+  fuel `eu` from NeoForge's `furnace_fuels` burn-time and fluid `eu` from
+  `fluid_fuels`, and groups recipes by `type` into electric-consumer machine defs
+  with a data-derived slot layout and the `MACHINE_CATALOG`'s tier ceiling
+  (`voltageTier` + `maxEuPerTick`; single-block electric machines are LV =
+  32 EU/t, from the jar's `CableTier` / `MachineTier`; multiblocks import
+  unclamped). A recipe type run by distinct **named blocks** (`MULTIBLOCK_VARIANTS`
+  — the steam/electric **quarry** and steam/electric **blast furnace**, which the
+  recipe data can't tell apart) yields those variant defs (steam on steam,
+  electric on routed electricity) instead of one generic def. For the machines
+  that also have
   **steam tiers** (`STEAM_MACHINE_TIERS` — bronze/steel for macerator, mixer,
   compressor, cutting machine; steel-only for packer, unpacker, wiremill) it adds
   a bronze/steel def beside the electric one, running the same recipes but powered
@@ -139,7 +149,9 @@ model's camelCase wire format.
   **storage** defs (`STORAGE_MACHINES` — material tanks/barrels, the single-block
   Configurable Tank/Chest, and the Large Tank multiblock, with the jar's
   capacities as editable buffer annotations). It resolves tag membership (each
-  tag item's `members`, registering missing member items). `stats` reports the
+  tag item's `members`, registering missing member items), filling the vanilla
+  `c:` material tags (`c:ores/iron` & co.) the jar references but NeoForge — not
+  the mod — defines, from the vanilla naming convention. `stats` reports the
   counts (files scanned, recipes imported/skipped, items, tags, member items
   added, defs, `steamMachines`, `energyMachines`, `pumps`, `storage`, per-type).
 

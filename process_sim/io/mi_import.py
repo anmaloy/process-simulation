@@ -73,6 +73,8 @@ __all__ = [
     "EnergyMachine",
     "STEAM_MACHINE_TIERS",
     "STEAM_TIER_MAX_EU",
+    "MachineVariant",
+    "MULTIBLOCK_VARIANTS",
     "PUMP_MACHINES",
     "PumpMachine",
     "STORAGE_MACHINES",
@@ -83,13 +85,14 @@ __all__ = [
     "import_mi_library",
 ]
 
-#: Every Modern Industrialization machine recipe ``type`` (the ``modern_
-#: industrialization:*`` recipes in the jar). Importing all of them is the
-#: default — a *full* import. Vanilla crafting/smelting types are not MI machines
-#: and are always skipped. The parser is generic, so a caller may still pass a
-#: narrower tuple. (Energy generation — boilers, steam turbines, diesel
-#: generators — is **not** recipe-driven in MI; those are added as converter
-#: defs from :data:`ENERGY_MACHINES`, not parsed here.)
+#: The Modern Industrialization machine recipe ``type`` names (bare, without the
+#: ``modern_industrialization:`` prefix), kept for reference and as a ready-made
+#: subset a caller can pass as ``machine_types``. It is **no longer the import
+#: gate**: by default :func:`import_mi_library` discovers *every* namespaced
+#: machine recipe type it finds (see its ``machine_types`` docs), so other mods
+#: with the same recipe structure import with no edit here. Energy generation
+#: (boilers, turbines, generators) is not recipe-driven and is added from
+#: :data:`ENERGY_MACHINES`, not parsed.
 DEFAULT_MACHINE_TYPES: tuple[str, ...] = (
     # Single-block electric crafting machines (LV tier — see MACHINE_CATALOG).
     "macerator",
@@ -426,6 +429,55 @@ STEAM_MACHINE_TIERS: dict[str, tuple[str, ...]] = {
 
 
 # --------------------------------------------------------------------------- #
+# Multiblock machines that come in distinct **blocks** sharing one recipe type.
+#
+# MI's Steam Quarry and Electric Quarry both run ``quarry`` recipes; the Steam
+# Blast Furnace and Electric Blast Furnace both run ``blast_furnace`` recipes. The
+# recipe JSON can't tell these apart (the block is Java, not data), so a purely
+# data-driven import makes a single def per type and silently drops the variant.
+# This table restores the named blocks: a type listed here yields its variant
+# defs instead of one generic def, each powered by its own carrier (steam vs
+# routed electricity). Multiblocks have no fixed EU tier — they scale with their
+# energy hatches — so no ``max_eu_per_tick`` ceiling is set.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class MachineVariant:
+    """A named machine block that runs a shared recipe type on its own carrier.
+
+    ``key`` is the jar block id (its def id and lang name); ``energy_source`` /
+    ``source_item_id`` is how that block is powered.
+    """
+
+    key: str
+    name: str
+    energy_source: EnergySource
+    source_item_id: str
+
+
+MULTIBLOCK_VARIANTS: dict[str, tuple[MachineVariant, ...]] = {
+    "blast_furnace": (
+        MachineVariant(
+            "steam_blast_furnace", "Steam Blast Furnace", EnergySource.LIQUID, STEAM_ID
+        ),
+        MachineVariant(
+            "electric_blast_furnace",
+            "Electric Blast Furnace",
+            EnergySource.ELECTRIC,
+            ELECTRICITY_ID,
+        ),
+    ),
+    "quarry": (
+        MachineVariant("steam_quarry", "Steam Quarry", EnergySource.LIQUID, STEAM_ID),
+        MachineVariant(
+            "electric_quarry", "Electric Quarry", EnergySource.ELECTRIC, ELECTRICITY_ID
+        ),
+    ),
+}
+
+
+# --------------------------------------------------------------------------- #
 # Water pumps (jar: AbstractWaterPumpBlockEntity + Steam/Electric subclasses).
 #
 # A pump runs one operation every 100 ticks (5 s), outputting
@@ -578,17 +630,27 @@ def _load_json(path: Path) -> Any:
 
 
 def _load_lang(root: Path) -> dict[str, str]:
-    """Load the English lang map (display names), or empty if absent."""
+    """Merge every mod's English lang map (display names) under the jar.
 
-    for c in [
+    Globs ``assets/*/lang/en_us.json`` so a generic import names another mod's
+    items, fluids, and machines from *its* lang file, not just MI's. The MI path
+    is tried first (and an MI-rooted fallback), so MI names win on any clash.
+    """
+
+    out: dict[str, str] = {}
+    candidates = [
         root / "assets" / _MI_NS / "lang" / "en_us.json",
         root / _MI_NS / "lang" / "en_us.json",
-    ]:
+        *sorted((root / "assets").glob("*/lang/en_us.json")),
+    ]
+    for c in candidates:
         if c.is_file():
             data = _load_json(c)
             if isinstance(data, dict):
-                return {k: v for k, v in data.items() if isinstance(v, str)}
-    return {}
+                for k, v in data.items():
+                    if isinstance(v, str):
+                        out.setdefault(k, v)
+    return out
 
 
 def _load_fluid_fuels(root: Path) -> dict[str, float]:
@@ -751,8 +813,8 @@ def _fluid_name(full_id: str, lang: dict[str, str]) -> str:
     return lang.get(f"fluid.{ns}.{path}") or _prettify(path)
 
 
-def _machine_name(machine_type: str, lang: dict[str, str]) -> str:
-    return lang.get(f"block.{_MI_NS}.{machine_type}") or _prettify(machine_type)
+def _machine_name(machine_type: str, lang: dict[str, str], ns: str = _MI_NS) -> str:
+    return lang.get(f"block.{ns}.{machine_type}") or _prettify(machine_type)
 
 
 # --------------------------------------------------------------------------- #
@@ -779,6 +841,45 @@ def _normalize_count(entry: dict[str, Any]) -> dict[str, Any]:
     if "count" in entry and "amount" not in entry:
         entry = {**entry, "amount": entry["count"]}
     return entry
+
+
+def _is_machine_recipe(data: dict[str, Any]) -> bool:
+    """Does this recipe carry a powered-machine shape (vs a crafting recipe)?
+
+    Any of the item/fluid I/O arrays, an ``eu`` / ``duration`` field, or the
+    forge-hammer ``ingredient``→``result`` shape marks a machine recipe. Vanilla
+    crafting (``pattern`` / ``key`` / plural ``ingredients``) has none of these.
+    """
+
+    if any(
+        k in data
+        for k in ("item_inputs", "item_outputs", "fluid_inputs", "fluid_outputs")
+    ):
+        return True
+    if "eu" in data or "duration" in data:
+        return True
+    return isinstance(data.get("ingredient"), dict) and "result" in data
+
+
+def _machine_type_of(
+    rtype: Any, data: dict[str, Any], wanted: set[str] | None
+) -> tuple[str, str] | None:
+    """Return ``(namespace, bare_type)`` if this recipe is an importable machine.
+
+    Skips the whole ``minecraft`` namespace and bare (un-namespaced) vanilla
+    types. With ``wanted`` given, keeps only those bare type names; otherwise
+    discovers any namespaced type whose recipe has a machine shape — so a
+    different mod's machines import with no allowlist edit.
+    """
+
+    if not isinstance(rtype, str) or ":" not in rtype:
+        return None
+    ns, _, name = rtype.partition(":")
+    if ns == "minecraft" or not name:
+        return None
+    if wanted is not None:
+        return (ns, name) if name in wanted else None
+    return (ns, name) if _is_machine_recipe(data) else None
 
 
 class _ItemRegistry:
@@ -844,16 +945,23 @@ def _stack(entry: dict[str, Any], resource_id: str, is_tag: bool) -> Stack:
 def import_mi_library(
     root: str | Path,
     *,
-    machine_types: tuple[str, ...] = DEFAULT_MACHINE_TYPES,
+    machine_types: tuple[str, ...] | None = None,
     name: str | None = None,
     include_energy: bool = True,
 ) -> MiImport:
-    """Build a :class:`Library` from the MI recipes under ``root``.
+    """Build a :class:`Library` from the machine recipes under ``root``.
 
     ``root`` is an extracted MI jar directory (or the recipe directory itself).
-    Only recipes whose ``type`` is one of ``machine_types`` are imported; every
-    other file (vanilla crafting recipes, other machines) is skipped. The result
-    is never merged here — hand its ``library`` to
+    By **default every powered-machine recipe type is discovered and imported** —
+    any namespaced type (not ``minecraft:``, not a bare vanilla type) whose
+    recipes carry a machine shape (``eu`` / ``duration`` / item-fluid I/O arrays,
+    or the forge-hammer ``ingredient``→``result`` shape). So a *different mod*
+    whose machines use the same recipe structure imports with no code change —
+    the type list is no longer a hand-maintained allowlist. Vanilla
+    crafting/smelting recipes are always skipped. Pass ``machine_types`` (bare
+    type names, e.g. ``("macerator", "mixer")``) to import only a subset.
+
+    The result is never merged here — hand its ``library`` to
     :func:`~process_sim.io.library.import_library`.
 
     ``include_energy`` (default on) adds the energy-generation machines
@@ -867,15 +975,14 @@ def import_mi_library(
     lang = _load_lang(root)
     fuels = _load_fluid_fuels(root)
     item_fuels, tag_fuels = _load_item_fuels(root)
-    wanted = {f"{_MI_NS}:{t}" for t in machine_types}
+    wanted = set(machine_types) if machine_types is not None else None
 
     registry = _ItemRegistry(lang, fuels, item_fuels)
     recipes: list[Recipe] = []
-    # Per type: collected recipe ids + max I/O counts (for the slot layout).
-    by_type: dict[str, dict[str, Any]] = {
-        t: {"recipe_ids": [], "sin": 0, "sout": 0, "lin": 0, "lout": 0}
-        for t in machine_types
-    }
+    # Per bare machine-type name: its namespace, collected recipe ids, and the max
+    # I/O counts (for the derived slot layout). Populated lazily as types are
+    # discovered, so the importable set is not a fixed allowlist.
+    by_type: dict[str, dict[str, Any]] = {}
     files_scanned = 0
     recipes_skipped = 0
 
@@ -886,10 +993,11 @@ def import_mi_library(
             recipes_skipped += 1
             continue
         rtype = data.get("type")
-        if rtype not in wanted:
+        parsed = _machine_type_of(rtype, data, wanted)
+        if parsed is None:
             recipes_skipped += 1
             continue
-        machine_type = str(rtype).split(":", 1)[1]
+        ns, machine_type = parsed
 
         rel = path.relative_to(recipe_dir).with_suffix("").as_posix()
         recipe_id = f"mi:{rel}"
@@ -939,7 +1047,7 @@ def import_mi_library(
             Recipe(
                 id=recipe_id,
                 time_seconds=time_seconds,
-                name=_recipe_name(machine_type, outputs, registry, lang),
+                name=_recipe_name(machine_type, outputs, registry, lang, ns),
                 inputs=inputs,
                 outputs=outputs,
                 eu_per_tick=float(eu) if eu is not None else None,
@@ -947,28 +1055,42 @@ def import_mi_library(
             )
         )
 
-        agg = by_type[machine_type]
+        agg = by_type.setdefault(
+            machine_type,
+            {"ns": ns, "recipe_ids": [], "sin": 0, "sout": 0, "lin": 0, "lout": 0},
+        )
         agg["recipe_ids"].append(recipe_id)
         agg["sin"] = max(agg["sin"], len(item_in))
         agg["sout"] = max(agg["sout"], len(item_out))
         agg["lin"] = max(agg["lin"], len(fluid_in))
         agg["lout"] = max(agg["lout"], len(fluid_out))
 
-    machine_defs = [
-        _machine_def(t, agg, lang) for t, agg in by_type.items() if agg["recipe_ids"]
-    ]
+    # One def per discovered machine type. A type whose recipes run on several
+    # named blocks (a steam vs electric quarry / blast furnace) yields those
+    # variants; every other type yields a single generic electric-consumer def.
+    machine_defs: list[MachineDef] = []
+    needs_steam = False
+    for t, agg in by_type.items():
+        if not agg["recipe_ids"]:
+            continue
+        variants = MULTIBLOCK_VARIANTS.get(t)
+        if variants:
+            for v in variants:
+                machine_defs.append(_variant_machine_def(t, v, agg, lang))
+                needs_steam = needs_steam or v.energy_source is EnergySource.LIQUID
+        else:
+            machine_defs.append(_machine_def(t, agg, lang))
 
-    # Steam (bronze/steel) tiers for the machines that have them, beside the
-    # electric variant the recipes built. These are processing machines (not
-    # energy generation), so they ride every import; each consumes steam, so make
-    # sure the steam carrier exists.
+    # Steam (bronze/steel) tiers for the single-block machines that have them,
+    # beside the electric variant the recipes built. These are processing machines
+    # (not energy generation), so they ride every import; each consumes steam.
     steam_defs: list[MachineDef] = []
     for t, agg in by_type.items():
         if not agg["recipe_ids"]:
             continue
         for tier in STEAM_MACHINE_TIERS.get(t, ()):
             steam_defs.append(_steam_machine_def(t, tier, agg, lang))
-    if steam_defs:
+    if steam_defs or needs_steam:
         _ensure_steam_item(registry)
 
     # Energy generation (not recipe-driven in MI): add the converter defs and the
@@ -1131,11 +1253,12 @@ def _recipe_name(
     outputs: list[Stack],
     registry: _ItemRegistry,
     lang: dict[str, str],
+    ns: str = _MI_NS,
 ) -> str:
     """A readable label: ``<Machine>: <primary output>`` (else just the machine)."""
 
     primary = next((s.resource_id for s in outputs if s.resource_id), None)
-    machine = _machine_name(machine_type, lang)
+    machine = _machine_name(machine_type, lang, ns)
     if primary is None:
         return machine
     out_item = registry.items.get(primary)
@@ -1168,13 +1291,53 @@ def _machine_def(
     spec = MACHINE_CATALOG.get(machine_type, MachineSpec())
     return MachineDef(
         id=f"mi.machine.{machine_type}",
-        name=_machine_name(machine_type, lang),
+        name=_machine_name(machine_type, lang, agg.get("ns", _MI_NS)),
         energy_source=EnergySource.ELECTRIC,
         source_item_id=ELECTRICITY_ID,
         allowed_recipe_ids=list(agg["recipe_ids"]),
         slots=slots,
         voltage_tier=spec.voltage_tier,
         max_eu_per_tick=spec.max_eu_per_tick,
+    )
+
+
+def _variant_machine_def(
+    machine_type: str,
+    variant: MachineVariant,
+    agg: dict[str, Any],
+    lang: dict[str, str],
+) -> MachineDef:
+    """A named machine-block variant def (steam / electric) for a shared type.
+
+    Same recipes and item slots the type's recipes derive, but powered by the
+    variant's carrier: a steam block adds a liquid-in port for steam; an electric
+    block an energy-in port for routed electricity. A multiblock has no fixed EU
+    tier (it scales with its energy hatches), so no ``max_eu_per_tick`` ceiling.
+    """
+
+    slots: list[SlotGroup] = []
+
+    def add(category: Category, direction: Direction, count: int, stack: int) -> None:
+        if count > 0:
+            slots.append(SlotGroup(category, direction, count, stack))
+
+    is_steam = variant.energy_source is EnergySource.LIQUID
+    add(Category.SOLID, Direction.IN, agg["sin"], _SOLID_STACK)
+    add(Category.SOLID, Direction.OUT, agg["sout"], _SOLID_STACK)
+    add(
+        Category.LIQUID, Direction.IN, agg["lin"] + (1 if is_steam else 0), _FLUID_STACK
+    )
+    add(Category.LIQUID, Direction.OUT, agg["lout"], _FLUID_STACK)
+    if not is_steam:
+        add(Category.ENERGY, Direction.IN, 1, _ENERGY_STACK)  # routed electricity
+
+    return MachineDef(
+        id=f"mi.machine.{variant.key}",
+        name=_machine_name(variant.key, lang, agg.get("ns", _MI_NS)) or variant.name,
+        energy_source=variant.energy_source,
+        source_item_id=variant.source_item_id,
+        allowed_recipe_ids=list(agg["recipe_ids"]),
+        slots=slots,
     )
 
 
@@ -1236,9 +1399,10 @@ def _steam_machine_def(
     add(Category.LIQUID, Direction.IN, agg["lin"] + 1, _FLUID_STACK)
     add(Category.LIQUID, Direction.OUT, agg["lout"], _FLUID_STACK)
 
+    base_name = _machine_name(machine_type, lang, agg.get("ns", _MI_NS))
     return MachineDef(
         id=f"mi.machine.{machine_type}.{tier}",
-        name=f"{tier.title()} {_machine_name(machine_type, lang)}",
+        name=f"{tier.title()} {base_name}",
         energy_source=EnergySource.LIQUID,
         source_item_id=STEAM_ID,
         allowed_recipe_ids=list(agg["recipe_ids"]),

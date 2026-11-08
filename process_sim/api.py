@@ -65,7 +65,6 @@ from typing import Any
 
 from .engine import compute_scope, compute_system, compute_world, trace_process
 from .io import (
-    DEFAULT_MACHINE_TYPES,
     ConflictPolicy,
     ProcessSimIOError,
     export_library,
@@ -350,10 +349,10 @@ class Api:
         try:
             imported = import_mi_library(
                 path,
+                # None → discover and import every machine recipe type found
+                # (any mod); an explicit list narrows it to those bare type names.
                 machine_types=(
-                    tuple(machine_types)
-                    if machine_types is not None
-                    else DEFAULT_MACHINE_TYPES
+                    tuple(machine_types) if machine_types is not None else None
                 ),
                 name=options.get("name"),
             )
