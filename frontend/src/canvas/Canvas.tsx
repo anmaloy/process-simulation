@@ -326,7 +326,15 @@ function CanvasInner(props: CanvasProps) {
           onEdgeClick={handleEdgeClick}
           onPaneClick={handlePaneClick}
           onSelectionChange={handleSelectionChange}
-          fitView
+          // `fitView` fits once, when the first measured node mounts. Cap its
+          // zoom at 1: without this, placing the first machine on an empty
+          // canvas fits that single node to `maxZoom` (2.5), blowing it up to
+          // fill the pane. The fit never re-runs, so the next edit (or the
+          // inspector opening and shrinking the pane) then pushes the oversized
+          // nodes off-screen and they read as "disappeared". Fitting at ≤1:1
+          // keeps placed nodes at a normal size and on-screen; fitting many
+          // spread-out nodes still zooms out as needed (maxZoom only caps in).
+          fitViewOptions={{ maxZoom: 1, padding: 0.3 }}
           minZoom={0.2}
           maxZoom={2.5}
           proOptions={{ hideAttribution: true }}
