@@ -123,14 +123,25 @@ model's camelCase wire format.
   recipes by `type` into electric-consumer machine defs with a data-derived slot
   layout and the `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`;
   single-block electric machines are LV = 32 EU/t, from the jar's `CableTier` /
-  `MachineTier`; multiblocks import unclamped). It also adds the non-recipe
-  **energy-generation** converter defs (`ENERGY_MACHINES`: boilers, steam/plasma
-  turbines, diesel generators) and the routed-electricity carrier, and sets
-  imported consumers to draw it (see "Energy generation is imported too" above);
-  pass `include_energy: false` to skip them. It resolves tag membership (each tag
-  item's `members`, registering missing member items). `stats` reports the counts
-  (files scanned, recipes imported/skipped, items, tags, member items added,
-  defs, `energyMachines`, per-type).
+  `MachineTier`; multiblocks import unclamped). For the machines that also have
+  **steam tiers** (`STEAM_MACHINE_TIERS` — bronze/steel for macerator, mixer,
+  compressor, cutting machine; steel-only for packer, unpacker, wiremill) it adds
+  a bronze/steel def beside the electric one, running the same recipes but powered
+  by steam (`energySource: liquid`, `sourceItemId` steam) and clamped to the
+  tier's `MachineTier` EU/t ceiling (bronze 2, steel 4). It also adds the
+  non-recipe **energy-generation** converter defs (`ENERGY_MACHINES`: boilers,
+  steam/plasma turbines, diesel generators) and the routed-electricity carrier,
+  and sets imported consumers to draw it; the **water pumps** (`PUMP_MACHINES` —
+  bronze/steel on steam, electric on electricity, each a water source running a
+  fixed-1-EU/t "pump water" recipe at bronze 200 / steel 400 / electric
+  3200 mB/s, the full-placement max); pass `include_energy: false` to skip the
+  energy machines **and** pumps (they share the carriers). It always adds the
+  **storage** defs (`STORAGE_MACHINES` — material tanks/barrels, the single-block
+  Configurable Tank/Chest, and the Large Tank multiblock, with the jar's
+  capacities as editable buffer annotations). It resolves tag membership (each
+  tag item's `members`, registering missing member items). `stats` reports the
+  counts (files scanned, recipes imported/skipped, items, tags, member items
+  added, defs, `steamMachines`, `energyMachines`, `pumps`, `storage`, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the UI's
 `callApi` wrappers in `ui/index.html` mirror this table.
