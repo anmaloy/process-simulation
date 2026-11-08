@@ -717,3 +717,45 @@ def test_multiblock_quarry_and_blast_furnace_variants(tmp_path):
     assert sq.allowed_recipe_ids == eq.allowed_recipe_ids
     assert _def(lib, "mi.machine.steam_blast_furnace") is not None
     assert _def(lib, "mi.machine.electric_blast_furnace") is not None
+
+
+def test_smelting_furnaces_bronze_steel_electric(tmp_path):
+    """Vanilla smelting imports as the three furnace blocks (bronze/steel/electric).
+
+    Smelting recipes carry no ``eu`` and use ``cookingtime``; each furnace def
+    supplies the base draw on its own carrier and tier.
+    """
+
+    recipe = tmp_path / "data" / NS / "recipe"
+    _write(
+        recipe / "materials" / "gold" / "smelting" / "dust.json",
+        {
+            "type": "minecraft:smelting",
+            "cookingtime": 200,
+            "experience": 0.7,
+            "ingredient": {"item": f"{NS}:gold_dust"},
+            "result": {"count": 1, "id": "minecraft:gold_ingot"},
+        },
+    )
+    lib = import_mi_library(tmp_path, include_energy=False).library
+
+    # The recipe parsed with its smelting I/O and cooking time (→ seconds).
+    fr = [r for r in lib.recipes if r.machine_type == "furnace"]
+    assert len(fr) == 1
+    assert fr[0].time_seconds == 10.0 and fr[0].eu_per_tick is None
+    assert [s.item_id for s in fr[0].inputs] == [f"{NS}:gold_dust"]
+    assert [s.item_id for s in fr[0].outputs] == ["minecraft:gold_ingot"]
+
+    # No generic furnace def — the three named blocks instead.
+    assert _def(lib, "mi.machine.furnace") is None
+    bronze = _def(lib, "mi.machine.bronze_furnace")
+    steel = _def(lib, "mi.machine.steel_furnace")
+    electric = _def(lib, "mi.machine.electric_furnace")
+    assert bronze and steel and electric
+    assert bronze.name == "Bronze Furnace" and electric.name == "Electric Furnace"
+    assert bronze.energy_source.value == "liquid" and bronze.max_eu_per_tick == 2
+    assert steel.max_eu_per_tick == 4
+    assert electric.energy_source.value == "electric" and electric.max_eu_per_tick == 32
+    # Smelting has no eu, so a base draw is set; all three run the same recipe.
+    assert bronze.base_energy_consumption is not None
+    assert bronze.allowed_recipe_ids == electric.allowed_recipe_ids == [fr[0].id]

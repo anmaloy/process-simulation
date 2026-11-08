@@ -129,11 +129,14 @@ model's camelCase wire format.
   with a data-derived slot layout and the `MACHINE_CATALOG`'s tier ceiling
   (`voltageTier` + `maxEuPerTick`; single-block electric machines are LV =
   32 EU/t, from the jar's `CableTier` / `MachineTier`; multiblocks import
-  unclamped). A recipe type run by distinct **named blocks** (`MULTIBLOCK_VARIANTS`
-  — the steam/electric **quarry** and steam/electric **blast furnace**, which the
-  recipe data can't tell apart) yields those variant defs (steam on steam,
-  electric on routed electricity) instead of one generic def. For the machines
-  that also have
+  unclamped). A recipe type run by distinct **named blocks** (`MACHINE_VARIANTS`
+  — the steam/electric **quarry**, steam/electric **blast furnace**, and
+  bronze/steel/electric **furnace**, which the recipe data can't tell apart)
+  yields those variant defs (each on its own carrier and tier) instead of one
+  generic def. The furnaces run vanilla `minecraft:smelting` recipes — the one
+  vanilla type mapped to a machine (`_VANILLA_MACHINE_TYPES`, type `furnace`); a
+  smelting recipe carries no `eu`, so the furnace def supplies a base draw and
+  `cookingtime` is its duration. For the machines that also have
   **steam tiers** (`STEAM_MACHINE_TIERS` — bronze/steel for macerator, mixer,
   compressor, cutting machine; steel-only for packer, unpacker, wiremill) it adds
   a bronze/steel def beside the electric one, running the same recipes but powered
