@@ -232,3 +232,6 @@ frontend/.vite/
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Standalone export output
+/dist/

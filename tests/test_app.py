@@ -1,55 +1,51 @@
-"""Phase 10 — the pywebview desktop shell.
+"""The desktop shell (app.py), the shared backend factory (backend.py), and the
+server's method surface (server.py).
 
-Everything here is the non-GUI surface of ``app.py``: locating the built
-bundle, loading a project into the API, and the offline-asset guarantee. The
-window itself (``webview.create_window`` / ``start``) needs a display and is not
-exercised; ``main`` imports ``webview`` lazily so these tests run headless.
-
-Acceptance bar (WORKFLOW P10): the app loads the *built* frontend from disk and
-all assets load offline — the latter is machine-checked here and via
-``python app.py --check``.
+The UI is now a single hand-written ``ui/index.html`` (no build step), so the
+app just locates and loads it; the window itself (``webview.create_window`` /
+``start``) needs a display and is not exercised (``webview`` is imported lazily
+inside ``main`` so these tests run headless). The offline guarantee is now a
+property of the one static file plus its local ``fonts/`` — checked here by
+scanning for any ``http(s)://`` or protocol-relative asset load.
 """
 
+import re
 from pathlib import Path
 
-import pytest
-
 import app
+import backend
+import server
 from process_sim.io import save_project
 from process_sim.model import World
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILT_DIST = REPO_ROOT / "frontend" / "dist"
+UI_INDEX = REPO_ROOT / "ui" / "index.html"
+
+# External-load patterns (an absolute http(s):// or protocol-relative // target
+# in an HTML src/href or a CSS url()/@import).
+_EXT_HTML = re.compile(r"""(?:src|href)\s*=\s*["']\s*(?:https?:)?//""", re.IGNORECASE)
+_EXT_CSS = re.compile(
+    r"""(?:@import\s+(?:url\(\s*)?|url\(\s*)["']?\s*(?:https?:)?//""", re.IGNORECASE
+)
 
 
 # --------------------------------------------------------------------------- #
-# dist resolution
+# UI resolution
 # --------------------------------------------------------------------------- #
 
 
-def test_dist_index_missing_raises(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match="npm run build"):
-        app.dist_index(tmp_path)
-
-
-def test_dist_index_found(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text("<!doctype html>", encoding="utf-8")
-    assert app.dist_index(tmp_path) == tmp_path / "index.html"
-
-
-def test_dist_dir_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROCESS_SIM_DIST", str(tmp_path))
-    assert app.dist_dir() == tmp_path
+def test_ui_index_resolves() -> None:
+    assert app.ui_index() == UI_INDEX
+    assert UI_INDEX.is_file()
 
 
 # --------------------------------------------------------------------------- #
-# API construction
+# API construction (shared factory)
 # --------------------------------------------------------------------------- #
 
 
 def test_build_api_empty() -> None:
-    api = app.build_api()
-    world = api.get_world()
+    world = app.build_api().get_world()
     assert world["ok"] is True
     assert world["data"].get("nodes", []) == []
 
@@ -57,9 +53,14 @@ def test_build_api_empty() -> None:
 def test_build_api_loads_project(tmp_path: Path, furnace_chest: World) -> None:
     project = tmp_path / "chain.json"
     save_project(furnace_chest, project)
-    api = app.build_api(project)
-    data = api.get_world()["data"]
+    data = app.build_api(project).get_world()["data"]
     assert {n["id"] for n in data["nodes"]} == {"furnace1", "chest1"}
+
+
+def test_backend_reexports_factory() -> None:
+    # app and backend share one factory/Api — the desktop and server bind the same.
+    assert app.build_api is backend.build_api
+    assert backend.Api is server.API.__class__
 
 
 # --------------------------------------------------------------------------- #
@@ -69,17 +70,13 @@ def test_build_api_loads_project(tmp_path: Path, furnace_chest: World) -> None:
 
 def test_edits_autosave_and_restore(tmp_path: Path) -> None:
     autosave = tmp_path / "autosave.psim.json"
-    # First session: start empty, add an item — which should auto-persist.
     api = app.build_api(None, autosave)
     api.apply_edit(
         {"op": "upsert", "kind": "item", "entity": {"id": "ore", "name": "Ore", "category": "solid"}}
     )
     assert autosave.is_file()
-
-    # Second session: no project given, but the autosave is restored.
     restored = app.build_api(None, autosave)
-    items = restored.get_world()["data"]["items"]
-    assert [i["id"] for i in items] == ["ore"]
+    assert [i["id"] for i in restored.get_world()["data"]["items"]] == ["ore"]
 
 
 def test_corrupt_autosave_is_ignored(tmp_path: Path) -> None:
@@ -99,74 +96,38 @@ def test_explicit_project_wins_over_autosave(tmp_path: Path, furnace_chest: Worl
 
 
 # --------------------------------------------------------------------------- #
-# Offline-asset check
+# Offline guarantee — the single UI file (and its CSS) loads nothing external.
 # --------------------------------------------------------------------------- #
 
 
-def test_find_external_refs_clean(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text(
-        '<link rel="stylesheet" href="./assets/app.css">'
-        '<script src="./assets/app.js"></script>',
-        encoding="utf-8",
-    )
-    (tmp_path / "app.css").write_text(
-        "@font-face{src:url(./fonts/x.woff2)} .a{background:url('./img/y.png')}",
-        encoding="utf-8",
-    )
-    assert app.find_external_refs(tmp_path) == []
+def test_ui_is_offline() -> None:
+    text = UI_INDEX.read_text(encoding="utf-8")
+    assert not _EXT_HTML.search(text), "UI references an external HTML asset"
+    assert not _EXT_CSS.search(text), "UI references an external CSS asset"
 
 
-def test_find_external_refs_flags_cdn_import(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text("<div></div>", encoding="utf-8")
-    (tmp_path / "app.css").write_text(
-        "@import url('https://fonts.googleapis.com/css?family=X');",
-        encoding="utf-8",
-    )
-    refs = app.find_external_refs(tmp_path)
-    assert len(refs) == 1 and refs[0][0] == "app.css"
+def test_ui_fonts_present() -> None:
+    fonts = REPO_ROOT / "ui" / "fonts"
+    assert fonts.is_dir()
+    assert any(fonts.glob("*.woff2")), "bundled fonts missing"
 
 
-def test_find_external_refs_flags_html_and_protocol_relative(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text(
-        '<script src="https://cdn.example.com/x.js"></script>'
-        '<link href="//cdn.example.com/x.css">',
-        encoding="utf-8",
-    )
-    refs = app.find_external_refs(tmp_path)
-    assert len(refs) == 2
-    assert all(where == "index.html" for where, _ in refs)
-
-
-def test_main_check_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    (tmp_path / "index.html").write_text(
-        '<script src="./assets/app.js"></script>', encoding="utf-8"
-    )
-    monkeypatch.setenv("PROCESS_SIM_DIST", str(tmp_path))
-    assert app.main(["--check"]) == 0
-    assert "loads no external assets" in capsys.readouterr().out
-
-
-def test_main_check_dirty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    (tmp_path / "index.html").write_text("<div></div>", encoding="utf-8")
-    (tmp_path / "x.css").write_text("@import url(https://cdn.example.com/a.css);", encoding="utf-8")
-    monkeypatch.setenv("PROCESS_SIM_DIST", str(tmp_path))
-    assert app.main(["--check"]) == 1
-    assert "not offline" in capsys.readouterr().out
-
-
-def test_main_check_missing_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROCESS_SIM_DIST", str(tmp_path / "nope"))
-    assert app.main(["--check"]) == 2
+def test_ui_has_export_token_once() -> None:
+    # export_standalone bakes the World at this token; it must appear exactly once.
+    text = UI_INDEX.read_text(encoding="utf-8")
+    assert text.count("<!--WORLD_DATA_INJECTION_POINT-->") == 1
 
 
 # --------------------------------------------------------------------------- #
-# The real built bundle, when present, must be offline (the P10 guarantee).
+# Server method surface — only genuine public Api methods are callable.
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.skipif(
-    not (BUILT_DIST / "index.html").is_file(),
-    reason="frontend not built (run `npm run build` in frontend/)",
-)
-def test_built_bundle_is_offline() -> None:
-    assert app.find_external_refs(BUILT_DIST) == []
+def test_server_exposes_api_methods() -> None:
+    expected = {
+        "get_world", "set_world", "apply_edit", "recompute",
+        "load_project", "save_project", "import_mi_dir",
+        "export_library", "import_library",
+    }
+    assert expected <= server.API_METHODS
+    assert not any(m.startswith("_") for m in server.API_METHODS)

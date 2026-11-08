@@ -17,17 +17,35 @@ like any other.
 
 ## Stack
 
-- Python 3.11+ backend — the rate-balance engine and data model
-- pywebview shell hosting a web UI (Vite + React + TypeScript, React Flow canvas)
+- Python 3.11+ backend — the rate-balance engine, data model, and file IO
+  (`process_sim/`), with no UI dependency.
+- A single hand-written `ui/index.html` — vanilla JS, a hand-rolled canvas, the
+  inspectors, and the balance overlay. **No build step, no npm, no framework.**
 
-Offline and file-based: a project saves to a single local JSON file, and the app
+The backend (`backend.Api`) is bound two ways: `python app.py` opens a native
+pywebview window; `python server.py` serves the same UI and API over HTTP so any
+browser on the network can reach it. Offline and file-based — a project saves to a
+single local JSON file, the working world auto-saves between launches, and the app
 makes no network calls at runtime.
+
+## Run
+
+```bash
+pip install pywebview        # only needed for the desktop app
+python app.py                # native window
+# or, reachable from any browser/device:
+python server.py             # http://localhost:8000
+```
+
+Editing the UI is just editing `ui/index.html` and refreshing — there is nothing
+to build or reinstall.
 
 ## Status
 
-Early. The repo currently holds the project reference (`CLAUDE.md`), the visual
-style guide (`STYLE_GUIDE.md`), and this README; the application itself isn't
-scaffolded yet.
+Working. The headless engine/model/IO are complete and pytest-covered, and the UI
+has full feature parity (canvas, inspectors, balance overlay, systems, undo,
+Modern Industrialization import, project save/load). See `CLAUDE.md` for the model
+and `STYLE_GUIDE.md` for the visual system.
 
 ## License
 
