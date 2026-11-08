@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 from ..model import (
     Category,
+    EnergySource,
     Pipe,
     PipeEnd,
     PipeEndRole,
@@ -397,6 +398,38 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
             storage_ids.add(nid)
         computations[nid] = compute_node(node, machine_def, recipe, items=index.items)
 
+    # A **generation source** is the supply edge of the system: an energy
+    # converter (a boiler/turbine/generator making a carrier from its source) or
+    # an input-less producer (a water pump, quarry, or drill yielding a resource
+    # from power alone, with no material feedstock). Identified here; whether a
+    # given source's output is treated as a product is decided below, once the
+    # flow graph is known — only sources on a feedback *cycle* are exempted from
+    # demand-backpressure (a lone generator in a linear chain still throttles to
+    # what its consumer draws, so it burns no more fuel than needed).
+    def _is_source(nid: str) -> bool:
+        node = index.nodes[nid]
+        mdef = index.defs.get(node.machine_def_id)
+        if mdef is None:
+            return False
+        if (
+            mdef.energy_source in (EnergySource.FUEL, EnergySource.LIQUID)
+            and mdef.max_fluid_rate is not None
+            and mdef.output_item_id is not None
+        ):
+            return True
+        recipe = index.recipes.get(node.recipe_id) if node.recipe_id else None
+        if recipe is not None and recipe.outputs:
+            has_material_input = any(
+                s.resource_id is not None
+                and (s.probability is None or s.probability != 0.0)
+                and _category_of(index, s.resource_id) is not Category.ENERGY
+                for s in recipe.inputs
+            )
+            if not has_material_input:
+                return True
+        return False
+
+    source_nodes = {nid for nid in ids if _is_source(nid)}
     assume_in = {nid: index.nodes[nid].assume_inputs for nid in ids}
     assume_out = {nid: index.nodes[nid].assume_outputs for nid in ids}
 
@@ -453,6 +486,35 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         # pipes of its own), so the first pipe's category keys the whole edge.
         cat = index.pipe_category.get(e.pipe_ids[0])
         item_edges_by_cat.setdefault(cat, []).append(e)
+
+    # A generation source on a feedback cycle — its output can return to its own
+    # input through the pipe graph (a boiler whose steam powers a pump that pumps
+    # the boiler's water) — would collapse to zero duty under mutual
+    # demand-backpressure. Exempt it: its output is treated as a product so it
+    # runs at the rate its inputs permit, surplus leaving as yield. A source in a
+    # plain linear chain is not on a cycle and still throttles to downstream
+    # demand (so it over-produces/over-burns nothing).
+    if source_nodes:
+        adjacency: dict[str, set[str]] = {}
+        for e in edges:
+            adjacency.setdefault(e.source, set()).add(e.sink)
+
+        def _reaches_self(start: str) -> bool:
+            seen: set[str] = set()
+            stack = list(adjacency.get(start, ()))
+            while stack:
+                n = stack.pop()
+                if n == start:
+                    return True
+                if n in seen:
+                    continue
+                seen.add(n)
+                stack.extend(adjacency.get(n, ()))
+            return False
+
+        for nid in source_nodes:
+            if _reaches_self(nid):
+                assume_out[nid] = True
 
     def _route(
         duty: dict[str, float],

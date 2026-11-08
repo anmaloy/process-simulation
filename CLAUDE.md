@@ -411,6 +411,21 @@ those two limits, solved by relaxation in `compute_scope` (reported as
   `assumeOutputs` (manual extraction). Storage (buffer) nodes are transparent, so
   an item only a buffer holds is still a product.
 
+**Generation sources on a feedback cycle.** A **generation source** — an energy
+converter (boiler / turbine / generator making a carrier) or an input-less
+producer (a water pump, quarry, or drill yielding a resource from power alone,
+with no material feedstock) — is the supply edge of the system. When such a
+source sits on a *flow cycle* (its own output can return to its input through the
+pipe graph — a boiler whose steam powers a pump that pumps the boiler's water),
+plain mutual demand-backpressure would throttle every node on the loop to zero
+("they should be pumping and consuming, they are doing neither"). The engine
+detects these cycles and treats a source on one as if `assumeOutputs` were set:
+it runs at the rate its *inputs* permit and the surplus leaves as yield, so a
+boiler fed water and fuel makes steam at its rated rate and a powered pump makes
+water at its rated rate. A source in a plain *linear* chain is **not** on a cycle
+and still demand-throttles normally (burning no more fuel than its consumers
+draw).
+
 A node held below the duty that demand alone would allow (computed by a second,
 inputs-unconstrained relaxation) is the input-limited case. The scope reports:
 `netEnergy` (sum of duty-scaled energy terms); **external inputs** = the

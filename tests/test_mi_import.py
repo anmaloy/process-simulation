@@ -522,3 +522,91 @@ def test_api_import_mi_dir_bad_path_is_error_envelope(tmp_path):
     res = api.import_mi_dir(str(tmp_path / "nope"))
     assert res["ok"] is False
     assert "type" in res["error"] and "message" in res["error"]
+
+
+# --------------------------------------------------------------------------- #
+# Solid-fuel stored energy (furnace_fuels data map) and vanilla c: tags the jar
+# references but NeoForge — not the mod — ships.
+# --------------------------------------------------------------------------- #
+
+
+def test_solid_fuel_eu_from_furnace_fuels(tmp_path):
+    """A solid fuel's furnace ``burn_time`` becomes its stored ``eu``.
+
+    Both a concrete key and a ``#tag`` key resolve: the tag carries its burn-time
+    to each member once membership is resolved. A non-fuel item stays ``eu``-less.
+    """
+
+    recipe = tmp_path / "data" / NS / "recipe"
+    _write(
+        recipe / "compressor" / "coal.json",
+        {
+            "type": f"{NS}:compressor",
+            "duration": 200,
+            "eu": 2,
+            # Referencing the tag registers it, so its burn-time can propagate.
+            "item_inputs": [{"tag": "c:dusts/coal"}],
+            "item_outputs": [{"item": f"{NS}:coke"}, {"item": f"{NS}:coke_block"}],
+        },
+    )
+    _write(
+        tmp_path / "data" / "neoforge" / "data_maps" / "item" / "furnace_fuels.json",
+        {
+            "values": {
+                "#c:dusts/coal": {"burn_time": 1600},
+                f"{NS}:coke": {"burn_time": 6400},
+            }
+        },
+    )
+    _write(
+        tmp_path / "data" / "c" / "tags" / "item" / "dusts" / "coal.json",
+        {"values": [f"{NS}:coal_dust"]},
+    )
+    lib = import_mi_library(tmp_path).library
+    assert _item(lib, f"{NS}:coke").eu == 6400  # concrete furnace-fuel key
+    assert _item(lib, f"{NS}:coal_dust").eu == 1600  # via the #c:dusts/coal tag
+    assert _item(lib, f"{NS}:coke_block").eu is None  # not a listed fuel
+
+
+def test_vanilla_ore_tag_resolved_from_convention(tmp_path):
+    """A ``c:ores/<vanilla>`` tag the jar never ships still gets its members.
+
+    MI relies on NeoForge/vanilla to populate ``c:ores/iron`` & co.; that data
+    isn't in the mod jar, so the importer fills the canonical vanilla member ids
+    by convention (and registers them, so the ore is selectable / findable and a
+    producer of it can satisfy the recipe). A modded material stays unresolved.
+    """
+
+    recipe = tmp_path / "data" / NS / "recipe"
+    _write(
+        recipe / "macerator" / "iron_and_osmium.json",
+        {
+            "type": f"{NS}:macerator",
+            "duration": 200,
+            "eu": 2,
+            "item_inputs": [{"tag": "c:ores/iron"}],
+            "item_outputs": [{"item": f"{NS}:iron_dust"}],
+        },
+    )
+    _write(
+        recipe / "macerator" / "osmium.json",
+        {
+            "type": f"{NS}:macerator",
+            "duration": 200,
+            "eu": 2,
+            "item_inputs": [{"tag": "c:ores/osmium"}],
+            "item_outputs": [{"item": f"{NS}:osmium_dust"}],
+        },
+    )
+    # No c/tags/item/ores/*.json shipped — exactly as in the real MI jar.
+    lib = import_mi_library(tmp_path).library
+    iron_tag = _item(lib, "c:ores/iron")
+    assert iron_tag.is_tag
+    assert set(iron_tag.members or []) == {
+        "minecraft:iron_ore",
+        "minecraft:deepslate_iron_ore",
+    }
+    # The vanilla member items are registered (solid), so they show in the finder.
+    assert _item(lib, "minecraft:iron_ore").category is Category.SOLID
+    # A modded material has no vanilla convention → left unresolved, no phantoms.
+    assert (_item(lib, "c:ores/osmium").members or []) == []

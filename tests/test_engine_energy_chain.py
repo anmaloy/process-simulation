@@ -147,3 +147,70 @@ def test_underpowered_chain_starves_consumer() -> None:
     # The generators run flat out to supply what they can.
     assert _close(report.node_duty["t"], 1.0)
     assert _close(report.node_duty["b"], 1.0)
+
+
+def _loop_defs() -> list[MachineDef]:
+    """A boiler (fuel→steam, consuming water) and a steam-powered water pump."""
+
+    boiler = MachineDef(
+        id="boiler",
+        name="Boiler",
+        energy_source=EnergySource.FUEL,
+        source_item_id=COAL,
+        output_item_id=STEAM,
+        input_item_id=WATER,
+        material_ratio=16,
+        max_fluid_rate=200,
+    )
+    # Pump: steam-powered consumer running an input-less "pump water" recipe.
+    pump = MachineDef(
+        id="pump",
+        name="Water Pump",
+        energy_source=EnergySource.LIQUID,
+        source_item_id=STEAM,
+        slots=[],
+    )
+    return [boiler, pump]
+
+
+def test_generator_pump_feedback_loop_runs_at_capacity() -> None:
+    """A boiler↔pump feedback loop must not mutually throttle itself to zero.
+
+    The boiler's steam powers the pump; the pump's water feeds the boiler — a
+    cycle. Under plain demand-backpressure each throttles the other to 0 (both
+    "stalled"). As generation sources on a cycle, their output is a product, so
+    each runs at the rate its own inputs allow and the surplus leaves as yield.
+    """
+
+    pump_water = Recipe(
+        id="r.pump",
+        time_seconds=1.0,
+        outputs=[Stack(item_id=WATER, quantity=200.0)],
+        eu_per_tick=1.0,  # draws 20 steam/s
+    )
+    world = World(
+        name="loop",
+        items=_items(),
+        recipes=[pump_water],
+        machine_defs=_loop_defs(),
+        nodes=[
+            # Boiler is hand-fed coal (its fuel); water comes from the pump.
+            MachineNode(id="b", machine_def_id="boiler", assume_inputs=True),
+            MachineNode(id="p", machine_def_id="pump", recipe_id="r.pump"),
+        ],
+        pipes=[
+            _pipe("p.water", Category.LIQUID, "p", "liquid-out", "b", "liquid-in"),
+            _pipe("p.steam", Category.LIQUID, "b", "liquid-out", "p", "liquid-in"),
+        ],
+    )
+    report = compute_world(world)
+
+    # Both run at full capacity rather than collapsing to zero.
+    assert _close(report.node_duty["b"], 1.0)
+    assert _close(report.node_duty["p"], 1.0)
+    assert report.balances["b"].status is Status.OK
+    assert report.balances["p"].status is Status.OK
+    assert report.bottlenecks == []
+    # Surplus steam and water leave as yield (carriers aside: water is a liquid
+    # product, steam the energy carrier is reported but not fed back as a deficit).
+    assert report.external_outputs[WATER] > 0.0
