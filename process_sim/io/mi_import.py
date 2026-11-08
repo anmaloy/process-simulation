@@ -610,6 +610,107 @@ def _load_fluid_fuels(root: Path) -> dict[str, float]:
     return {}
 
 
+def _load_item_fuels(root: Path) -> tuple[dict[str, float], dict[str, float]]:
+    """Solid-fuel stored energy, from NeoForge's ``furnace_fuels`` data map.
+
+    A solid fuel's ``burn_time`` (furnace ticks) is its stored energy in EU — the
+    same scalar MI boilers burn it by (coal's 1600 burn ticks = 1600 EU), so it
+    maps straight onto :attr:`Item.eu`, mirroring how a fluid's ``eu_per_mb``
+    does. A key may name a concrete item or a ``#tag`` (``#c:dusts/coal``), so two
+    maps are returned: ``{item_id: eu}`` applied as items are registered, and
+    ``{tag_id: eu}`` propagated to the tag's members once membership is resolved.
+    """
+
+    items: dict[str, float] = {}
+    tags: dict[str, float] = {}
+    for c in [
+        root / "data" / "neoforge" / "data_maps" / "item" / "furnace_fuels.json",
+        root / "neoforge" / "data_maps" / "item" / "furnace_fuels.json",
+    ]:
+        if c.is_file():
+            data = _load_json(c)
+            values = data.get("values") if isinstance(data, dict) else None
+            if isinstance(values, dict):
+                for key, spec in values.items():
+                    if not isinstance(spec, dict) or "burn_time" not in spec:
+                        continue
+                    eu = float(spec["burn_time"])
+                    if key.startswith("#"):
+                        tags[_resolve_id(key[1:], "c")] = eu
+                    else:
+                        items[_resolve_id(key, "minecraft")] = eu
+            break
+    return items, tags
+
+
+#: Vanilla ``c:`` material tags the MI jar references but doesn't ship — their
+#: membership lives in NeoForge/vanilla data, absent from the mod jar, so a
+#: ``c:ores/iron`` tag imports with no members and a producer of
+#: ``minecraft:iron_ore`` can't satisfy a recipe keyed on it (and the item never
+#: shows in the recipe finder). The canonical vanilla member ids are filled in
+#: here by material × form. Only forms that exist in vanilla are listed, so no
+#: phantom items are created; a modded material (osmium, zinc) stays unresolved.
+_VANILLA_MATERIALS: dict[str, dict[str, list[str]]] = {
+    "coal": {
+        "ores": ["minecraft:coal_ore", "minecraft:deepslate_coal_ore"],
+        "storage_blocks": ["minecraft:coal_block"],
+    },
+    "iron": {
+        "ores": ["minecraft:iron_ore", "minecraft:deepslate_iron_ore"],
+        "raw_materials": ["minecraft:raw_iron"],
+        "ingots": ["minecraft:iron_ingot"],
+        "nuggets": ["minecraft:iron_nugget"],
+        "storage_blocks": ["minecraft:iron_block", "minecraft:raw_iron_block"],
+    },
+    "gold": {
+        "ores": [
+            "minecraft:gold_ore",
+            "minecraft:deepslate_gold_ore",
+            "minecraft:nether_gold_ore",
+        ],
+        "raw_materials": ["minecraft:raw_gold"],
+        "ingots": ["minecraft:gold_ingot"],
+        "nuggets": ["minecraft:gold_nugget"],
+        "storage_blocks": ["minecraft:gold_block", "minecraft:raw_gold_block"],
+    },
+    "copper": {
+        "ores": ["minecraft:copper_ore", "minecraft:deepslate_copper_ore"],
+        "raw_materials": ["minecraft:raw_copper"],
+        "ingots": ["minecraft:copper_ingot"],
+        "storage_blocks": ["minecraft:copper_block", "minecraft:raw_copper_block"],
+    },
+    "redstone": {
+        "ores": ["minecraft:redstone_ore", "minecraft:deepslate_redstone_ore"],
+        "dusts": ["minecraft:redstone"],
+        "storage_blocks": ["minecraft:redstone_block"],
+    },
+    "lapis": {
+        "ores": ["minecraft:lapis_ore", "minecraft:deepslate_lapis_ore"],
+        "gems": ["minecraft:lapis_lazuli"],
+        "storage_blocks": ["minecraft:lapis_block"],
+    },
+    "diamond": {
+        "ores": ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"],
+        "gems": ["minecraft:diamond"],
+        "storage_blocks": ["minecraft:diamond_block"],
+    },
+    "emerald": {
+        "ores": ["minecraft:emerald_ore", "minecraft:deepslate_emerald_ore"],
+        "gems": ["minecraft:emerald"],
+        "storage_blocks": ["minecraft:emerald_block"],
+    },
+    "quartz": {
+        "ores": ["minecraft:nether_quartz_ore"],
+        "gems": ["minecraft:quartz"],
+        "storage_blocks": ["minecraft:quartz_block"],
+    },
+    "netherite": {
+        "ingots": ["minecraft:netherite_ingot"],
+        "storage_blocks": ["minecraft:netherite_block"],
+    },
+}
+
+
 # --------------------------------------------------------------------------- #
 # Id / name helpers.
 # --------------------------------------------------------------------------- #
@@ -683,9 +784,15 @@ def _normalize_count(entry: dict[str, Any]) -> dict[str, Any]:
 class _ItemRegistry:
     """Accumulates the unique items/fluids/tags referenced, as model Items."""
 
-    def __init__(self, lang: dict[str, str], fluid_fuels: dict[str, float]) -> None:
+    def __init__(
+        self,
+        lang: dict[str, str],
+        fluid_fuels: dict[str, float],
+        item_fuels: dict[str, float] | None = None,
+    ) -> None:
         self._lang = lang
         self._fuels = fluid_fuels
+        self._item_fuels = item_fuels or {}
         self.items: dict[str, Item] = {}
 
     def ref(self, entry: dict[str, Any], category: Category) -> str | None:
@@ -713,7 +820,7 @@ class _ItemRegistry:
                 eu = self._fuels.get(full)
             else:
                 name = _item_name(full, self._lang)
-                eu = None
+                eu = self._item_fuels.get(full)
             self.items[full] = Item(id=full, name=name, category=category, eu=eu)
         return full
 
@@ -759,9 +866,10 @@ def import_mi_library(
     recipe_dir = _resolve_recipe_dir(root)
     lang = _load_lang(root)
     fuels = _load_fluid_fuels(root)
+    item_fuels, tag_fuels = _load_item_fuels(root)
     wanted = {f"{_MI_NS}:{t}" for t in machine_types}
 
-    registry = _ItemRegistry(lang, fuels)
+    registry = _ItemRegistry(lang, fuels, item_fuels)
     recipes: list[Recipe] = []
     # Per type: collected recipe ids + max I/O counts (for the slot layout).
     by_type: dict[str, dict[str, Any]] = {
@@ -886,6 +994,12 @@ def import_mi_library(
     # recipe keyed on c:ores/iron). Also register any member item not already
     # imported, so it is a named, selectable resource.
     member_items_added = _resolve_tag_membership(root, registry, lang)
+    # Fill vanilla c: material tags (ores/ingots/raw/…) the jar references but
+    # NeoForge — not the mod — defines, so iron ore & co. resolve and are findable.
+    member_items_added += _resolve_vanilla_tags(registry, lang)
+    # A solid fuel named by a #tag (e.g. #c:dusts/coal) carries its burn-time EU to
+    # every member, now that membership is resolved.
+    _apply_tag_fuels(registry, tag_fuels)
 
     library = Library(
         name=name or "Modern Industrialization",
@@ -966,6 +1080,50 @@ def _resolve_tag_membership(
             registry.items[mid] = Item(id=mid, name=name, category=tag.category)
             added += 1
     return added
+
+
+def _resolve_vanilla_tags(registry: _ItemRegistry, lang: dict[str, str]) -> int:
+    """Fill the vanilla ``c:`` material tags the jar leaves without members.
+
+    MI references ``c:ores/iron`` and the like but relies on NeoForge/vanilla to
+    populate them, so they import empty (:data:`_VANILLA_MATERIALS` holds the
+    canonical vanilla member ids). For each still-empty tag whose
+    ``c:<group>/<material>`` matches the table, set its members and register any
+    missing member item. Returns the count of member items newly created.
+    """
+
+    added = 0
+    for tag in [i for i in registry.items.values() if i.is_tag and not i.members]:
+        ns, _, path = tag.id.partition(":")
+        if ns != "c" or "/" not in path:
+            continue
+        group, _, material = path.partition("/")
+        members = _VANILLA_MATERIALS.get(material, {}).get(group)
+        if not members:
+            continue
+        tag.members = list(members)
+        for mid in members:
+            if mid not in registry.items:
+                registry.items[mid] = Item(
+                    id=mid,
+                    name=_item_name(mid, lang),
+                    category=tag.category,
+                )
+                added += 1
+    return added
+
+
+def _apply_tag_fuels(registry: _ItemRegistry, tag_fuels: dict[str, float]) -> None:
+    """Propagate a tag-keyed solid fuel's stored EU to each resolved member."""
+
+    for tag_id, eu in tag_fuels.items():
+        tag = registry.items.get(tag_id)
+        if tag is None or not tag.members:
+            continue
+        for mid in tag.members:
+            member = registry.items.get(mid)
+            if member is not None and member.eu is None:
+                member.eu = eu
 
 
 def _recipe_name(

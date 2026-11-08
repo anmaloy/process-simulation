@@ -10,6 +10,7 @@ or vice versa.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -60,10 +61,30 @@ def read_json(path: str | Path) -> Any:
 
 
 def write_json(path: str | Path, data: Any) -> None:
-    """Write ``data`` as pretty-printed JSON with a trailing newline."""
+    """Write ``data`` as pretty-printed JSON with a trailing newline, atomically.
+
+    The payload is written to a sibling temp file and then ``os.replace``'d into
+    place, so a crash or a window closed mid-write can never leave a truncated,
+    unparseable file behind (which, as an autosave, would otherwise be silently
+    discarded on the next launch — losing the whole world). The replace is atomic
+    on the same filesystem; readers see either the old file or the complete new
+    one, never a partial write.
+    """
 
     path = Path(path)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    text = json.dumps(data, indent=2) + "\n"
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def validate_envelope(data: Any, expected_kind: str) -> dict[str, Any]:

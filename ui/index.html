@@ -639,8 +639,9 @@ function renderGraph(){
     wireCanvas(canvas);
   }
   const vp=$("#viewport");
-  // clear old nodes (keep the edges svgs)
-  [...vp.querySelectorAll(".node,.sys")].forEach(n=>n.remove());
+  // clear old nodes, systems, and junctions (keep the edges svgs) — a stale
+  // junction left behind would ghost at its former spot after a move.
+  [...vp.querySelectorAll(".node,.sys,.junction")].forEach(n=>n.remove());
   const edges=$("#edges"); edges.textContent="";
   let edgesHit=$("#edges-hit");
   if(!edgesHit){ edgesHit=svg("svg",{id:"edges-hit"}); vp.append(edgesHit); }
@@ -734,8 +735,11 @@ function renderGraph(){
   // temp connect line placeholder
   $("#edges").append(svg("path",{id:"tempEdge",fill:"none","stroke-dasharray":"5 4","stroke-width":2,stroke:"var(--spine)",style:"display:none"}));
 
-  // keep the transparent hit layer above the nodes
-  vp.append(edgesHit);
+  // Keep the transparent pipe hit-layer BELOW the nodes (it was appended before
+  // them): a click on a node body selects the node, not a pipe routed behind it.
+  // Pipe strokes in open space stay clickable; only the stretch hidden under a
+  // card yields to the card, which is what the eye expects.
+  vp.insertBefore(edgesHit, vp.querySelector(".node,.sys,.junction"));
   applyView();
 }
 function edgePath(a,b){
@@ -1561,11 +1565,22 @@ function nodeInspector(body, n){
   body.append(field("id", el("span",{class:"static-val mono"},n.id)));
   body.append(field("machine def", el("span",{class:"static-val mono"}, (def&&def.name)||n.machineDefId)));
 
-  // recipe finder
-  const pool = (def&&def.allowedRecipeIds&&def.allowedRecipeIds.length)
-    ? (WORLD.recipes||[]).filter(r=>def.allowedRecipeIds.includes(r.id))
-    : (WORLD.recipes||[]);
-  body.append(recipeFinder(n, pool));
+  // Recipe finder — only for machines that actually run a recipe. A converter
+  // (boiler / turbine / generator) and a storage buffer bind no recipe; they'd
+  // otherwise fall back to *every* recipe in the world (all machine types), which
+  // is both wrong and noise. The finder's pool is the machine's own recipes
+  // (its allowedRecipeIds), so a macerator never lists a mixer's recipes.
+  const isConverter = def && (def.outputItemId!=null || def.maxFluidRate!=null);
+  const isStorage = def && def.storage!=null;
+  if(isConverter || isStorage){
+    body.append(field("recipe", el("span",{class:"static-val dim mono"},
+      isStorage? "storage buffer — runs no recipe" : "converter — generates its output automatically, no recipe")));
+  } else {
+    const pool = (def&&def.allowedRecipeIds&&def.allowedRecipeIds.length)
+      ? (WORLD.recipes||[]).filter(r=>def.allowedRecipeIds.includes(r.id))
+      : (WORLD.recipes||[]);
+    body.append(recipeFinder(n, pool));
+  }
 
   body.append(optionalNumber("overclock", n.overclock, {
     onSet:v=>saveEntity("node",withField(n,"overclock",v)),

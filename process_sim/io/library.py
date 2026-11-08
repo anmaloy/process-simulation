@@ -220,6 +220,7 @@ def import_library(
         machine_defs=[*world.machine_defs, *new_defs],
         nodes=list(world.nodes),
         pipes=list(world.pipes),
+        pipe_nodes=list(world.pipe_nodes),
         systems=list(world.systems),
     )
     return ImportResult(

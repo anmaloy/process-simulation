@@ -36,6 +36,7 @@ from process_sim.model import (
     Item,
     MachineDef,
     MachineNode,
+    PipeNode,
     Recipe,
     SlotGroup,
     Stack,
@@ -170,6 +171,19 @@ def test_import_does_not_mutate_target(powered_process):
     before = len(target.items)
     import_library(target, export_library(powered_process))
     assert len(target.items) == before
+
+
+def test_import_preserves_target_pipe_nodes(powered_process):
+    """Merging a library must carry over the target World's pipe junctions.
+
+    (A regression: the merge rebuilt the World and silently dropped
+    ``pipe_nodes``, so importing a library wiped every placed junction.)
+    """
+
+    target = _tiny_world()
+    target.pipe_nodes = [PipeNode(id="jx", category=Category.LIQUID, x=1, y=2)]
+    merged = import_library(target, export_library(powered_process)).world
+    assert [j.id for j in merged.pipe_nodes] == ["jx"]
 
 
 # --------------------------------------------------------------------------- #
