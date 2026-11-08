@@ -74,7 +74,7 @@ __all__ = [
     "STEAM_MACHINE_TIERS",
     "STEAM_TIER_MAX_EU",
     "MachineVariant",
-    "MULTIBLOCK_VARIANTS",
+    "MACHINE_VARIANTS",
     "PUMP_MACHINES",
     "PumpMachine",
     "STORAGE_MACHINES",
@@ -429,17 +429,24 @@ STEAM_MACHINE_TIERS: dict[str, tuple[str, ...]] = {
 
 
 # --------------------------------------------------------------------------- #
-# Multiblock machines that come in distinct **blocks** sharing one recipe type.
+# Machines that come in distinct **blocks** sharing one recipe type.
 #
-# MI's Steam Quarry and Electric Quarry both run ``quarry`` recipes; the Steam
-# Blast Furnace and Electric Blast Furnace both run ``blast_furnace`` recipes. The
-# recipe JSON can't tell these apart (the block is Java, not data), so a purely
-# data-driven import makes a single def per type and silently drops the variant.
-# This table restores the named blocks: a type listed here yields its variant
-# defs instead of one generic def, each powered by its own carrier (steam vs
-# routed electricity). Multiblocks have no fixed EU tier — they scale with their
-# energy hatches — so no ``max_eu_per_tick`` ceiling is set.
+# MI's Steam/Electric Quarry both run ``quarry`` recipes; the Steam/Electric Blast
+# Furnace both run ``blast_furnace`` recipes; the Bronze/Steel/Electric Furnace all
+# run vanilla ``minecraft:smelting`` recipes (mapped to the ``furnace`` type). The
+# recipe JSON can't tell these blocks apart (the block is Java, not data), so a
+# purely data-driven import makes a single def per type and silently drops every
+# other block. This table restores the named blocks: a type listed here yields its
+# variant defs instead of one generic def, each powered by its own carrier (steam
+# vs routed electricity) and clamped to its own tier. Multiblocks (quarry / blast
+# furnace) have no fixed EU tier — they scale with their energy hatches — so their
+# ceiling is left unset; the single-block furnaces carry the bronze/steel/LV cap.
 # --------------------------------------------------------------------------- #
+
+#: Per-tick draw (as ``base_energy_consumption`` EU/s) for a furnace running a
+#: vanilla smelting recipe — those recipes carry no ``eu``, so the block supplies
+#: the base draw. 2 EU/t is MI's single-block base; the tier cap governs overclock.
+_FURNACE_BASE_EU = 2 * _TICKS_PER_SEC
 
 
 @dataclass(frozen=True)
@@ -447,16 +454,22 @@ class MachineVariant:
     """A named machine block that runs a shared recipe type on its own carrier.
 
     ``key`` is the jar block id (its def id and lang name); ``energy_source`` /
-    ``source_item_id`` is how that block is powered.
+    ``source_item_id`` is how that block is powered. ``voltage_tier`` /
+    ``max_eu_per_tick`` clamp overclock (absent on a hatch-scaled multiblock);
+    ``base_energy_consumption`` (EU/s) is the draw for a recipe that carries no
+    ``eu`` of its own (a vanilla smelting recipe), absent otherwise.
     """
 
     key: str
     name: str
     energy_source: EnergySource
     source_item_id: str
+    voltage_tier: str | None = None
+    max_eu_per_tick: float | None = None
+    base_energy_consumption: float | None = None
 
 
-MULTIBLOCK_VARIANTS: dict[str, tuple[MachineVariant, ...]] = {
+MACHINE_VARIANTS: dict[str, tuple[MachineVariant, ...]] = {
     "blast_furnace": (
         MachineVariant(
             "steam_blast_furnace", "Steam Blast Furnace", EnergySource.LIQUID, STEAM_ID
@@ -474,7 +487,44 @@ MULTIBLOCK_VARIANTS: dict[str, tuple[MachineVariant, ...]] = {
             "electric_quarry", "Electric Quarry", EnergySource.ELECTRIC, ELECTRICITY_ID
         ),
     ),
+    # The smelting furnaces: bronze/steel on steam, electric on electricity, each
+    # clamped to its tier and drawing the base smelt rate (smelting recipes carry
+    # no eu). Vanilla ``minecraft:smelting`` is mapped to the ``furnace`` type.
+    "furnace": (
+        MachineVariant(
+            "bronze_furnace",
+            "Bronze Furnace",
+            EnergySource.LIQUID,
+            STEAM_ID,
+            "Bronze",
+            STEAM_TIER_MAX_EU["bronze"],
+            _FURNACE_BASE_EU,
+        ),
+        MachineVariant(
+            "steel_furnace",
+            "Steel Furnace",
+            EnergySource.LIQUID,
+            STEAM_ID,
+            "Steel",
+            STEAM_TIER_MAX_EU["steel"],
+            _FURNACE_BASE_EU,
+        ),
+        MachineVariant(
+            "electric_furnace",
+            "Electric Furnace",
+            EnergySource.ELECTRIC,
+            ELECTRICITY_ID,
+            "LV",
+            CABLE_TIER_EU["LV"],
+            _FURNACE_BASE_EU,
+        ),
+    ),
 }
+
+#: Vanilla recipe types that a mod's machines run, mapped to the machine type they
+#: belong to. Discovery normally skips the whole ``minecraft`` namespace; an entry
+#: here is the exception — ``minecraft:smelting`` recipes are the furnaces' recipes.
+_VANILLA_MACHINE_TYPES: dict[str, str] = {"minecraft:smelting": "furnace"}
 
 
 # --------------------------------------------------------------------------- #
@@ -874,6 +924,13 @@ def _machine_type_of(
 
     if not isinstance(rtype, str) or ":" not in rtype:
         return None
+    # A vanilla type a machine runs (smelting → furnace) is mapped, not skipped;
+    # its namespace stays so naming resolves the real block ids.
+    mapped = _VANILLA_MACHINE_TYPES.get(rtype)
+    if mapped is not None:
+        if wanted is not None and mapped not in wanted:
+            return None
+        return (rtype.partition(":")[0], mapped)
     ns, _, name = rtype.partition(":")
     if ns == "minecraft" or not name:
         return None
@@ -1006,10 +1063,11 @@ def import_mi_library(
         item_out = _entries(data, "item_outputs")
         fluid_in = _entries(data, "fluid_inputs")
         fluid_out = _entries(data, "fluid_outputs")
-        # The forge hammer uses a vanilla-style single ``ingredient`` → ``result``
-        # shape instead of the ``*_inputs``/``*_outputs`` arrays. Normalize it to
-        # the item-entry shape the loops below expect (``count`` → ``amount``,
-        # ``result.id`` → ``item``).
+        # The forge hammer and the vanilla smelting furnaces use a single
+        # ``ingredient`` → ``result`` shape instead of the ``*_inputs``/
+        # ``*_outputs`` arrays. Normalize it to the item-entry shape the loops
+        # below expect (``count`` → ``amount``; a ``result`` that is a dict with
+        # an ``id`` or a bare item-id string → ``item``).
         ingredient = data.get("ingredient")
         if isinstance(ingredient, dict):
             item_in = [*item_in, _normalize_count(ingredient)]
@@ -1019,6 +1077,8 @@ def import_mi_library(
                 *item_out,
                 {"item": result["id"], "amount": result.get("count", 1)},
             ]
+        elif isinstance(result, str):
+            item_out = [*item_out, {"item": result, "amount": 1}]
 
         inputs: list[Stack] = []
         outputs: list[Stack] = []
@@ -1039,7 +1099,11 @@ def import_mi_library(
             if rid is not None:
                 outputs.append(_stack(e, rid, "tag" in e))
 
+        # ``duration`` is MI's per-recipe tick count; a vanilla smelting recipe
+        # uses ``cookingtime`` instead (the furnace runs it at that speed).
         duration = data.get("duration")
+        if duration is None:
+            duration = data.get("cookingtime")
         eu = data.get("eu")
         time_seconds = float(duration) / 20.0 if duration else 0.0
 
@@ -1073,7 +1137,7 @@ def import_mi_library(
     for t, agg in by_type.items():
         if not agg["recipe_ids"]:
             continue
-        variants = MULTIBLOCK_VARIANTS.get(t)
+        variants = MACHINE_VARIANTS.get(t)
         if variants:
             for v in variants:
                 machine_defs.append(_variant_machine_def(t, v, agg, lang))
@@ -1331,13 +1395,17 @@ def _variant_machine_def(
     if not is_steam:
         add(Category.ENERGY, Direction.IN, 1, _ENERGY_STACK)  # routed electricity
 
+    name = _machine_name(variant.key, lang, agg.get("ns", _MI_NS)) or variant.name
     return MachineDef(
         id=f"mi.machine.{variant.key}",
-        name=_machine_name(variant.key, lang, agg.get("ns", _MI_NS)) or variant.name,
+        name=name,
         energy_source=variant.energy_source,
         source_item_id=variant.source_item_id,
+        base_energy_consumption=variant.base_energy_consumption,
         allowed_recipe_ids=list(agg["recipe_ids"]),
         slots=slots,
+        voltage_tier=variant.voltage_tier,
+        max_eu_per_tick=variant.max_eu_per_tick,
     )
 
 
