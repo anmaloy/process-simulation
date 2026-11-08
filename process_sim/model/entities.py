@@ -23,6 +23,7 @@ __all__ = [
     "MachineNode",
     "PipeEnd",
     "Pipe",
+    "PipeNode",
     "SystemPort",
     "System",
     "World",
@@ -351,6 +352,35 @@ class Pipe(Serializable):
 
 
 @dataclass
+class PipeNode(Serializable):
+    """A pipe junction — a transparent routing dot, not a machine.
+
+    A pipe node has no recipe, def, slots, or energy: it exists only to diverge
+    or merge pipes of one ``category`` so a trunk (steam, electricity, an item
+    belt) can fan out to many consumers without wiring every consumer back to
+    the source by hand. In the balance it is a **transparent passthrough** —
+    spliced out of the flow graph exactly like a storage buffer (a chain
+    ``X → junction → Y`` resolves as a direct ``X → Y`` throttled by the tighter
+    pipe), so it carries no throughput or priority of its own; those stay on the
+    pipes. ``x``/``y`` are canvas coordinates, absent until placed by the UI.
+    """
+
+    id: str
+    category: Category
+    x: float | None = None
+    y: float | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> PipeNode:
+        return cls(
+            id=d["id"],
+            category=Category(d["category"]),
+            x=d.get("x"),
+            y=d.get("y"),
+        )
+
+
+@dataclass
 class SystemPort(Serializable):
     """A port a system exposes for external connection, naming an internal port."""
 
@@ -413,6 +443,7 @@ class World(Serializable):
     machine_defs: list[MachineDef] = field(default_factory=list)
     nodes: list[MachineNode] = field(default_factory=list)
     pipes: list[Pipe] = field(default_factory=list)
+    pipe_nodes: list[PipeNode] = field(default_factory=list)
     systems: list[System] = field(default_factory=list)
 
     @classmethod
@@ -424,5 +455,6 @@ class World(Serializable):
             machine_defs=[MachineDef.from_dict(x) for x in d.get("machineDefs", [])],
             nodes=[MachineNode.from_dict(x) for x in d.get("nodes", [])],
             pipes=[Pipe.from_dict(x) for x in d.get("pipes", [])],
+            pipe_nodes=[PipeNode.from_dict(x) for x in d.get("pipeNodes", [])],
             systems=[System.from_dict(x) for x in d.get("systems", [])],
         )

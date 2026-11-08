@@ -86,7 +86,10 @@ select.field-input{cursor:pointer}
 }
 .canvas{position:absolute;inset:0;overflow:hidden;cursor:grab;touch-action:none}
 .canvas.dragging{cursor:grabbing}
-#viewport{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+/* No persistent will-change: it pins a single cached raster that gets GPU-upscaled
+   after a zoom-in (fit), showing blurry until a later repaint. Rasterizing per
+   on-screen scale keeps cards sharp; the node count is small so paint cost is low. */
+#viewport{position:absolute;left:0;top:0;transform-origin:0 0}
 #edges,#edges-hit{position:absolute;left:0;top:0;overflow:visible;width:1px;height:1px;pointer-events:none}
 /* #edges (visible) sits behind the nodes; #edges-hit is a transparent layer
    above them so a pipe stroke stays clickable even where it passes a node,
@@ -121,6 +124,16 @@ select.field-input{cursor:pointer}
 .sys .nhead{padding:9px 12px;cursor:grab;display:flex;align-items:center;gap:8px}
 .sys .sicon{color:var(--s-expert)}
 .sys .smeta{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);padding:0 12px 10px}
+
+/* pipe junction — a transparent routing dot (drag body to move, pull nub to wire) */
+.junction{position:absolute;width:18px;height:18px;border-radius:50%;background:var(--panel-2);
+  border:2px solid var(--line-2);transform:translate(-50%,-50%);cursor:grab;z-index:3;user-select:none}
+.junction.dragging{cursor:grabbing}
+.junction.selected{border-color:var(--spine);box-shadow:0 0 0 2px var(--spine-glow)}
+.junction .jdot{position:absolute;inset:3px;border-radius:50%}
+.junction .jnub{position:absolute;right:-9px;top:50%;width:9px;height:9px;border-radius:50%;
+  transform:translateY(-50%);border:2px solid var(--bg);cursor:crosshair;z-index:4}
+.junction .jnub:hover{box-shadow:0 0 0 3px var(--spine-glow)}
 .sys .expand{margin-left:auto;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;font-size:10px;padding:2px 6px;color:var(--ink-dim)}
 
 /* floating overlays on the stage */
@@ -307,15 +320,16 @@ let SYSTEM_ID = null;
 let MULTI = new Set();          // canvas multi-selected node ids (for grouping)
 let view = {x:0, y:0, k:1};
 const HISTORY = [];             // undo snapshots (world dicts)
-let BY = {items:{},defs:{},recipes:{},nodes:{},systems:{}};
+let BY = {items:{},defs:{},recipes:{},nodes:{},systems:{},junctions:{}};
 
 function reindex(){
-  const idx = {items:{},defs:{},recipes:{},nodes:{},systems:{}};
+  const idx = {items:{},defs:{},recipes:{},nodes:{},systems:{},junctions:{}};
   (WORLD.items||[]).forEach(i=>idx.items[i.id]=i);
   (WORLD.machineDefs||[]).forEach(d=>idx.defs[d.id]=d);
   (WORLD.recipes||[]).forEach(r=>idx.recipes[r.id]=r);
   (WORLD.nodes||[]).forEach(n=>idx.nodes[n.id]=n);
   (WORLD.systems||[]).forEach(s=>idx.systems[s.id]=s);
+  (WORLD.pipeNodes||[]).forEach(j=>idx.junctions[j.id]=j);
   BY = idx;
 }
 
@@ -363,7 +377,7 @@ function slugify(name){
     .replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").replace(/_+/g,"_");
   return s||"item";
 }
-const KIND_FIELD = { item:"items", recipe:"recipes", machineDef:"machineDefs", node:"nodes", pipe:"pipes", system:"systems" };
+const KIND_FIELD = { item:"items", recipe:"recipes", machineDef:"machineDefs", node:"nodes", pipe:"pipes", pipeNode:"pipeNodes", system:"systems" };
 function idsOfKind(kind){ return new Set((WORLD[KIND_FIELD[kind]]||[]).map(e=>e.id)); }
 function uniqueId(base, taken){ if(!taken.has(base)) return base; for(let i=2;;i++){ const c=`${base}_${i}`; if(!taken.has(c)) return c; } }
 function idFromName(kind, name){ return uniqueId(slugify(name), idsOfKind(kind)); }
@@ -516,6 +530,7 @@ function renderShell(){
 /* ---------- rail ---------- */
 const railOpen = { nodes:true, systems:true, items:false, recipes:false, machineDefs:false };
 let railQuery = "";
+const railSearchCollapsed = new Set(); // sections manually collapsed while a search is active
 const RAIL_CAP = 60;
 
 function renderRail(){
@@ -540,7 +555,7 @@ function renderRail(){
 
   // search
   const search = el("input",{class:"field-input mono",type:"text",placeholder:"search library…",value:railQuery,
-    oninput:e=>{ railQuery=e.target.value; renderRailSections(); }});
+    oninput:e=>{ railQuery=e.target.value; if(railQuery.trim()==="") railSearchCollapsed.clear(); renderRailSections(); }});
   scroll.append(el("div",{class:"rail-search"}, search));
 
   const sectionsHost = el("div",{id:"railSections"});
@@ -563,9 +578,12 @@ function renderRailSections(){
   ];
   for(const sec of sections){
     const filtered = sec.rows.filter(r=>railMatch(r.label,r.id)).sort((a,b)=>cmp(a.label,b.label));
-    const open = railQuery.trim()!=="" || railOpen[sec.key];
+    // While searching, sections default open (so matches show) but can still be
+    // collapsed individually; otherwise the persistent per-section toggle governs.
+    const searching = railQuery.trim()!=="";
+    const open = searching ? !railSearchCollapsed.has(sec.key) : railOpen[sec.key];
     const head = el("div",{class:"rail-section-head"},
-      el("button",{class:"rail-section-toggle eyebrow quiet",onclick:()=>{ railOpen[sec.key]=!railOpen[sec.key]; renderRailSections(); }},
+      el("button",{class:"rail-section-toggle eyebrow quiet",onclick:()=>{ if(searching){ railSearchCollapsed.has(sec.key)?railSearchCollapsed.delete(sec.key):railSearchCollapsed.add(sec.key); } else { railOpen[sec.key]=!railOpen[sec.key]; } renderRailSections(); }},
         el("span",{class:"rail-caret"+(open?" open":"")},"▸"), sec.title,
         el("span",{class:"rail-count mono"}, String(sec.rows.length))),
       sec.add? el("button",{class:"rail-add",title:"New "+sec.title.toLowerCase().replace(/s$/,""),onclick:()=>createEntity(sec.add)},"+"):null
@@ -675,13 +693,30 @@ function renderGraph(){
     anchorPos["sys:"+s.id+"|out"]={x:x+190, y:y+dom.offsetHeight/2};
   }
 
+  // pipe junctions (small routing dots) — one anchor at the dot centre
+  const JUNC=new Set();
+  let jIdx=0;
+  for(const j of WORLD.pipeNodes||[]){
+    JUNC.add(j.id);
+    const fb=(j.x==null||j.y==null)?{x:60+(jIdx%6)*40, y:60+Math.floor(jIdx/6)*40}:null; jIdx++;
+    const x=j.x!=null?j.x:fb.x, y=j.y!=null?j.y:fb.y;
+    const dom=junctionDom(j);
+    dom.style.left=x+"px"; dom.style.top=y+"px";
+    vp.append(dom);
+    anchorPos["j:"+j.id]={x, y};
+  }
+  // a pipe end at a junction resolves to that single centre anchor
+  const endKey=(end,fallbackDir,cat)=>JUNC.has(end.nodeId)
+    ? "j:"+end.nodeId
+    : end.nodeId+"|"+(end.port||portId(cat,fallbackDir));
+
   // edges (pipes), re-pointed across collapsed boundaries
   for(const p of WORLD.pipes||[]){
     const aProxy=cs.proxyForNode.get(p.a.nodeId)||null;
     const bProxy=cs.proxyForNode.get(p.b.nodeId)||null;
     if(aProxy && aProxy===bProxy) continue; // internal to one collapsed system
-    const aKey = aProxy? "sys:"+aProxy+"|out" : p.a.nodeId+"|"+(p.a.port||portId(p.category,"out"));
-    const bKey = bProxy? "sys:"+bProxy+"|in"  : p.b.nodeId+"|"+(p.b.port||portId(p.category,"in"));
+    const aKey = aProxy? "sys:"+aProxy+"|out" : endKey(p.a,"out",p.category);
+    const bKey = bProxy? "sys:"+bProxy+"|in"  : endKey(p.b,"in",p.category);
     const a=anchorPos[aKey], b=anchorPos[bKey];
     if(!a||!b) continue;
     const d=edgePath(a,b);
@@ -728,8 +763,8 @@ function nodeDom(n, def, ins, outs){
   if(def&&def.storage) dom.append(el("div",{class:"nstore mono"},"▭ "+fmtCapacity(def.storage.capacity*(n.count||1),def.storage.category)));
   dom.append(el("div",{class:"nports"}));
   // header drag + select (shift-click toggles multi-select for grouping)
-  const head=dom.querySelector(".nhead");
-  head.addEventListener("pointerdown",e=>startNodeDrag(e,n.id,dom,false));
+  // drag from anywhere on the body; ports/buttons stopPropagation so they still work
+  dom.addEventListener("pointerdown",e=>startNodeDrag(e,n.id,dom,"node"));
   dom.addEventListener("click",e=>{ e.stopPropagation(); if(dragMoved) return;
     if(e.shiftKey) toggleMulti(n.id); else select("node",n.id); });
   return dom;
@@ -746,9 +781,21 @@ function sysDom(s){
       el("button",{class:"expand",title:"Expand",onpointerdown:e=>e.stopPropagation(),onclick:e=>{ e.stopPropagation(); toggleCollapse(s.id); }},"expand")),
     el("div",{class:"smeta"}, `${count} machine${count===1?"":"s"}`+(st?" · "+st:"")+(rep&&rep.netEnergy?" · "+fmtEnergy(rep.netEnergy):""))
   );
-  const head=dom.querySelector(".nhead");
-  head.addEventListener("pointerdown",e=>startNodeDrag(e,s.id,dom,true));
+  dom.addEventListener("pointerdown",e=>startNodeDrag(e,s.id,dom,"system"));
   dom.addEventListener("click",e=>{ e.stopPropagation(); if(!dragMoved) select("system",s.id); });
+  return dom;
+}
+function junctionDom(j){
+  const seld=SEL&&SEL.kind==="pipeNode"&&SEL.id===j.id;
+  const dom=el("div",{class:"junction"+(seld?" selected":""),"data-junction":j.id,title:j.category+" junction · "+j.id},
+    el("div",{class:"jdot",style:{background:catColor(j.category)}}));
+  // connect-from handle: pull a new pipe out of the junction (source side)
+  const nub=el("div",{class:"jnub",style:{background:catColor(j.category)},title:"drag to wire out"});
+  nub.addEventListener("pointerdown",e=>startConnect(e,{nodeId:j.id,port:null,cat:j.category,dir:"out",junction:true}));
+  dom.append(nub);
+  // drag the body to move; click selects
+  dom.addEventListener("pointerdown",e=>startNodeDrag(e,j.id,dom,"pipeNode"));
+  dom.addEventListener("click",e=>{ e.stopPropagation(); if(!dragMoved) select("pipeNode",j.id); });
   return dom;
 }
 function aggregateStatus(rep){
@@ -781,6 +828,12 @@ function paletteEl(){
   const host=el("div",{class:"palette",id:"palette"});
   host.append(el("span",{class:"eyebrow quiet"},"Add machine"));
   host.append(el("div",{id:"paletteCombo",style:{minWidth:"210px"}}));
+  // pipe junctions: a dot per category to diverge/merge pipes of that kind
+  host.append(el("span",{class:"eyebrow quiet",style:{marginLeft:"4px"}},"Junction"));
+  host.append(el("div",{style:{display:"flex",gap:"4px"}},
+    ["solid","liquid","energy"].map(c=>el("button",{class:"tool-btn",title:"Add "+c+" junction",
+      style:{padding:"4px 7px"},onclick:()=>placeJunction(c)},
+      el("span",{class:"legend-dot",style:{background:catColor(c),verticalAlign:"middle"}})))));
   host.append(el("button",{class:"tool-btn",id:"groupBtn",style:{display:"none"},onclick:groupSelected},"▦ Group"));
   return host;
 }
@@ -821,7 +874,7 @@ function zoomBy(f){
 let pan=null, dragMoved=false;
 function wireCanvas(canvas){
   canvas.addEventListener("pointerdown",e=>{
-    if(e.target.closest(".node")||e.target.closest(".sys")||e.target.closest(".port")) return;
+    if(e.target.closest(".node")||e.target.closest(".sys")||e.target.closest(".port")||e.target.closest(".junction")) return;
     if(e.target.closest("path.pipe-edge")) return;
     pan={sx:e.clientX,sy:e.clientY,vx:view.x,vy:view.y}; dragMoved=false;
     canvas.classList.add("dragging"); canvas.setPointerCapture(e.pointerId);
@@ -860,12 +913,12 @@ function screenToScene(cx,cy){
 
 /* node / system drag */
 let nodeDrag=null;
-function startNodeDrag(e,id,dom,isSystem){
+function startNodeDrag(e,id,dom,kind){
   e.stopPropagation();
   dom.setPointerCapture(e.pointerId);
-  const cur=isSystem?BY.systems[id]:BY.nodes[id];
+  const cur=kind==="system"?BY.systems[id]:kind==="pipeNode"?BY.junctions[id]:BY.nodes[id];
   const startX=cur.x!=null?cur.x:0, startY=cur.y!=null?cur.y:0;
-  nodeDrag={id,dom,isSystem,sx:e.clientX,sy:e.clientY,startX,startY,moved:false};
+  nodeDrag={id,dom,kind,sx:e.clientX,sy:e.clientY,startX,startY,moved:false};
   dragMoved=false;
   dom.classList.add("dragging");
 }
@@ -882,7 +935,8 @@ function endNodeDrag(e){
   const d=nodeDrag; nodeDrag=null; d.dom.classList.remove("dragging");
   if(!d.moved){ return; }
   const x=d._nx!=null?d._nx:d.startX, y=d._ny!=null?d._ny:d.startY;
-  if(d.isSystem){ const s=BY.systems[d.id]; applyEdits([upsert("system",{...s,x,y})]); }
+  if(d.kind==="system"){ const s=BY.systems[d.id]; applyEdits([upsert("system",{...s,x,y})]); }
+  else if(d.kind==="pipeNode"){ const j=BY.junctions[d.id]; applyEdits([upsert("pipeNode",{...j,x,y})]); }
   else { const n=BY.nodes[d.id]; applyEdits([upsert("node",{...n,x,y})]); }
 }
 function liveRedrawEdges(){
@@ -902,25 +956,36 @@ function liveRedrawEdges(){
     anchors["sys:"+id+"|in"]={x:p.x,y:p.y+dom.offsetHeight/2};
     anchors["sys:"+id+"|out"]={x:p.x+190,y:p.y+dom.offsetHeight/2};
   });
+  const JUNC=new Set();
+  vp.querySelectorAll(".junction").forEach(dom=>{
+    const id=dom.getAttribute("data-junction"); const p=posOf(dom);
+    JUNC.add(id); anchors["j:"+id]={x:p.x,y:p.y};
+  });
+  const endKey=(end,dir,cat)=>JUNC.has(end.nodeId)?"j:"+end.nodeId:end.nodeId+"|"+(end.port||portId(cat,dir));
   const cs=collapseState();
   vp.querySelectorAll("path[data-pipe]").forEach(path=>{
     const pid=path.getAttribute("data-pipe"); const p=(WORLD.pipes||[]).find(x=>x.id===pid); if(!p) return;
     const aProxy=cs.proxyForNode.get(p.a.nodeId)||null, bProxy=cs.proxyForNode.get(p.b.nodeId)||null;
-    const aKey=aProxy?"sys:"+aProxy+"|out":p.a.nodeId+"|"+(p.a.port||portId(p.category,"out"));
-    const bKey=bProxy?"sys:"+bProxy+"|in":p.b.nodeId+"|"+(p.b.port||portId(p.category,"in"));
+    const aKey=aProxy?"sys:"+aProxy+"|out":endKey(p.a,"out",p.category);
+    const bKey=bProxy?"sys:"+bProxy+"|in":endKey(p.b,"in",p.category);
     const a=anchors[aKey],b=anchors[bKey]; if(a&&b) path.setAttribute("d",edgePath(a,b));
   });
 }
 
 /* port connect → new pipe */
 let connectState=null;
-function startConnect(e){
+function startConnect(e, explicit){
   e.stopPropagation(); e.preventDefault();
-  const dot=e.currentTarget;
-  const nodeId=dot.getAttribute("data-node"), port=dot.getAttribute("data-port"),
-        cat=dot.getAttribute("data-cat"), dir=dot.getAttribute("data-dir");
+  // `explicit` is passed by a junction nub; otherwise read a machine port dot.
+  let endInfo;
+  if(explicit){ endInfo=explicit; }
+  else{
+    const dot=e.currentTarget;
+    endInfo={nodeId:dot.getAttribute("data-node"), port:dot.getAttribute("data-port"),
+             cat:dot.getAttribute("data-cat"), dir:dot.getAttribute("data-dir"), junction:false};
+  }
   const from=screenToScene(e.clientX,e.clientY);
-  connectState={nodeId,port,cat,dir,from};
+  connectState={...endInfo,from};
   const t=$("#tempEdge"); if(t) t.style.display="";
   window.addEventListener("pointermove", moveConnect);
   window.addEventListener("pointerup", endConnect, {once:true});
@@ -934,21 +999,33 @@ function endConnect(e){
   window.removeEventListener("pointermove", moveConnect);
   const t=$("#tempEdge"); if(t) t.style.display="none";
   const target=document.elementFromPoint(e.clientX,e.clientY);
-  const dot=target&&target.closest&&target.closest(".port");
   const cs=connectState; connectState=null;
-  if(!dot) return;
-  const tNode=dot.getAttribute("data-node"), tPort=dot.getAttribute("data-port"),
-        tCat=dot.getAttribute("data-cat"), tDir=dot.getAttribute("data-dir");
-  // normalize out→in
-  let a,b;
-  if(cs.dir==="out"&&tDir==="in"){ a={nodeId:cs.nodeId,port:cs.port,cat:cs.cat}; b={nodeId:tNode,port:tPort,cat:tCat}; }
-  else if(cs.dir==="in"&&tDir==="out"){ a={nodeId:tNode,port:tPort,cat:tCat}; b={nodeId:cs.nodeId,port:cs.port,cat:cs.cat}; }
-  else { toast("connect an output to an input",true); return; }
-  if(a.cat!==b.cat){ toast("ports must share a category",true); return; }
-  if(a.nodeId===b.nodeId){ toast("cannot wire a node to itself",true); return; }
+  // drop target: a machine port, or a junction dot (acts as an io end)
+  const portDot=target&&target.closest&&target.closest(".port");
+  const juncDom=target&&target.closest&&target.closest(".junction");
+  let tEnd;
+  if(portDot){
+    tEnd={nodeId:portDot.getAttribute("data-node"), port:portDot.getAttribute("data-port"),
+          cat:portDot.getAttribute("data-cat"), dir:portDot.getAttribute("data-dir"), junction:false};
+  } else if(juncDom){
+    const jid=juncDom.getAttribute("data-junction"); const j=BY.junctions[jid]; if(!j) return;
+    tEnd={nodeId:jid, port:null, cat:j.category, dir:"io", junction:true};
+  } else return;
+  // resolve source (extract) vs sink (insert). A junction end is flexible (io).
+  let src,snk;
+  if(cs.dir==="out"){
+    if(tEnd.dir==="out"&&!tEnd.junction){ toast("connect an output to an input",true); return; }
+    src=cs; snk=tEnd;
+  } else { // cs started from an in-port (machine input)
+    if(tEnd.dir==="in"&&!tEnd.junction){ toast("connect an output to an input",true); return; }
+    src=tEnd; snk=cs;
+  }
+  if(src.cat!==snk.cat){ toast("ends must share a category",true); return; }
+  if(src.nodeId===snk.nodeId){ toast("cannot wire a node to itself",true); return; }
+  const mkEnd=(end,role)=>{ const o={nodeId:end.nodeId,role:end.junction?"io":role}; if(end.port) o.port=end.port; return o; };
   const id=freshId("pipe", idsOfKind("pipe"));
-  const pipe={id,category:a.cat,movementCapacity:defaultMovementCapacity(a.cat),overclock:1,
-    a:{nodeId:a.nodeId,role:"out",port:a.port}, b:{nodeId:b.nodeId,role:"in",port:b.port}};
+  const pipe={id,category:src.cat,movementCapacity:defaultMovementCapacity(src.cat),overclock:1,
+    a:mkEnd(src,"out"), b:mkEnd(snk,"in")};
   applyEdits([upsert("pipe",pipe)]);
   select("pipe",id);
 }
@@ -966,6 +1043,18 @@ function placeMachine(def, scenePos){
   const node={id,machineDefId:def.id,x:Math.round(pos.x),y:Math.round(pos.y)};
   applyEdits([upsert("node",node)]);
   select("node",id);
+}
+function placeJunction(cat, scenePos){
+  let pos=scenePos;
+  if(!pos){
+    const r=$("#canvas").getBoundingClientRect();
+    const base=screenToScene(r.left+r.width/2, r.top+r.height/2);
+    const step=(WORLD.pipeNodes||[]).length%6;
+    pos={x:base.x+step*24, y:base.y+step*24};
+  }
+  const id=freshId("junction", idsOfKind("pipeNode"));
+  applyEdits([upsert("pipeNode",{id,category:cat,x:Math.round(pos.x),y:Math.round(pos.y)})]);
+  select("pipeNode",id);
 }
 
 /* selection */
@@ -995,6 +1084,10 @@ function deleteSelected(){
     // also drop incident pipes
     const pipes=(WORLD.pipes||[]).filter(p=>p.a.nodeId===id||p.b.nodeId===id).map(p=>removeEdit("pipe",p.id));
     SEL=null; applyEdits([...pipes, removeEdit("node",id)]);
+  } else if(kind==="pipeNode"){
+    // also drop pipes incident to the junction
+    const pipes=(WORLD.pipes||[]).filter(p=>p.a.nodeId===id||p.b.nodeId===id).map(p=>removeEdit("pipe",p.id));
+    SEL=null; applyEdits([...pipes, removeEdit("pipeNode",id)]);
   } else if(kind==="pipe"){ SEL=null; applyEdits([removeEdit("pipe",id)]); }
   else if(kind==="system"){ SEL=null; applyEdits([removeEdit("system",id)]); }
   else if(kind==="item"||kind==="recipe"||kind==="machineDef"){ SEL=null; applyEdits([removeEdit(kind,id)]); }
@@ -1124,7 +1217,7 @@ function renderInspector(){
   if(!SEL){ if(insp) insp.remove(); return; }
   if(!insp){ insp=el("aside",{class:"inspector",id:"inspector"}); $("#app").append(insp); }
   insp.textContent="";
-  const kindLabel={item:"Item",recipe:"Recipe",machineDef:"Machine def",node:"Machine node",pipe:"Pipe",system:"System"}[SEL.kind];
+  const kindLabel={item:"Item",recipe:"Recipe",machineDef:"Machine def",node:"Machine node",pipe:"Pipe",pipeNode:"Pipe junction",system:"System"}[SEL.kind];
   insp.append(el("div",{class:"insp-head"},
     el("div",null, el("span",{class:"eyebrow"},kindLabel), el("div",{class:"insp-id mono"}, selTitle())),
     el("button",{class:"insp-x",title:"Close",onclick:clearSel},"×")));
@@ -1132,7 +1225,7 @@ function renderInspector(){
   insp.append(body);
   const ent = currentEntity();
   if(!ent){ body.append(el("div",{class:"stack-empty"},"(gone)")); return; }
-  ({item:itemInspector,recipe:recipeInspector,machineDef:defInspector,node:nodeInspector,pipe:pipeInspector,system:systemInspector}[SEL.kind])(body, ent);
+  ({item:itemInspector,recipe:recipeInspector,machineDef:defInspector,node:nodeInspector,pipe:pipeInspector,pipeNode:junctionInspector,system:systemInspector}[SEL.kind])(body, ent);
 }
 function selTitle(){
   const e=currentEntity(); if(!e) return SEL.id;
@@ -1141,7 +1234,7 @@ function selTitle(){
 }
 function currentEntity(){
   if(!SEL) return null;
-  const map={item:"items",recipe:"recipes",machineDef:"machineDefs",node:"nodes",pipe:"pipes",system:"systems"};
+  const map={item:"items",recipe:"recipes",machineDef:"machineDefs",node:"nodes",pipe:"pipes",pipeNode:"pipeNodes",system:"systems"};
   return (WORLD[map[SEL.kind]]||[]).find(e=>e.id===SEL.id)||null;
 }
 
@@ -1274,7 +1367,7 @@ function itemInspector(body, it){
     hint:"a group ('any item in this set'), e.g. c:ingots/iron",
     child: tagMembersEditor(it)
   }));
-  body.append(dangerButton("Delete item", ()=>{ if(confirm("Delete this item?")) deleteSelected(); }));
+  body.append(dangerButton("Delete item", ()=>deleteSelected()));
 }
 function tagMembersEditor(it){
   const wrap=el("div");
@@ -1303,7 +1396,7 @@ function recipeInspector(body, r){
     child:textInput(r.machineType, v=>saveEntity("recipe", withField(r,"machineType",v)))}));
   body.append(stackListEditor("inputs", r, "inputs"));
   body.append(stackListEditor("outputs", r, "outputs"));
-  body.append(dangerButton("Delete recipe", ()=>{ if(confirm("Delete this recipe?")) deleteSelected(); }));
+  body.append(dangerButton("Delete recipe", ()=>deleteSelected()));
 }
 function stackListEditor(label, r, key){
   const rows=r[key]||[];
@@ -1419,7 +1512,7 @@ function defInspector(body, def){
 
   body.append(allowedRecipesEditor(def));
   body.append(slotListEditor(def));
-  body.append(dangerButton("Delete machine def", ()=>{ if(confirm("Delete this machine def?")) deleteSelected(); }));
+  body.append(dangerButton("Delete machine def", ()=>deleteSelected()));
 }
 function allowedRecipesEditor(def){
   const recipes=WORLD.recipes||[];
@@ -1490,7 +1583,7 @@ function nodeInspector(body, n){
   bf.append(el("span",{class:"field-hint"},"a machine runs only when its inputs are supplied and its outputs are taken; a boundary machine is fed or emptied by hand"));
   body.append(bf);
 
-  body.append(dangerButton("Delete machine node", ()=>{ if(confirm("Delete this node?")) deleteSelected(); }));
+  body.append(dangerButton("Delete machine node", ()=>deleteSelected()));
 }
 function resourceName(id){
   const it=BY.items[id];
@@ -1591,7 +1684,7 @@ function pipeInspector(body, p){
   }
   body.append(pipeEnd("end A", p, "a"));
   body.append(pipeEnd("end B", p, "b"));
-  body.append(dangerButton("Delete pipe", ()=>{ if(confirm("Delete this pipe?")) deleteSelected(); }));
+  body.append(dangerButton("Delete pipe", ()=>deleteSelected()));
 }
 function pipeEnd(title, p, key){
   const end=p[key];
@@ -1612,6 +1705,25 @@ function pipeEnd(title, p, key){
     onSet:v=>setEnd(withField(end,"extractPriority",Math.round(v))), onClear:()=>setEnd(withoutField(end,"extractPriority")),
     min:-128,max:127,step:1,hint:"lower drains first"}));
   return box;
+}
+
+/* ---- Pipe junction ---- */
+function junctionInspector(body, j){
+  const incident=(WORLD.pipes||[]).filter(p=>p.a.nodeId===j.id||p.b.nodeId===j.id);
+  body.append(field("id", el("span",{class:"static-val mono"},j.id)));
+  // category is editable only while nothing is wired (pipes depend on it)
+  if(incident.length===0){
+    body.append(field("category", selectInput(j.category,
+      ["solid","liquid","energy"].map(c=>({value:c,label:c})),
+      v=>saveEntity("pipeNode", withField(j,"category",v))), "the kind of pipe this junction routes"));
+  } else {
+    body.append(field("category", el("span",{class:"static-val mono"},
+      el("span",{class:"legend-dot",style:{background:catColor(j.category),display:"inline-block",marginRight:"6px"}}), j.category),
+      "fixed while pipes are attached"));
+  }
+  body.append(field("connections", el("span",{class:"static-val mono"}, String(incident.length)),
+    "a transparent routing point — caps and priorities stay on the pipes"));
+  body.append(dangerButton("Delete junction", ()=>deleteSelected()));
 }
 
 /* ---- System ---- */
@@ -1635,7 +1747,7 @@ function systemInspector(body, s){
   const addable=nodes.filter(nn=>!members.has(nn.id)).map(nn=>({value:nn.id,label:nodeLabel(nn.id)}));
   if(addable.length) mf.append(combo("", addable, id=>saveEntity("system", withField(s,"memberNodeIds",[...members,id])), "+ add member…",{clearOnPick:true}));
   body.append(mf);
-  body.append(dangerButton("Delete system (keeps members)", ()=>{ if(confirm("Delete this system grouping?")) deleteSelected(); }));
+  body.append(dangerButton("Delete system (keeps members)", ()=>deleteSelected()));
 }
 
 /* ============================================================================

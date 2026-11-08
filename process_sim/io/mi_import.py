@@ -59,6 +59,7 @@ from ..model import (
     Recipe,
     SlotGroup,
     Stack,
+    StorageSpec,
 )
 from .errors import MalformedFileError
 from .library import Library
@@ -70,6 +71,12 @@ __all__ = [
     "MachineSpec",
     "ENERGY_MACHINES",
     "EnergyMachine",
+    "STEAM_MACHINE_TIERS",
+    "STEAM_TIER_MAX_EU",
+    "PUMP_MACHINES",
+    "PumpMachine",
+    "STORAGE_MACHINES",
+    "StorageMachine",
     "ELECTRICITY_ID",
     "STEAM_ID",
     "MiImport",
@@ -203,8 +210,12 @@ STEAM_PER_WATER = 16.0
 _EU_PER_MB_STEAM = 1.0
 #: Helium-plasma energy density (plasma turbine ``ofSingleFluid`` arg): 100000 EU/mB.
 _EU_PER_MB_PLASMA = 100_000.0
-#: Boilers idle hot and lose unused surplus heat — the SteamHeater waste fraction.
+#: The multiblock steam boilers idle hot and lose unused surplus heat — the
+#: SteamHeater waste fraction. The single-block bronze/steel boilers do **not**:
+#: they are 100% efficient and simply stop burning fuel when their steam buffer
+#: is full (modelled as no waste, ``w = 0`` → fuel drain follows actual draw).
 _BOILER_WASTE = 0.8
+_SINGLE_BLOCK_BOILER_WASTE = None
 
 
 @dataclass(frozen=True)
@@ -247,7 +258,7 @@ ENERGY_MACHINES: tuple[EnergyMachine, ...] = (
         None,
         WATER_ID,
         STEAM_PER_WATER,
-        _BOILER_WASTE,
+        _SINGLE_BLOCK_BOILER_WASTE,
     ),
     EnergyMachine(
         "steel_boiler",
@@ -258,7 +269,7 @@ ENERGY_MACHINES: tuple[EnergyMachine, ...] = (
         None,
         WATER_ID,
         STEAM_PER_WATER,
-        _BOILER_WASTE,
+        _SINGLE_BLOCK_BOILER_WASTE,
     ),
     EnergyMachine(
         "large_steam_boiler",
@@ -381,6 +392,153 @@ ENERGY_MACHINES: tuple[EnergyMachine, ...] = (
         DIESEL_ID,
     ),
 )
+
+
+# --------------------------------------------------------------------------- #
+# Steam machine tiers (bronze / steel) for the single-block crafting machines.
+#
+# The same recipe runs on the bronze, steel, and electric variant of a machine;
+# the importer builds the **electric** def from the recipes (``_machine_def``),
+# and these add the lower **steam** tiers for the machines that have them. The
+# per-tier EU/tick ceiling is the jar's ``MachineTier`` enum (BRONZE max 2, STEEL
+# max 4); the tier roster is ``SingleBlockCraftingMachines.init`` (its tier
+# bitmask: Bronze 1, Steel 2, Electric 4). A steam machine draws its recipe's
+# ``eu_per_tick`` as **steam** (1 mB = 1 EU), so ``energy_source = liquid`` with
+# ``source_item_id = steam``; the ceiling clamps overclock exactly as the tier
+# gates speed in-game.
+# --------------------------------------------------------------------------- #
+
+#: MachineTier EU/tick ceiling per steam tier (jar: ``MachineTier`` enum maxEu).
+STEAM_TIER_MAX_EU: dict[str, float] = {"bronze": 2, "steel": 4}
+
+#: Which single-block crafting machines also have steam tiers (besides the
+#: electric variant the recipes build). Read from the tier bitmask passed to
+#: ``SingleBlockCraftingMachines.registerMachineTiers`` for each machine.
+STEAM_MACHINE_TIERS: dict[str, tuple[str, ...]] = {
+    "macerator": ("bronze", "steel"),
+    "mixer": ("bronze", "steel"),
+    "compressor": ("bronze", "steel"),
+    "cutting_machine": ("bronze", "steel"),
+    "packer": ("steel",),
+    "unpacker": ("steel",),
+    "wiremill": ("steel",),
+}
+
+
+# --------------------------------------------------------------------------- #
+# Water pumps (jar: AbstractWaterPumpBlockEntity + Steam/Electric subclasses).
+#
+# A pump runs one operation every 100 ticks (5 s), outputting
+# ``waterMultiplier × waterSourceCount × 125 mB``; it scans the 8 adjacent
+# blocks, so with a full ring of water sources that is ``multiplier × 1000`` mB
+# per op → ``multiplier × 200`` mB/s (the max, used as the default rate — it is
+# placement-dependent and editable). Water multipliers: bronze 1, steel 2,
+# electric 16. Every pump draws a fixed 1 EU/tick (steam for bronze/steel,
+# electricity for electric) regardless of output, so a pump is modelled as a
+# consumer running a "pump water" recipe (``eu_per_tick = 1``) — not a converter,
+# whose source draw would wrongly scale with the water made.
+# --------------------------------------------------------------------------- #
+
+#: mB/s of water a bronze (×1) pump makes at the best placement (8 water sources).
+_PUMP_BASE_WATER_RATE = 200.0
+
+
+@dataclass(frozen=True)
+class PumpMachine:
+    key: str
+    name: str
+    energy_source: EnergySource
+    source_item_id: str
+    water_multiplier: int
+
+
+PUMP_MACHINES: tuple[PumpMachine, ...] = (
+    PumpMachine(
+        "bronze_water_pump", "Bronze Water Pump", EnergySource.LIQUID, STEAM_ID, 1
+    ),
+    PumpMachine(
+        "steel_water_pump", "Steel Water Pump", EnergySource.LIQUID, STEAM_ID, 2
+    ),
+    PumpMachine(
+        "electric_water_pump",
+        "Electric Water Pump",
+        EnergySource.ELECTRIC,
+        ELECTRICITY_ID,
+        16,
+    ),
+)
+
+
+# --------------------------------------------------------------------------- #
+# Storage — tanks (liquid) and barrels (solid), plus the single-block
+# Configurable Tank/Chest and the Large Tank multiblock. Capacities are read
+# from the jar (material parts in ``MIMaterials``: tanks in buckets ×1000 mB,
+# barrels in stacks ×64 items; ``ConfigurableTankMachineBlockEntity`` 16 000 mB;
+# ``ConfigurableChestMachineBlockEntity`` 27 slots; ``LargeTankMultiblock``
+# 64 000 mB per inner block). A storage node is a transparent buffer in the
+# balance — the capacity is an editable annotation.
+# --------------------------------------------------------------------------- #
+
+_TANK_BUCKETS: dict[str, int] = {
+    "bronze": 4,
+    "steel": 16,
+    "aluminum": 64,
+    "silicon": 256,
+    "titanium": 1024,
+}
+_BARREL_STACKS: dict[str, int] = {
+    "bronze": 32,
+    "steel": 128,
+    "aluminum": 512,
+    "silicon": 2048,
+    "titanium": 8192,
+}
+_STACK_ITEMS = 64  # items per stack, for barrel/chest item capacity
+
+
+@dataclass(frozen=True)
+class StorageMachine:
+    key: str
+    name: str
+    category: Category
+    capacity: float
+
+
+def _storage_machines() -> tuple[StorageMachine, ...]:
+    out: list[StorageMachine] = []
+    for mat, buckets in _TANK_BUCKETS.items():
+        out.append(
+            StorageMachine(
+                f"{mat}_tank", f"{mat.title()} Tank", Category.LIQUID, buckets * 1000
+            )
+        )
+    for mat, stacks in _BARREL_STACKS.items():
+        out.append(
+            StorageMachine(
+                f"{mat}_barrel",
+                f"{mat.title()} Barrel",
+                Category.SOLID,
+                stacks * _STACK_ITEMS,
+            )
+        )
+    out.append(
+        StorageMachine("configurable_tank", "Configurable Tank", Category.LIQUID, 16000)
+    )
+    out.append(
+        StorageMachine(
+            "configurable_chest",
+            "Configurable Chest",
+            Category.SOLID,
+            27 * _STACK_ITEMS,
+        )
+    )
+    # Large Tank scales at 64 000 mB per inner block; a 27-inner build is a
+    # representative default (editable).
+    out.append(StorageMachine("large_tank", "Large Tank", Category.LIQUID, 64000 * 27))
+    return tuple(out)
+
+
+STORAGE_MACHINES: tuple[StorageMachine, ...] = _storage_machines()
 
 
 @dataclass
@@ -692,13 +850,36 @@ def import_mi_library(
         _machine_def(t, agg, lang) for t, agg in by_type.items() if agg["recipe_ids"]
     ]
 
+    # Steam (bronze/steel) tiers for the machines that have them, beside the
+    # electric variant the recipes built. These are processing machines (not
+    # energy generation), so they ride every import; each consumes steam, so make
+    # sure the steam carrier exists.
+    steam_defs: list[MachineDef] = []
+    for t, agg in by_type.items():
+        if not agg["recipe_ids"]:
+            continue
+        for tier in STEAM_MACHINE_TIERS.get(t, ()):
+            steam_defs.append(_steam_machine_def(t, tier, agg, lang))
+    if steam_defs:
+        _ensure_steam_item(registry)
+
     # Energy generation (not recipe-driven in MI): add the converter defs and the
-    # carriers they reference (electricity, steam, water, plasma). Done before tag
-    # membership so a newly-added carrier still gets any tag wiring.
+    # carriers they reference (electricity, steam, water, plasma). The water pumps
+    # ride with it — they need the electricity carrier (electric pump) and steam
+    # (steam pumps), which the energy carriers provide. Done before tag membership
+    # so a newly-added carrier still gets any tag wiring.
     energy_defs: list[MachineDef] = []
+    pump_defs: list[MachineDef] = []
+    pump_recipes: list[Recipe] = []
     if include_energy:
         _ensure_carrier_items(registry)
         energy_defs = [_energy_machine_def(m) for m in ENERGY_MACHINES]
+        pump_defs = [_pump_def(m) for m in PUMP_MACHINES]
+        pump_recipes = [_pump_recipe(m) for m in PUMP_MACHINES]
+
+    # Storage (tanks / barrels / configurable / large tank): transparent buffers,
+    # no carriers needed, so always added.
+    storage_defs = [_storage_def(m) for m in STORAGE_MACHINES]
 
     # Resolve tag membership from the game's tag definitions, so a concrete item
     # can later stand in for a recipe that references a tag (e.g. iron_ore → a
@@ -709,8 +890,8 @@ def import_mi_library(
     library = Library(
         name=name or "Modern Industrialization",
         items=sorted(registry.items.values(), key=lambda i: i.id),
-        recipes=recipes,
-        machine_defs=machine_defs + energy_defs,
+        recipes=recipes + pump_recipes,
+        machine_defs=machine_defs + steam_defs + energy_defs + pump_defs + storage_defs,
     )
     stats = {
         "filesScanned": files_scanned,
@@ -720,7 +901,10 @@ def import_mi_library(
         "tags": sum(1 for i in registry.items.values() if i.is_tag),
         "memberItemsAdded": member_items_added,
         "machineDefs": len(machine_defs),
+        "steamMachines": len(steam_defs),
         "energyMachines": len(energy_defs),
+        "pumps": len(pump_defs),
+        "storage": len(storage_defs),
         "byType": {t: len(agg["recipe_ids"]) for t, agg in by_type.items()},
     }
     return MiImport(library=library, stats=stats)
@@ -869,6 +1053,109 @@ def _energy_machine_def(m: EnergyMachine) -> MachineDef:
         max_fluid_rate=m.eu_per_tick * _TICKS_PER_SEC,
         slots=slots,
     )
+
+
+def _steam_machine_def(
+    machine_type: str, tier: str, agg: dict[str, Any], lang: dict[str, str]
+) -> MachineDef:
+    """A steam-tier (bronze/steel) consumer def for ``machine_type``.
+
+    Same recipes and item slots as the electric variant, but powered by **steam**
+    (``energy_source = liquid``, ``source_item_id = steam``) through an added
+    liquid-in port, and clamped to the tier's EU/tick ceiling so it overclocks
+    only as far as the tier allows.
+    """
+
+    slots: list[SlotGroup] = []
+
+    def add(category: Category, direction: Direction, count: int, stack: int) -> None:
+        if count > 0:
+            slots.append(SlotGroup(category, direction, count, stack))
+
+    add(Category.SOLID, Direction.IN, agg["sin"], _SOLID_STACK)
+    add(Category.SOLID, Direction.OUT, agg["sout"], _SOLID_STACK)
+    # Recipe fluids plus one liquid-in port for the steam carrier.
+    add(Category.LIQUID, Direction.IN, agg["lin"] + 1, _FLUID_STACK)
+    add(Category.LIQUID, Direction.OUT, agg["lout"], _FLUID_STACK)
+
+    return MachineDef(
+        id=f"mi.machine.{machine_type}.{tier}",
+        name=f"{tier.title()} {_machine_name(machine_type, lang)}",
+        energy_source=EnergySource.LIQUID,
+        source_item_id=STEAM_ID,
+        allowed_recipe_ids=list(agg["recipe_ids"]),
+        slots=slots,
+        voltage_tier=tier.title(),
+        max_eu_per_tick=STEAM_TIER_MAX_EU[tier],
+    )
+
+
+def _pump_recipe(m: PumpMachine) -> Recipe:
+    """A 'pump water' recipe: no material in, water out, a fixed 1 EU/tick draw."""
+
+    rate = _PUMP_BASE_WATER_RATE * m.water_multiplier
+    return Recipe(
+        id=f"mi.pump.{m.key}",
+        time_seconds=1.0,
+        name=f"{m.name}: Water",
+        inputs=[],
+        outputs=[Stack(item_id=WATER_ID, quantity=rate)],
+        eu_per_tick=1,
+        machine_type=m.key,
+    )
+
+
+def _pump_def(m: PumpMachine) -> MachineDef:
+    """A water-pump consumer: water out, powered by steam or electricity."""
+
+    slots: list[SlotGroup] = [
+        SlotGroup(Category.LIQUID, Direction.OUT, 1, _FLUID_STACK)
+    ]
+    if m.energy_source is EnergySource.ELECTRIC:
+        slots.append(SlotGroup(Category.ENERGY, Direction.IN, 1, _ENERGY_STACK))
+    else:
+        slots.append(SlotGroup(Category.LIQUID, Direction.IN, 1, _FLUID_STACK))
+    return MachineDef(
+        id=f"mi.pump.{m.key}.machine",
+        name=m.name,
+        energy_source=m.energy_source,
+        source_item_id=m.source_item_id,
+        allowed_recipe_ids=[f"mi.pump.{m.key}"],
+        slots=slots,
+    )
+
+
+def _storage_def(m: StorageMachine) -> MachineDef:
+    """A transparent storage buffer def with in/out ports of its category."""
+
+    return MachineDef(
+        id=f"mi.storage.{m.key}",
+        name=m.name,
+        storage=StorageSpec(category=m.category, capacity=m.capacity),
+        slots=[
+            SlotGroup(
+                m.category,
+                Direction.IN,
+                1,
+                _FLUID_STACK if m.category is Category.LIQUID else _SOLID_STACK,
+            ),
+            SlotGroup(
+                m.category,
+                Direction.OUT,
+                1,
+                _FLUID_STACK if m.category is Category.LIQUID else _SOLID_STACK,
+            ),
+        ],
+    )
+
+
+def _ensure_steam_item(registry: _ItemRegistry) -> None:
+    """Register the steam carrier if absent (steam machines consume it)."""
+
+    if STEAM_ID not in registry.items:
+        registry.items[STEAM_ID] = Item(
+            id=STEAM_ID, name="Steam", category=Category.LIQUID
+        )
 
 
 def _ensure_carrier_items(registry: _ItemRegistry) -> None:

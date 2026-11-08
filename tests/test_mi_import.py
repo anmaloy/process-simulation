@@ -142,11 +142,15 @@ def test_imports_targets_and_skips_other_types(mi_root):
     imp = import_mi_library(mi_root)
     assert imp.stats["recipesImported"] == 4
     assert imp.stats["recipesSkipped"] >= 1  # the crafting recipe
+    # Parsed recipes plus the three hand-authored water-pump recipes.
     assert {r.machine_type for r in imp.library.recipes} == {
         "macerator",
         "mixer",
         "assembler",
         "chemical_reactor",
+        "bronze_water_pump",
+        "steel_water_pump",
+        "electric_water_pump",
     }
 
 
@@ -238,10 +242,16 @@ def test_names_from_lang_with_prettify_fallback(mi_root):
 def test_machine_defs_group_with_electric_source_and_derived_slots(mi_root):
     lib = import_mi_library(mi_root).library
     defs = {d.id: d for d in lib.machine_defs}
-    # The parsed processing machines (energy defs are mi.energy.* — see below).
+    # The parsed processing machines: the electric variant per type, plus the
+    # bronze/steel steam tiers for the machines that have them (macerator, mixer).
+    # (Energy defs are mi.energy.*, pumps mi.pump.*, storage mi.storage.* — below.)
     assert {k for k in defs if k.startswith("mi.machine.")} == {
         "mi.machine.macerator",
+        "mi.machine.macerator.bronze",
+        "mi.machine.macerator.steel",
         "mi.machine.mixer",
+        "mi.machine.mixer.bronze",
+        "mi.machine.mixer.steel",
         "mi.machine.assembler",
         "mi.machine.chemical_reactor",
     }
@@ -358,10 +368,72 @@ def test_energy_machines_generated_as_converters(mi_root):
     assert gen.max_fluid_rate == 64 * 20
 
 
-def test_include_energy_false_skips_energy_machines(mi_root):
+def test_steam_tiers_added_for_steam_machines(mi_root):
+    lib = import_mi_library(mi_root).library
+    defs = {d.id: d for d in lib.machine_defs}
+    electric = defs["mi.machine.macerator"]
+    bronze = defs["mi.machine.macerator.bronze"]
+    steel = defs["mi.machine.macerator.steel"]
+    # Steam tiers run the same recipes as the electric variant...
+    assert bronze.allowed_recipe_ids == electric.allowed_recipe_ids
+    # ...but are powered by steam (a liquid carrier), not electricity...
+    assert bronze.energy_source.value == "liquid"
+    assert bronze.source_item_id == f"{NS}:steam"
+    assert bronze.name == "Bronze Macerator"
+    # ...and clamp to the tier's EU/tick ceiling (jar MachineTier: bronze 2, steel 4).
+    assert (bronze.voltage_tier, bronze.max_eu_per_tick) == ("Bronze", 2)
+    assert (steel.voltage_tier, steel.max_eu_per_tick) == ("Steel", 4)
+    # The steam carrier item is registered.
+    assert any(i.id == f"{NS}:steam" for i in lib.items)
+    # An electric-only machine (assembler) has no steam tiers.
+    assert "mi.machine.assembler.bronze" not in defs
+    assert "mi.machine.assembler.steel" not in defs
+
+
+def test_water_pumps_added(mi_root):
+    imp = import_mi_library(mi_root)
+    recipes = {r.id: r for r in imp.library.recipes}
+    defs = {d.id: d for d in imp.library.machine_defs}
+    # Pump water rate = multiplier × 200 mB/s (bronze 1, steel 2, electric 16).
+    assert recipes["mi.pump.bronze_water_pump"].outputs[0].quantity == 200
+    assert recipes["mi.pump.steel_water_pump"].outputs[0].quantity == 400
+    assert recipes["mi.pump.electric_water_pump"].outputs[0].quantity == 3200
+    # Every pump draws a fixed 1 EU/tick, and outputs water.
+    bronze = recipes["mi.pump.bronze_water_pump"]
+    assert bronze.eu_per_tick == 1 and bronze.inputs == []
+    assert bronze.outputs[0].item_id == "minecraft:water"
+    # Bronze/steel pumps run on steam; the electric pump on electricity.
+    assert defs["mi.pump.bronze_water_pump.machine"].source_item_id == f"{NS}:steam"
+    elec = defs["mi.pump.electric_water_pump.machine"]
+    assert elec.energy_source.value == "electric"
+    assert elec.source_item_id == "mi:electricity"
+
+
+def test_storage_added_with_jar_capacities(mi_root):
+    lib = import_mi_library(mi_root).library
+    defs = {d.id: d for d in lib.machine_defs}
+    # Material tanks (buckets ×1000 mB) and barrels (stacks ×64 items).
+    assert defs["mi.storage.bronze_tank"].storage.capacity == 4000
+    assert defs["mi.storage.titanium_tank"].storage.capacity == 1024000
+    assert defs["mi.storage.bronze_tank"].storage.category.value == "liquid"
+    assert defs["mi.storage.bronze_barrel"].storage.capacity == 32 * 64
+    assert defs["mi.storage.bronze_barrel"].storage.category.value == "solid"
+    # Single-block configurable tank/chest (jar: 16 000 mB, 27 slots).
+    assert defs["mi.storage.configurable_tank"].storage.capacity == 16000
+    assert defs["mi.storage.configurable_chest"].storage.capacity == 27 * 64
+    # Large tank multiblock (64 000 mB per inner block).
+    assert defs["mi.storage.large_tank"].storage.capacity == 64000 * 27
+
+
+def test_include_energy_false_skips_energy_machines_and_pumps(mi_root):
     lib = import_mi_library(mi_root, include_energy=False).library
     assert not any(d.id.startswith("mi.energy.") for d in lib.machine_defs)
     assert all(i.id != "mi:electricity" for i in lib.items)
+    # Pumps ride with the energy bundle (they need the carriers), so they are
+    # skipped too — but storage and the steam machine tiers are not.
+    assert not any(d.id.startswith("mi.pump.") for d in lib.machine_defs)
+    assert any(d.id.startswith("mi.storage.") for d in lib.machine_defs)
+    assert any(d.id == "mi.machine.macerator.bronze" for d in lib.machine_defs)
 
 
 def test_uncatalogued_type_imports_without_a_ceiling(tmp_path):
@@ -395,21 +467,36 @@ def test_api_import_mi_dir_merges_and_reports_stats(mi_root):
     assert res["ok"] is True
     data = res["data"]
     assert data["stats"]["recipesImported"] == 2
+    # Two parsed recipes, plus the three hand-authored water-pump recipes.
     assert {r["machineType"] for r in data["world"]["recipes"]} == {
         "macerator",
         "mixer",
+        "bronze_water_pump",
+        "steel_water_pump",
+        "electric_water_pump",
     }
-    # The merge landed in the api's live World: 2 processing defs + the energy
-    # machines (boilers/turbines/generators, added to every import).
+    # The merge landed in the api's live World: the electric processing defs plus
+    # the bronze/steel steam tiers (macerator and mixer both have them).
     defs = {d.id for d in api._world.machine_defs}
     assert {d for d in defs if d.startswith("mi.machine.")} == {
         "mi.machine.macerator",
+        "mi.machine.macerator.bronze",
+        "mi.machine.macerator.steel",
         "mi.machine.mixer",
+        "mi.machine.mixer.bronze",
+        "mi.machine.mixer.steel",
     }
     assert data["stats"]["energyMachines"] == len(
         [d for d in defs if d.startswith("mi.energy.")]
     )
     assert data["stats"]["energyMachines"] == 15
+    # Water pumps and storage ride every import too.
+    assert data["stats"]["pumps"] == len([d for d in defs if d.startswith("mi.pump.")])
+    assert data["stats"]["pumps"] == 3
+    assert data["stats"]["storage"] == len(
+        [d for d in defs if d.startswith("mi.storage.")]
+    )
+    assert data["stats"]["steamMachines"] == 4  # macerator + mixer, bronze & steel
 
 
 # --------------------------------------------------------------------------- #

@@ -19,6 +19,7 @@ from process_sim.model import (
     Pipe,
     PipeEnd,
     PipeEndRole,
+    PipeNode,
     Recipe,
     SlotGroup,
     Stack,
@@ -97,6 +98,15 @@ def test_pipe_constructs_minimal() -> None:
     assert p.overclock == 1.0 and p.storage_capacity is None
 
 
+def test_pipe_node_constructs_minimal() -> None:
+    j = PipeNode(id="j1", category=Category.LIQUID)
+    assert j.x is None and j.y is None
+    # unset coords stay absent in the wire format (not 0)
+    d = j.to_dict()
+    assert d == {"id": "j1", "category": "liquid"}
+    assert PipeNode.from_dict(d).category is Category.LIQUID
+
+
 def test_system_constructs_minimal() -> None:
     s = System(id="s1")
     assert s.member_node_ids == [] and s.exposed_ports == []
@@ -106,6 +116,7 @@ def test_system_constructs_minimal() -> None:
 def test_world_constructs_empty() -> None:
     w = World()
     assert w.items == [] and w.pipes == [] and w.systems == []
+    assert w.pipe_nodes == []
 
 
 # --------------------------------------------------------------------------- #

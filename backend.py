@@ -32,14 +32,16 @@ __all__ = ["Api", "build_api", "default_autosave_path"]
 def default_autosave_path() -> Path:
     """Where the app auto-persists the working World between launches.
 
-    ``PROCESS_SIM_HOME`` overrides the base directory; otherwise it lives under
-    the user's home (``~/.process_sim/autosave.psim.json``).
+    ``PROCESS_SIM_HOME`` overrides the base directory; otherwise it lives in a
+    repo-local ``.process_sim/`` directory (next to this file, gitignored), so a
+    checkout's saves travel with the checkout rather than hiding under the user's
+    home (``.process_sim/autosave.psim.json``).
     """
 
     import os
 
     base = os.environ.get("PROCESS_SIM_HOME")
-    root = Path(base) if base else Path.home() / ".process_sim"
+    root = Path(base) if base else Path(__file__).resolve().parent / ".process_sim"
     return root / "autosave.psim.json"
 
 

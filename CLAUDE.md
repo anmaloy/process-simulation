@@ -52,8 +52,9 @@ The UI was **rewritten from a React/Vite/TypeScript + React Flow app into the
 single buildless `ui/index.html`** to match edunode and remove the
 build-toolchain pain and a React Flow viewport bug. It has full feature parity:
 the node-graph canvas (place/move/delete machines, wire/delete pipes,
-pan/zoom/fit), per-kind inspectors with sparse-field discipline (item / recipe /
-machineDef / node / pipe / system), the input/output-driven recipe finder, the
+place pipe junctions to route a trunk to many consumers, pan/zoom/fit), per-kind
+inspectors with sparse-field discipline (item / recipe /
+machineDef / node / pipe / pipeNode / system), the input/output-driven recipe finder, the
 balance overlay (status bar + chip + duty %, flow-weighted/dashed edges, floating
 readout with a world/process/node/system scope switcher and ranked bottlenecks),
 the collapsible/searchable library rail, systems (shift-select -> Group,
@@ -102,8 +103,8 @@ model's camelCase wire format.
 - **`edit`** is `{"op": "upsert", "kind": <kind>, "entity": {...}}` (replaces the
   entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
   "id": <id>}`. `kind` ∈ `item`, `recipe`, `machineDef`, `node`, `pipe`,
-  `system`. Editing recomputes nothing by itself — the UI follows an edit
-  with a `recompute` call.
+  `pipeNode`, `system`. Editing recomputes nothing by itself — the UI follows an
+  edit with a `recompute` call.
 - **`recompute` scopes**: `world` (default), `node` (`nodeId` — a single
   machine), `process` (`nodeId` — its connected component via `trace_process`),
   `system` (`systemId`). The payload is `ScopeReport.to_dict()` (external I/O,
@@ -122,14 +123,25 @@ model's camelCase wire format.
   recipes by `type` into electric-consumer machine defs with a data-derived slot
   layout and the `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`;
   single-block electric machines are LV = 32 EU/t, from the jar's `CableTier` /
-  `MachineTier`; multiblocks import unclamped). It also adds the non-recipe
-  **energy-generation** converter defs (`ENERGY_MACHINES`: boilers, steam/plasma
-  turbines, diesel generators) and the routed-electricity carrier, and sets
-  imported consumers to draw it (see "Energy generation is imported too" above);
-  pass `include_energy: false` to skip them. It resolves tag membership (each tag
-  item's `members`, registering missing member items). `stats` reports the counts
-  (files scanned, recipes imported/skipped, items, tags, member items added,
-  defs, `energyMachines`, per-type).
+  `MachineTier`; multiblocks import unclamped). For the machines that also have
+  **steam tiers** (`STEAM_MACHINE_TIERS` — bronze/steel for macerator, mixer,
+  compressor, cutting machine; steel-only for packer, unpacker, wiremill) it adds
+  a bronze/steel def beside the electric one, running the same recipes but powered
+  by steam (`energySource: liquid`, `sourceItemId` steam) and clamped to the
+  tier's `MachineTier` EU/t ceiling (bronze 2, steel 4). It also adds the
+  non-recipe **energy-generation** converter defs (`ENERGY_MACHINES`: boilers,
+  steam/plasma turbines, diesel generators) and the routed-electricity carrier,
+  and sets imported consumers to draw it; the **water pumps** (`PUMP_MACHINES` —
+  bronze/steel on steam, electric on electricity, each a water source running a
+  fixed-1-EU/t "pump water" recipe at bronze 200 / steel 400 / electric
+  3200 mB/s, the full-placement max); pass `include_energy: false` to skip the
+  energy machines **and** pumps (they share the carriers). It always adds the
+  **storage** defs (`STORAGE_MACHINES` — material tanks/barrels, the single-block
+  Configurable Tank/Chest, and the Large Tank multiblock, with the jar's
+  capacities as editable buffer annotations). It resolves tag membership (each
+  tag item's `members`, registering missing member items). `stats` reports the
+  counts (files scanned, recipes imported/skipped, items, tags, member items
+  added, defs, `steamMachines`, `energyMachines`, `pumps`, `storage`, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the UI's
 `callApi` wrappers in `ui/index.html` mirror this table.
@@ -256,9 +268,21 @@ tests/               # pytest for engine/model/io/api/app
   storage capacity, movement capacity, an overclock multiplier, and per-end
   roles and priorities. **Liquid pipes carry an unlimited rate** — only solids
   and electricity are throughput-capped by `movementCapacity`.
+- **PipeNode** — a pipe *junction*: a small routing dot (one `category`, `x`/`y`)
+  with no recipe/def/slots/energy. It exists only to diverge or merge pipes of
+  one category — a steam or power or belt trunk fans out to many consumers
+  without wiring each back to the source. In the balance it is a **transparent
+  passthrough**, spliced out of the flow graph by the same contraction that
+  dissolves storage buffers (`X → junction → Y` resolves as a direct `X → Y`
+  throttled by the tighter pipe; connectivity for `trace_process` routes through
+  it). It carries no throughput or priority of its own — those stay on the pipes.
+  A pipe end at a junction uses role `io`. The resolved flow is reported on every
+  segment of a spliced chain, so a trunk feeding a junction shows the sum its
+  branches carry.
 - **System** — a user-defined group of nodes treated as one unit, with exposed
   ports and aggregated stats. Collapsible, nestable, connectable.
-- **World** — all items, recipes, machine defs, nodes, pipes, and systems.
+- **World** — all items, recipes, machine defs, nodes, pipes, pipe nodes, and
+  systems.
 
 A slot is one buffer location holding one stack; `slots × stackSize` per category
 and direction sets how much a machine can hold.

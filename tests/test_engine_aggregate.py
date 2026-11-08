@@ -423,6 +423,123 @@ def test_storage_node_is_transparent() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Pipe junctions — transparent routing dots spliced like storage.
+# --------------------------------------------------------------------------- #
+
+
+def _junction_fanout_world() -> World:
+    """src makes 10 w/s → junction → two consumers each wanting 4 w/s."""
+
+    from process_sim.model import PipeNode
+
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+
+    def pipe(pid, a, a_role, b, b_role):
+        return Pipe(
+            id=pid,
+            category=Category.SOLID,
+            movement_capacity=100,
+            a=PipeEnd(node_id=a, role=a_role),
+            b=PipeEnd(node_id=b, role=b_role),
+        )
+
+    return World(
+        items=[Item("w", "W", Category.SOLID)],
+        recipes=[
+            Recipe(id="mk", time_seconds=1.0, outputs=[Stack("w", 10)]),
+            Recipe(id="use", time_seconds=1.0, inputs=[Stack("w", 4)]),
+        ],
+        machine_defs=[
+            MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
+            MachineDef(id="U", slots=[in_s], allowed_recipe_ids=["use"]),
+        ],
+        nodes=[
+            MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
+            MachineNode(id="u1", machine_def_id="U", recipe_id="use", assume_outputs=True),
+            MachineNode(id="u2", machine_def_id="U", recipe_id="use", assume_outputs=True),
+        ],
+        pipe_nodes=[PipeNode(id="j", category=Category.SOLID)],
+        pipes=[
+            pipe("p0", "src", PipeEndRole.OUT, "j", PipeEndRole.IO),
+            pipe("p1", "j", PipeEndRole.IO, "u1", PipeEndRole.IN),
+            pipe("p2", "j", PipeEndRole.IO, "u2", PipeEndRole.IN),
+        ],
+    )
+
+
+def test_junction_splices_source_to_many_consumers() -> None:
+    report = compute_world(_junction_fanout_world())
+    # Both consumers are fully fed through the junction (4 each of the 10 made).
+    assert _close(report.balances["u1"].inputs["w"].supplied, 4.0)
+    assert _close(report.balances["u2"].inputs["w"].supplied, 4.0)
+    assert _close(report.node_duty["u1"], 1.0)
+    assert _close(report.node_duty["u2"], 1.0)
+    # src throttles to the 8/s actually drawn (its product isn't a feedstock/yield
+    # — it's all consumed internally).
+    assert _close(report.node_duty["src"], 0.8)
+    # Flow is reported on every segment: the trunk carries the sum, branches 4 each.
+    assert _close(report.pipe_flows["p0"].flow, 8.0)
+    assert _close(report.pipe_flows["p1"].flow, 4.0)
+    assert _close(report.pipe_flows["p2"].flow, 4.0)
+
+
+def test_junction_is_transparent_vs_direct_wiring() -> None:
+    # A single consumer fed through a junction matches being wired directly.
+    from process_sim.model import PipeNode
+
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+    base = dict(
+        items=[Item("w", "W", Category.SOLID)],
+        recipes=[
+            Recipe(id="mk", time_seconds=1.0, outputs=[Stack("w", 3)]),
+            Recipe(id="use", time_seconds=1.0, inputs=[Stack("w", 4)]),  # starved
+        ],
+        machine_defs=[
+            MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
+            MachineDef(id="U", slots=[in_s], allowed_recipe_ids=["use"]),
+        ],
+        nodes=[
+            MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
+            MachineNode(id="u", machine_def_id="U", recipe_id="use", assume_outputs=True),
+        ],
+    )
+    direct = World(
+        **base,
+        pipes=[
+            Pipe(
+                id="d",
+                category=Category.SOLID,
+                movement_capacity=100,
+                a=PipeEnd("src", PipeEndRole.OUT),
+                b=PipeEnd("u", PipeEndRole.IN),
+            )
+        ],
+    )
+    via = World(
+        **base,
+        pipe_nodes=[PipeNode(id="j", category=Category.SOLID)],
+        pipes=[
+            Pipe(id="a", category=Category.SOLID, movement_capacity=100,
+                 a=PipeEnd("src", PipeEndRole.OUT), b=PipeEnd("j", PipeEndRole.IO)),
+            Pipe(id="b", category=Category.SOLID, movement_capacity=100,
+                 a=PipeEnd("j", PipeEndRole.IO), b=PipeEnd("u", PipeEndRole.IN)),
+        ],
+    )
+    rd, rv = compute_world(direct), compute_world(via)
+    assert _close(rv.node_duty["u"], rd.node_duty["u"])  # 3/4 either way
+    assert _close(rv.balances["u"].inputs["w"].supplied, 3.0)
+
+
+def test_trace_process_routes_through_junction() -> None:
+    # The two consumers reach each other only via src → junction → consumer, so
+    # they are one process even though no pipe names two machines directly.
+    proc = set(trace_process(_junction_fanout_world(), "u1"))
+    assert proc == {"src", "u1", "u2"}
+
+
+# --------------------------------------------------------------------------- #
 # System scope.
 # --------------------------------------------------------------------------- #
 
