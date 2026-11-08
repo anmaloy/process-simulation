@@ -86,7 +86,10 @@ select.field-input{cursor:pointer}
 }
 .canvas{position:absolute;inset:0;overflow:hidden;cursor:grab;touch-action:none}
 .canvas.dragging{cursor:grabbing}
-#viewport{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+/* No persistent will-change: it pins a single cached raster that gets GPU-upscaled
+   after a zoom-in (fit), showing blurry until a later repaint. Rasterizing per
+   on-screen scale keeps cards sharp; the node count is small so paint cost is low. */
+#viewport{position:absolute;left:0;top:0;transform-origin:0 0}
 #edges,#edges-hit{position:absolute;left:0;top:0;overflow:visible;width:1px;height:1px;pointer-events:none}
 /* #edges (visible) sits behind the nodes; #edges-hit is a transparent layer
    above them so a pipe stroke stays clickable even where it passes a node,
@@ -516,6 +519,7 @@ function renderShell(){
 /* ---------- rail ---------- */
 const railOpen = { nodes:true, systems:true, items:false, recipes:false, machineDefs:false };
 let railQuery = "";
+const railSearchCollapsed = new Set(); // sections manually collapsed while a search is active
 const RAIL_CAP = 60;
 
 function renderRail(){
@@ -540,7 +544,7 @@ function renderRail(){
 
   // search
   const search = el("input",{class:"field-input mono",type:"text",placeholder:"search library…",value:railQuery,
-    oninput:e=>{ railQuery=e.target.value; renderRailSections(); }});
+    oninput:e=>{ railQuery=e.target.value; if(railQuery.trim()==="") railSearchCollapsed.clear(); renderRailSections(); }});
   scroll.append(el("div",{class:"rail-search"}, search));
 
   const sectionsHost = el("div",{id:"railSections"});
@@ -563,9 +567,12 @@ function renderRailSections(){
   ];
   for(const sec of sections){
     const filtered = sec.rows.filter(r=>railMatch(r.label,r.id)).sort((a,b)=>cmp(a.label,b.label));
-    const open = railQuery.trim()!=="" || railOpen[sec.key];
+    // While searching, sections default open (so matches show) but can still be
+    // collapsed individually; otherwise the persistent per-section toggle governs.
+    const searching = railQuery.trim()!=="";
+    const open = searching ? !railSearchCollapsed.has(sec.key) : railOpen[sec.key];
     const head = el("div",{class:"rail-section-head"},
-      el("button",{class:"rail-section-toggle eyebrow quiet",onclick:()=>{ railOpen[sec.key]=!railOpen[sec.key]; renderRailSections(); }},
+      el("button",{class:"rail-section-toggle eyebrow quiet",onclick:()=>{ if(searching){ railSearchCollapsed.has(sec.key)?railSearchCollapsed.delete(sec.key):railSearchCollapsed.add(sec.key); } else { railOpen[sec.key]=!railOpen[sec.key]; } renderRailSections(); }},
         el("span",{class:"rail-caret"+(open?" open":"")},"▸"), sec.title,
         el("span",{class:"rail-count mono"}, String(sec.rows.length))),
       sec.add? el("button",{class:"rail-add",title:"New "+sec.title.toLowerCase().replace(/s$/,""),onclick:()=>createEntity(sec.add)},"+"):null
@@ -728,8 +735,8 @@ function nodeDom(n, def, ins, outs){
   if(def&&def.storage) dom.append(el("div",{class:"nstore mono"},"▭ "+fmtCapacity(def.storage.capacity*(n.count||1),def.storage.category)));
   dom.append(el("div",{class:"nports"}));
   // header drag + select (shift-click toggles multi-select for grouping)
-  const head=dom.querySelector(".nhead");
-  head.addEventListener("pointerdown",e=>startNodeDrag(e,n.id,dom,false));
+  // drag from anywhere on the body; ports/buttons stopPropagation so they still work
+  dom.addEventListener("pointerdown",e=>startNodeDrag(e,n.id,dom,false));
   dom.addEventListener("click",e=>{ e.stopPropagation(); if(dragMoved) return;
     if(e.shiftKey) toggleMulti(n.id); else select("node",n.id); });
   return dom;
@@ -746,8 +753,7 @@ function sysDom(s){
       el("button",{class:"expand",title:"Expand",onpointerdown:e=>e.stopPropagation(),onclick:e=>{ e.stopPropagation(); toggleCollapse(s.id); }},"expand")),
     el("div",{class:"smeta"}, `${count} machine${count===1?"":"s"}`+(st?" · "+st:"")+(rep&&rep.netEnergy?" · "+fmtEnergy(rep.netEnergy):""))
   );
-  const head=dom.querySelector(".nhead");
-  head.addEventListener("pointerdown",e=>startNodeDrag(e,s.id,dom,true));
+  dom.addEventListener("pointerdown",e=>startNodeDrag(e,s.id,dom,true));
   dom.addEventListener("click",e=>{ e.stopPropagation(); if(!dragMoved) select("system",s.id); });
   return dom;
 }
@@ -1274,7 +1280,7 @@ function itemInspector(body, it){
     hint:"a group ('any item in this set'), e.g. c:ingots/iron",
     child: tagMembersEditor(it)
   }));
-  body.append(dangerButton("Delete item", ()=>{ if(confirm("Delete this item?")) deleteSelected(); }));
+  body.append(dangerButton("Delete item", ()=>deleteSelected()));
 }
 function tagMembersEditor(it){
   const wrap=el("div");
@@ -1303,7 +1309,7 @@ function recipeInspector(body, r){
     child:textInput(r.machineType, v=>saveEntity("recipe", withField(r,"machineType",v)))}));
   body.append(stackListEditor("inputs", r, "inputs"));
   body.append(stackListEditor("outputs", r, "outputs"));
-  body.append(dangerButton("Delete recipe", ()=>{ if(confirm("Delete this recipe?")) deleteSelected(); }));
+  body.append(dangerButton("Delete recipe", ()=>deleteSelected()));
 }
 function stackListEditor(label, r, key){
   const rows=r[key]||[];
@@ -1419,7 +1425,7 @@ function defInspector(body, def){
 
   body.append(allowedRecipesEditor(def));
   body.append(slotListEditor(def));
-  body.append(dangerButton("Delete machine def", ()=>{ if(confirm("Delete this machine def?")) deleteSelected(); }));
+  body.append(dangerButton("Delete machine def", ()=>deleteSelected()));
 }
 function allowedRecipesEditor(def){
   const recipes=WORLD.recipes||[];
@@ -1490,7 +1496,7 @@ function nodeInspector(body, n){
   bf.append(el("span",{class:"field-hint"},"a machine runs only when its inputs are supplied and its outputs are taken; a boundary machine is fed or emptied by hand"));
   body.append(bf);
 
-  body.append(dangerButton("Delete machine node", ()=>{ if(confirm("Delete this node?")) deleteSelected(); }));
+  body.append(dangerButton("Delete machine node", ()=>deleteSelected()));
 }
 function resourceName(id){
   const it=BY.items[id];
@@ -1591,7 +1597,7 @@ function pipeInspector(body, p){
   }
   body.append(pipeEnd("end A", p, "a"));
   body.append(pipeEnd("end B", p, "b"));
-  body.append(dangerButton("Delete pipe", ()=>{ if(confirm("Delete this pipe?")) deleteSelected(); }));
+  body.append(dangerButton("Delete pipe", ()=>deleteSelected()));
 }
 function pipeEnd(title, p, key){
   const end=p[key];
@@ -1635,7 +1641,7 @@ function systemInspector(body, s){
   const addable=nodes.filter(nn=>!members.has(nn.id)).map(nn=>({value:nn.id,label:nodeLabel(nn.id)}));
   if(addable.length) mf.append(combo("", addable, id=>saveEntity("system", withField(s,"memberNodeIds",[...members,id])), "+ add member…",{clearOnPick:true}));
   body.append(mf);
-  body.append(dangerButton("Delete system (keeps members)", ()=>{ if(confirm("Delete this system grouping?")) deleteSelected(); }));
+  body.append(dangerButton("Delete system (keeps members)", ()=>deleteSelected()));
 }
 
 /* ============================================================================

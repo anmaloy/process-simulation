@@ -235,3 +235,6 @@ frontend/.vite/
 
 # Standalone export output
 /dist/
+
+# Process-sim working saves (repo-local autosave + manual saves)
+/.process_sim/

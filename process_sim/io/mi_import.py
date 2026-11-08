@@ -203,8 +203,12 @@ STEAM_PER_WATER = 16.0
 _EU_PER_MB_STEAM = 1.0
 #: Helium-plasma energy density (plasma turbine ``ofSingleFluid`` arg): 100000 EU/mB.
 _EU_PER_MB_PLASMA = 100_000.0
-#: Boilers idle hot and lose unused surplus heat — the SteamHeater waste fraction.
+#: The multiblock steam boilers idle hot and lose unused surplus heat — the
+#: SteamHeater waste fraction. The single-block bronze/steel boilers do **not**:
+#: they are 100% efficient and simply stop burning fuel when their steam buffer
+#: is full (modelled as no waste, ``w = 0`` → fuel drain follows actual draw).
 _BOILER_WASTE = 0.8
+_SINGLE_BLOCK_BOILER_WASTE = None
 
 
 @dataclass(frozen=True)
@@ -247,7 +251,7 @@ ENERGY_MACHINES: tuple[EnergyMachine, ...] = (
         None,
         WATER_ID,
         STEAM_PER_WATER,
-        _BOILER_WASTE,
+        _SINGLE_BLOCK_BOILER_WASTE,
     ),
     EnergyMachine(
         "steel_boiler",
@@ -258,7 +262,7 @@ ENERGY_MACHINES: tuple[EnergyMachine, ...] = (
         None,
         WATER_ID,
         STEAM_PER_WATER,
-        _BOILER_WASTE,
+        _SINGLE_BLOCK_BOILER_WASTE,
     ),
     EnergyMachine(
         "large_steam_boiler",
