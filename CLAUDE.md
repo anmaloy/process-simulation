@@ -13,243 +13,70 @@ update this file.
 
 ## Stack
 
-- **Backend:** Python 3.11+. The rate-balance engine and data model are pure
-  Python with no UI dependency.
-- **Shell:** pywebview — the app runs as a single Python process hosting a system
-  webview. No Electron/Chromium bundle and no Node server at runtime.
-- **Frontend:** web UI built with Vite + React + TypeScript, rendered in the
-  webview. Node canvas via React Flow (`@xyflow/react`), which provides pan/zoom,
-  ports, edges, and a minimap out of the box.
-- **Bridge:** the frontend calls the engine through pywebview's JS API
-  (`window.pywebview.api`); World state crosses as JSON.
-- **Persistence:** project files are JSON (the whole World), written by the Python
-  side.
-- **Tests:** pytest for the engine and model.
+Mirrors edunode's architecture (a simple, buildless client-side app over a thin
+Python backend — see `anmaloy/edunode_app`):
 
-The styling target is edunode's CSS, which the webview renders directly — that is
-the main reason for a web UI over a native toolkit (see `STYLE_GUIDE.md`).
+- **Backend:** Python 3.11+. The rate-balance engine, data model, and file IO are
+  pure Python with no UI dependency, under `process_sim/`.
+- **UI:** one hand-written `ui/index.html` — vanilla JS, a hand-rolled SVG/HTML
+  canvas (pan/zoom/drag), inspectors, and the balance overlay. **No build step,
+  no npm, no framework, no `node_modules`.** Edit the file and refresh.
+- **Backend surface:** `backend.Api` (re-exported from `process_sim.api`) holds
+  the working World and marshals JSON <-> model. The same instance is bound two
+  ways, and the UI's `callApi` auto-detects which transport is live and unwraps
+  the `{ok,data}` result envelope:
+  - `app.py` — the **pywebview desktop app**; the UI calls
+    `window.pywebview.api.<method>(...)`.
+  - `server.py` — a **stdlib HTTP server** (`POST /api/<method>`, body
+    `{"args": [...]}`) for any browser on the network. Run exactly one process.
+- **Persistence:** the working World auto-saves to
+  `~/.process_sim/autosave.psim.json` after every change (`PROCESS_SIM_HOME`
+  overrides the dir), so the app resumes on relaunch. Project files are JSON (the
+  whole World). `export_standalone.py` bakes the World into a single view-only
+  HTML (no backend).
+- **Tests:** pytest for the engine, model, IO, api, and app/server surface. The
+  UI is validated by driving `server.py` (the real engine) in a headless browser.
+
+The styling target is edunode's CSS (`STYLE_GUIDE.md` `:root` tokens, pasted
+verbatim); fonts ship as local `woff2` under `ui/fonts/` (offline-first).
 
 ## Project state
 
-Phases 0–4 are done: the scaffold/toolchain (P0), the domain model with JSON
-round-trip (P1, `model/`), the headless rate-balance engine (P2, `engine/`:
-per-node rates + fuel→fluid conversion, per-node balance, asymmetric pipe-priority flow
-resolution, and scope aggregation), project/library IO (P3, `io/`: versioned
-project save/load and library export/import with id-collision handling), and the
-pywebview JS API surface (P4, `api.py`: the frozen JSON bridge — see "API
-surface" below) — all covered by pytest. This is the end-of-P4 milestone: a
-complete, headless, tested product that loads a project, computes every scope's
-balance, and saves.
+The headless core (`process_sim/`: `engine/` rate-balance, `model/` dataclasses,
+`io/` project/library/MI-import, `api.py` the JSON bridge) is complete and fully
+pytest-covered — it computes every scope's balance, round-trips projects, and
+imports Modern Industrialization recipe data. This core was carried over intact;
+only its *surface* changed.
 
-Phase 5 is done too: the frontend shell + bridge (`frontend/src/`). `styles/`
-holds the palette tokens (verbatim from `STYLE_GUIDE.md` §2) and the rail+stage
-shell; IBM Plex Mono and Space Grotesk ship as local `woff2` via `@fontsource`
-(no Google Fonts `@import`, offline-first — the built `dist/` loads nothing from
-a CDN). `bridge/` is a typed TS client (`ApiClient`) over `window.pywebview.api`
-mirroring the P4 method shapes, with a `DevApi` fallback over an in-memory
-fixture so `npm run dev` runs in a plain browser with no Python host; the client
-unwraps the result envelope (throwing `ApiCallError` on `{ok: false}`). `App.tsx`
-boots the bridge and round-trips a `get_world` call.
+The UI was **rewritten from a React/Vite/TypeScript + React Flow app into the
+single buildless `ui/index.html`** to match edunode and remove the
+build-toolchain pain and a React Flow viewport bug. It has full feature parity:
+the node-graph canvas (place/move/delete machines, wire/delete pipes,
+pan/zoom/fit), per-kind inspectors with sparse-field discipline (item / recipe /
+machineDef / node / pipe / system), the input/output-driven recipe finder, the
+balance overlay (status bar + chip + duty %, flow-weighted/dashed edges, floating
+readout with a world/process/node/system scope switcher and ranked bottlenecks),
+the collapsible/searchable library rail, systems (shift-select -> Group,
+collapse/expand), undo (Ctrl+Z), MI import, and project save/load. Every
+structural gesture and field edit goes through `apply_edit` and is followed by a
+`recompute`; the returned World reseeds the canvas.
 
-Phase 6 is done: the node-graph canvas (`frontend/src/canvas/`). React Flow
-(`@xyflow/react`) renders the World — custom machine nodes (`div` bodies) with
-ports as handles (one per category×direction from the MachineDef slot layout),
-and pipes as edges colored by category. The World is the single source of truth:
-placing a machine, wiring a pipe, moving a node, or deleting either bubbles up as
-a P4 `apply_edit` call whose returned World reseeds the graph, so a laid-out
-graph round-trips through the API into a loadable project (positions persist on
-`MachineNode.x/y`). The category color map (`colors.ts`: solid→silver,
-liquid→blue, energy→gold) is the single seam; `graph.ts` holds the World↔React
-Flow mapping and the connection validation (out→in, matching category). Edge
-`data` leaves seams (`status`, `flow`, `shortfall`) for the P8 balance overlay —
-absent until a recompute fills them, so nothing is fabricated. Pan/zoom, the
-minimap, and controls are React Flow defaults, re-skinned with the style tokens.
+Energy is the carrier-tiers model (routed fuel -> steam -> electricity, per-recipe
+hybrid energy, MI power tiers clamping overclock, per-node duty cycles,
+transparent storage buffers, membership-aware tag flow resolution). The "Domain
+model", "Carrier tiers", "Computation" and "Resolved decisions" sections below
+are the authoritative detail and are unchanged by the UI rewrite.
 
-Phase 7 is done: the inspector panels (`frontend/src/panels/`). A docked panel
-edits the current selection — canvas clicks pick a node or pipe, rail lists pick
-a library entity (item / recipe / machine def) — through one `Inspector` that
-dispatches to a per-kind editor (`ItemInspector`, `RecipeInspector`,
-`MachineDefInspector`, `NodeInspector`, `PipeInspector`). Selection is controlled
-by the host (click-driven, not React Flow's own), so the two surfaces share one
-inspector with no feedback loop. The load-bearing rule is sparse-field
-discipline, built into the `fields.tsx` kit: an *optional* field that is absent
-renders as "unset / + set" (never a populated 0) and clearing it removes the key;
-a genuinely *inapplicable* field isn't mounted at all — a non-fuel def shows no
-efficiency/`maxFluidRate`, an `in`-only pipe end shows no extract priority, and
-flipping a role or the fuel flag clears the now-inapplicable terms. Every field
-edit routes through the P4 `apply_edit` upsert and is followed by a `recompute`,
-so edits persist and the balance refreshes; the returned World reseeds the
-canvas.
+### API surface (frozen contract)
 
-Phase 8 is done: the balance overlay (`frontend/src/overlay/`). The engine's
-`ScopeReport` is made legible on the canvas and in a floating readout. Nodes
-carry their balance status (OK green / shortfall red / overflow yellow /
-stalled grey) as a left bar, a status chip, and a faint body ring; pipe edges
-thicken with resolved flow and dash when they feed a starved node; the cyan glow
-stays reserved for the selected element. `status.ts` is the single status
-color/label map (read by the node view, the legends, and the readout);
-`units.ts` is the single display-scaling seam (resolved decision #5 — canonical
-units stored, values auto-scaled to k/M/G and sub-unit for readability).
-`Legends` renders the category + status keys; `BalanceReadout` shows the chosen
-scope's external I/O, net energy, and ranked bottlenecks, with a scope switcher
-(machine / process / system / world). Scope recompute is effect-driven in
-`App.tsx`: any edit (which replaces the World) or scope-target change refreshes
-the report, and a scope with no target (e.g. machine scope with nothing
-selected) clears it rather than fabricating one. To feed the edge overlay, the
-engine's `ScopeReport` gained a **`pipeFlows`** field (per-pipe resolved `flow` +
-a `shortfall` flag) — an additive, documented contract bump mirrored in the TS
-`ScopeReport` type.
-
-Phase 9 is done: systems / grouping (`frontend/src/systems/`). A System groups
-member nodes (and nested systems) and can **collapse** into one canvas node.
-Collapse is presentation only — pipes always reference the real member nodes, so
-the engine's balance is byte-identical folded or expanded (the model's
-`collapsed` flag is never read by the engine; P2d already scoped systems with
-nesting). `collapseState` decides which members fold away and which *outermost*
-collapsed systems render as nodes; `buildCanvasGraph` folds them, re-points a
-pipe crossing a collapsed boundary to the system node (a handle encodes the
-member port as `b:<nodeId>:<port>`), and drops a pipe internal to one collapsed
-system. A new pipe drawn to a collapsed system's handle decodes back to a real
-node→node pipe, so a group stays genuinely connectable. Canvas multi-select
-offers a "Group" action; the `SystemInspector` edits membership, nesting
-(cycle-guarded), the collapsed flag, and exposed ports; a folded node shows its
-member count and aggregate status/energy from a per-system recompute. The
-`System` model gained optional `x`/`y` (the collapsed node's position).
-
-Phase 10 is done: the app shell & packaging (`app.py`). The whole app runs as a
-single Python process — `app.py` builds the thin `Api`, binds it to a pywebview
-window, and loads the **built** `frontend/dist/index.html` from disk via a
-`file://` URI (Vite `base: "./"` keeps asset paths relative; no dev server, no
-network). All non-GUI logic is import-safe and unit-tested headless (`webview`
-is imported lazily inside `main`): `dist_dir` resolves the bundle
-(`PROCESS_SIM_DIST` env → PyInstaller `_MEIPASS` → repo layout), `build_api`
-optionally preloads a project file, and `find_external_refs` enforces the
-offline guarantee by scanning the built HTML/CSS for any external load.
-`python app.py --check` runs that scan (exit 0/1/2) and the built bundle passes;
-`backdrop-filter` degrades to a solid `--panel` fill via `@supports` on every
-glass surface. Packaging is a documented PyInstaller recipe plus a `process-sim`
-console-script entry point.
-
-Post-P10 revision (energy model + UX): the energy model moved to **carrier
-tiers** — `MachineDef.energySource` (electric/liquid/fuel) with a source/output
-carrier replaces the old fuel-burning flag and per-recipe energy terms; steam and
-fuel are routed items, electricity is the scalar grid balance (see "Domain
-model", "Carrier tiers", and decisions #2–#3). The engine now solves per-node
-**duty cycles** so a starved machine reduces yield (downtime) instead of showing
-unmet demand as an external input, and treats **storage** defs as transparent
-buffers (`nodeDuty` + reframed `externalInputs`/`externalOutputs` in
-`ScopeReport`). On the UI side: searchable/alphabetised combo pickers everywhere
-(`frontend/src/ui/Combobox.tsx`), name-derived ids with reference-rewriting
-rename (`ui/ids.ts`), undo (Ctrl+Z), per-category display units (items/mB/EU),
-palette-matched checkboxes, category pipe-speed defaults, and storage/duty
-badges on the node body.
-
-A later pass made **electricity a routed, transfer-limited carrier** (it flows
-over energy pipes like steam, no longer a scalar link) and added **persistence**:
-`Api(world, autosave_path)` writes the World after every change and `app.py`
-restores it on launch (`~/.process_sim/autosave.psim.json`, `PROCESS_SIM_HOME`
-override; a corrupt autosave is ignored, an explicit project file wins), so the
-app no longer resets on reopen. `DevApi` mirrors this with `localStorage` for the
-browser build.
-
-The MI-model rework (hybrid recipe energy, tag resources, power tiers) is wired
-through the frontend: the TS bridge mirrors the new fields and the `importMiDir`
-method; the `RecipeInspector` edits per-recipe `euPerTick` (EU/t) + `machineType`
-and each stack's resource (a concrete item **or** a tag) + `probability`; the
-`MachineDefInspector` edits `voltageTier` + `maxEuPerTick` (the overclock
-ceiling) and frames `baseEnergyConsumption` as the fallback draw; and an "Import
-MI" rail control runs `importMiDir` against an extracted jar directory (Python
-host only — the `DevApi` returns a clear error in the browser build).
-
-A node's recipe is chosen by an **input/output-driven finder** in the
-`NodeInspector` (not a flat dropdown — a machine type has many near-duplicate
-recipes): pick an input and/or output resource the machine's recipes use and the
-matching recipe(s) appear, shown by their inputs → outputs; binding shows the
-resolved I/O. The finder is membership-aware — a tag resource also offers its
-member items, so a concrete item (e.g. "Iron Ore") reaches a recipe keyed on a
-tag. The library **rail** is collapsible per-section with a search box and a
-per-section row cap, so an imported world of thousands of entities stays usable.
-
-**Tag flow resolution is done** (`engine/aggregate.py`): the scope solver is now
-membership-aware. Flow is resolved **per demand key** (a recipe input id —
-concrete or tag); a tag demand draws from any produced concrete supply the tag
-includes (`_satisfies`), a source's output is *committed* as it is drained so one
-supply can't feed two demand keys twice, and that absorbed supply backpressures
-instead of being mistaken for yield. `supplied` is keyed by the sink's demand key
-(the tag id for a tag input), `drained` by the source's concrete supply key. With
-no tags in play each key is matched only by its own id, so a plain concrete chain
-resolves exactly as before. So a producer of `minecraft:iron_ingot` now balances a
-consumer whose recipe input is the tag `c:ingots/iron`.
-
-`io/` reads and writes **versioned envelopes**: every file is a JSON object with
-`schemaVersion` (currently 2; v1 files still load — every bump has been
-additive/optional) and `kind` (`project` or `library`) wrapping its
-payload. A project file nests the whole World under `"world"`; a library file
-carries the reusable subset (items, recipes, machine defs) at top level.
-`load_project`/`load_library` raise `MalformedFileError` (bad JSON, wrong kind,
-garbled payload) or `UnsupportedVersionError` (version this build can't read) —
-never an unhandled crash. `import_library` resolves id collisions by
-`ConflictPolicy` (`rename` default, `skip`, `error`), rewriting intra-library
-references, and never mutates the target World.
-
-`io/mi_import.py` imports **Modern Industrialization** recipe data: it reads an
-extracted MI jar directory, parses the machine recipes for a chosen set of types
-into a `Library` (items/recipes/machine defs), and merges it with
-`import_library`. See the `import_mi_dir` API entry below for the parsing and
-unit rules. It also resolves **tag membership** from the game's tag definitions
-(`data/<ns>/tags/item/<path>.json`, nested `#tag`s flattened): each tag item
-gets its concrete `members`, and any member not already imported is registered
-as a named item — so a concrete item can stand in for a recipe keyed on a tag.
-A `MACHINE_CATALOG` keyed by type supplies the metadata the recipes don't carry —
-the base electric tier and its `maxEuPerTick` ceiling. The tier EU/t values
-(`CABLE_TIER_EU`: LV 32, MV 128, HV 1024, EV 8192, SV 128000000) and the machine
-tiers were read verbatim from the jar (`CableTier` / `MachineTier` static
-initializers), not guessed. `examples/` holds a small sample project
-(`mi_lv_battery_line.psim.json`) generated from a real import.
-
-**Full import is the default** (`DEFAULT_MACHINE_TYPES`): all 24 MI machine recipe
-types are imported, not a four-type subset (validated against the 2.5.11 jar —
-2268 recipes, 1486 items, 403 tags, 24 machine defs). The 13 single-block electric
-machines (macerator, mixer, assembler, packer, unpacker, chemical_reactor,
-cutting_machine, compressor, distillery, centrifuge, wiremill, electrolyzer,
-polarizer) get the **LV** ceiling (32 EU/t, their electric variant in the jar's
-`SingleBlockCraftingMachines`); the multiblocks (blast_furnace, heat_exchanger,
-vacuum_freezer, implosion_compressor, pressurizer, quarry, distillation_tower,
-fusion_reactor, oil_drilling_rig, coke_oven) import with **no ceiling** — in MI
-they scale with their energy hatches, not a fixed tier. The **forge hammer** is a
-manual tool using a vanilla-style single `ingredient` → `result` shape (not the
-`*_inputs`/`*_outputs` arrays) with no `eu`/`duration`; the parser normalizes that
-shape so its I/O imports, with a zero cycle time (no automatic rate).
-
-**Energy generation is imported too** (`ENERGY_MACHINES`, `include_energy` default
-on). MI's power machines are **not** recipe-driven — their rates live in the jar's
-Java, so they are added as hand-authored **converter** defs (`mi.energy.*`) with
-numbers read verbatim (`SingleBlockSpecialMachines` / `MultiblockMachines` /
-`SteamHeaterComponent` / `MachineTier`): **6 boilers** (bronze 8, steel 16, large
-256, advanced 1024, HP 2048, HP-advanced 8192 EU/t — fuel → steam, water material
-at `steamPerWater` 16:1, waste `w`=0.8), **5 steam turbines** (LV 32, MV 128,
-HV 512, large 16384 — steam → electricity 1:1; plus the plasma turbine, 1048576,
-helium plasma → electricity at 100000 EU/mB), and **4 diesel generators** (LV 64,
-MV 256, HV 1024, large 16384 — a fluid fuel → electricity by its `eu`). MI rates
-are per **tick**; stored `×20` as the per-second `maxFluidRate`. A boiler leaves
-its fuel (`sourceItemId`) unset for the player to pick; its steam/water rates are
-fixed. MI's diesel/plasma generator-efficiency multipliers are **not** modelled —
-the planner is energy-conserving (1 EU fuel → 1 EU out). **Electricity is a routed
-carrier** (resolved decision #3): a new energy-category `mi:electricity` item is
-added, generators emit it over energy pipes, and imported consumers draw it
-(`sourceItemId = mi:electricity` + an energy-in port), so an unwired machine is
-unpowered until a generator feeds it. (The committed `examples/` project predates
-this and uses the scalar-mains fallback, still a valid mode.)
-
-### API surface (P4 — frozen contract)
-
-`api.py` exposes a single `Api` class; pywebview binds one long-lived instance
-so the frontend calls each method as `window.pywebview.api.<method>(...)`.
-Arguments arrive as plain JSON and return values serialize straight back. The
-class is **marshaling only** — it converts JSON↔model and delegates to `engine/`
-and `io/`; it holds no rate math, flow resolution, or file-format logic. The one
-state it keeps is *the current World*; edits mutate it, reads and recomputes run
-against it.
+`api.py` exposes a single `Api` class (re-exported as `backend.Api`); one
+long-lived instance is bound by the desktop app (pywebview — the UI calls
+`window.pywebview.api.<method>(...)`) and by the server (`server.py` — `POST
+/api/<method>` with body `{"args": [...]}`). Arguments arrive as plain JSON and
+return values serialize straight back. The class is **marshaling only** — it
+converts JSON↔model and delegates to `engine/` and `io/`; it holds no rate math,
+flow resolution, or file-format logic. The one state it keeps is *the current
+World*; edits mutate it, reads and recomputes run against it.
 
 **Result envelope.** Every method returns `{"ok": true, "data": <payload>}` on
 success or `{"ok": false, "error": {"type": "<ErrorName>", "message": "<str>"}}`
@@ -275,7 +102,7 @@ model's camelCase wire format.
 - **`edit`** is `{"op": "upsert", "kind": <kind>, "entity": {...}}` (replaces the
   entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
   "id": <id>}`. `kind` ∈ `item`, `recipe`, `machineDef`, `node`, `pipe`,
-  `system`. Editing recomputes nothing by itself — the frontend follows an edit
+  `system`. Editing recomputes nothing by itself — the UI follows an edit
   with a `recompute` call.
 - **`recompute` scopes**: `world` (default), `node` (`nodeId` — a single
   machine), `process` (`nodeId` — its connected component via `trace_process`),
@@ -304,83 +131,77 @@ model's camelCase wire format.
   (files scanned, recipes imported/skipped, items, tags, member items added,
   defs, `energyMachines`, per-type).
 
-A changed shape here is a deliberate, documented contract bump — the P5 TS
-bridge mirrors this table.
+A changed shape here is a deliberate, documented contract bump — the UI's
+`callApi` wrappers in `ui/index.html` mirror this table.
 
 ### Commands
 
-Backend (run from `backend/`):
+Run the desktop app (needs a system web engine for pywebview):
 
 ```bash
-cd backend
-python -m venv .venv && . .venv/bin/activate   # Python 3.11+
-pip install -e '.[dev]'                         # install + dev tools
-pytest                                          # run the test suite
-ruff check . && ruff format --check .           # lint + format check
+pip install pywebview            # the only runtime dependency
+python app.py                    # open the desktop window
+python app.py path/to/project.psim.json   # open with a project loaded
 ```
 
-`pyproject.toml` sets `pythonpath = ["."]` and `testpaths = ["../tests"]`, so
-`pytest` from `backend/` finds both the package and the `tests/` tree with no
-extra flags.
-
-Run the desktop app (needs the frontend built first, and a GUI):
+Run as a server instead (standard library only — reach it from any browser/device):
 
 ```bash
-cd frontend && npm run build      # produce frontend/dist/
-cd ../backend
-python app.py                     # open the pywebview window
-python app.py path/to/project.json  # open with a project loaded
-python app.py --check             # verify the bundle loads nothing external (CI)
+python server.py                 # http://localhost:8000
+python server.py 9000            # custom port
 ```
 
-Package per OS with PyInstaller, bundling the built frontend beside the binary
-(`process-sim` is also the installed console-script entry point):
+Edit the UI: change `ui/index.html` and refresh the browser (or relaunch the
+desktop window). There is no build, no `node_modules`, nothing to reinstall for a
+change.
+
+Tests / lint (from the repo root):
 
 ```bash
-pyinstaller --name process-sim --windowed \
-    --add-data "../frontend/dist:frontend/dist" app.py
+pip install pytest ruff
+pytest                           # engine, model, io, api, app/server
+ruff check . && ruff format --check .
 ```
 
-Frontend (run from `frontend/`):
+`pyproject.toml` sets `pythonpath = ["."]` and `testpaths = ["tests"]`, so
+`pytest` from the root finds the `process_sim` package and the tests with no
+extra flags. Bake a backend-less, view-only copy with
+`python export_standalone.py` (-> `dist/process_sim.html`).
 
-```bash
-cd frontend
-npm install        # install deps (Vite + React + TS + @xyflow/react)
-npm run dev        # Vite dev server
-npm run build      # type-check (tsc -b) + production bundle -> dist/
-npm run lint       # tsc --noEmit type check
-```
-
-Layout (`styles/`, `bridge/`, `canvas/`, and `panels/` exist now):
+Layout:
 
 ```
-backend/
-  process_sim/
-    engine/      # rate-balance computation, pure Python
-    model/       # dataclasses: Item, Recipe, MachineDef, MachineNode, Pipe, System, World
-    io/          # load/save project files, library import/export
-    api.py       # pywebview JS API surface — thin; marshals World to/from JSON
-  app.py         # entry point: starts pywebview, loads the built frontend
-frontend/        # web UI (Vite + React + TypeScript)
-  src/
-    bridge/      # typed ApiClient over window.pywebview.api + DevApi fallback
-    styles/      # palette tokens + shell CSS + local @font-face (woff2)
-    canvas/      # React Flow graph: custom nodes, edges, ports, color map (P6)
-    panels/      # docked inspector + per-kind editors, sparse-field kit (P7)
-    overlay/     # balance overlay: status map, legends, scope readout (P8)
-    systems/     # grouping: collapse/expand, nesting, connectable group node (P9)
-tests/           # pytest for engine/model; frontend tests added later
+app.py               # pywebview desktop entry (binds backend.Api)
+server.py            # stdlib HTTP server (POST /api/<method>) for browsers
+backend.py           # Api home (re-exports process_sim.api) + build_api factory
+export_standalone.py # bake the World into one view-only HTML file
+process_sim/
+  engine/            # rate-balance computation, pure Python
+  model/             # dataclasses: Item, Recipe, MachineDef, MachineNode, Pipe, System, World
+  io/                # load/save projects, library + Modern Industrialization import
+  api.py             # the JSON API surface — thin; marshals World to/from JSON
+ui/
+  index.html         # the entire UI: vanilla JS, hand-rolled canvas, inspectors, overlay
+  fonts/             # local woff2 (IBM Plex Mono, Space Grotesk) — offline
+examples/            # a sample project
+tests/               # pytest for engine/model/io/api/app
 ```
+
 
 ## Architecture rules
 
 - **The engine does not import the UI or pywebview.** All rate/balance
-  computation lives in `engine/` and `model/` and runs headless. The frontend
-  reaches it only through the pywebview JS API, which serializes World state
-  to/from JSON. Keep `api.py` thin — it marshals data, it does not hold logic.
-  This keeps the hard part testable without a webview.
-- **Offline-first.** The app makes no network calls at runtime. Bundle all assets
-  (fonts, scripts, styles) locally; nothing loads from a CDN.
+  computation lives in `process_sim/engine/` and `process_sim/model/` and runs
+  headless. The UI reaches it only through `backend.Api` (over the pywebview
+  bridge or `POST /api/<method>`), which serializes World state to/from JSON.
+  Keep `api.py` thin — it marshals data, it does not hold logic. This keeps the
+  hard part testable without a webview.
+- **No build step.** The UI is a single hand-written `ui/index.html` (vanilla JS
+  + CSS). Do not reintroduce npm, a bundler, a framework, or a `node_modules` —
+  the whole point of the edunode-style rewrite was to delete them. Edit the file
+  and refresh.
+- **Offline-first.** The app makes no network calls at runtime. Keep all assets
+  (fonts under `ui/fonts/`, scripts, styles) local; nothing loads from a CDN.
 - **Recompute on change.** The model is steady-state, not a tick-by-tick
   simulation. Every machine and pipe runs continuously at its effective rate;
   on any edit, recompute balances. There is no event loop over discrete items.

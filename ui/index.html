@@ -1,0 +1,1757 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0f17'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2334d3e0'/%3E%3C/svg%3E" />
+<title>Process Simulation</title>
+<style>
+/* Palette — verbatim from STYLE_GUIDE.md §2. Do not introduce new hues. */
+:root{
+  --bg:#0b0f17; --bg-2:#10151f; --panel:#141b27; --panel-2:#1a2331;
+  --line:#26303f; --line-2:#33425a;
+  --ink:#e8edf5; --ink-dim:#9aa7ba; --ink-faint:#5f6e85;
+  --spine:#34d3e0; --spine-glow:rgba(52,211,224,.35);
+  --s-not:#566072; --s-learn:#e3b53e; --s-ref:#2f9e6b; --s-indep:#3d6fd6;
+  --s-expert:#8b5cf6; --s-teach:#d9e0ec; --s-bad:#e5565b;
+  --f-not:#1c2433; --f-learn:#5e4a16; --f-ref:#16513a; --f-indep:#1d3a78;
+  --f-expert:#3a2a6b; --f-teach:#6c7585; --f-bad:#5a1e21;
+  --subedge:#d9a93a;
+  --radius:10px;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --disp:'Space Grotesk',system-ui,-apple-system,Segoe UI,sans-serif;
+}
+@font-face{font-family:'IBM Plex Mono';font-weight:400;font-display:swap;src:url('fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'IBM Plex Mono';font-weight:500;font-display:swap;src:url('fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Space Grotesk';font-weight:400;font-display:swap;src:url('fonts/space-grotesk-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Space Grotesk';font-weight:500;font-display:swap;src:url('fonts/space-grotesk-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Space Grotesk';font-weight:600;font-display:swap;src:url('fonts/space-grotesk-latin-600-normal.woff2') format('woff2');}
+@font-face{font-family:'Space Grotesk';font-weight:700;font-display:swap;src:url('fonts/space-grotesk-latin-700-normal.woff2') format('woff2');}
+
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--disp);font-size:14px;overflow:hidden}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--spine)}
+.eyebrow.quiet{color:var(--ink-faint)}
+button{font-family:inherit;color:inherit;cursor:pointer}
+input,select{font-family:inherit}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---- shell: rail | stage | inspector ---- */
+.shell{display:grid;grid-template-columns:300px 1fr;height:100vh}
+.shell.has-inspector{grid-template-columns:300px 1fr clamp(320px,22vw,520px)}
+
+.rail{background:linear-gradient(180deg,var(--bg-2),var(--bg));border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{padding:20px 20px 16px;border-bottom:1px solid var(--line)}
+.brand h1{margin:2px 0 0;font-size:18px;font-weight:600}
+.brand .sub{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink-faint);margin-top:6px}
+.rail-scroll{overflow-y:auto;padding:12px 14px 40px;flex:1;min-height:0}
+.rail-head{display:flex;gap:8px;margin-bottom:8px}
+
+.tool-btn{background:var(--panel-2);border:1px solid var(--line-2);color:var(--ink-dim);border-radius:8px;padding:6px 10px;font-size:12px}
+.tool-btn:hover:not(:disabled){border-color:var(--spine);color:var(--ink)}
+.tool-btn:disabled{opacity:.4;cursor:default}
+
+.rail-section{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.rail-section-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.rail-section-toggle{display:flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;width:100%;text-align:left}
+.rail-caret{display:inline-block;transition:transform .12s;color:var(--ink-faint);font-size:9px}
+.rail-caret.open{transform:rotate(90deg)}
+.rail-count{margin-left:auto;color:var(--ink-faint);font-size:11px}
+.rail-add{background:var(--panel-2);border:1px solid var(--line-2);color:var(--ink-dim);width:22px;height:22px;border-radius:6px;font-size:14px;line-height:1}
+.rail-add:hover{border-color:var(--spine);color:var(--ink)}
+.rail-search{position:relative;margin:8px 0}
+.rail-more{color:var(--ink-faint);font-size:11px;font-style:italic;padding:4px 0}
+
+.leaf{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;font-size:12.5px;color:var(--ink-dim)}
+.leaf.clickable{cursor:pointer}
+.leaf.clickable:hover{background:var(--panel)}
+.leaf.selected{background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--spine-glow);color:var(--ink)}
+.leaf .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.leaf>span:nth-child(2){flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.leaf .leaf-id{font-family:var(--mono);font-size:10px;color:var(--ink-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46%}
+.leaf.draggable{cursor:grab}
+
+/* ---- inputs ---- */
+.field-input,select.field-input{width:100%;background:var(--bg-2);border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:6px 8px;font-size:12.5px}
+.field-input:focus{outline:none;border-color:var(--spine)}
+select.field-input{cursor:pointer}
+
+/* ---- stage ---- */
+.stage{position:relative;min-width:0;overflow:hidden;background:
+  radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0) 0 0/22px 22px;
+}
+.canvas{position:absolute;inset:0;overflow:hidden;cursor:grab;touch-action:none}
+.canvas.dragging{cursor:grabbing}
+#viewport{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+#edges,#edges-hit{position:absolute;left:0;top:0;overflow:visible;width:1px;height:1px;pointer-events:none}
+/* #edges (visible) sits behind the nodes; #edges-hit is a transparent layer
+   above them so a pipe stroke stays clickable even where it passes a node,
+   while gaps pass clicks through (pointer-events only on the strokes). */
+#edges-hit path{pointer-events:stroke}
+
+/* machine node */
+.node{position:absolute;width:210px;background:var(--panel);border:1px solid var(--line-2);
+  border-radius:10px;box-shadow:0 14px 34px -22px #000;user-select:none}
+.node.selected{border-color:var(--spine);box-shadow:0 0 0 1px var(--spine),0 0 22px -4px var(--spine-glow)}
+.node .nbar{position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--s-not)}
+.node .nhead{padding:8px 10px 6px 14px;cursor:grab}
+.node.dragging .nhead{cursor:grabbing}
+.node .ntitle{font-weight:600;font-size:12.5px;line-height:1.15;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node .nid{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node .nmeta{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 4px 14px;align-items:center}
+.node .chip{font-family:var(--mono);font-size:9.5px;padding:1px 5px;border-radius:5px;background:var(--panel-2);color:var(--ink-dim)}
+.node .chip.status{font-weight:600}
+.node .nstore{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);padding:0 10px 2px 14px}
+.node .nports{position:relative;padding:4px 0 8px}
+.port{position:absolute;width:11px;height:11px;border-radius:50%;border:2px solid var(--bg);
+  transform:translate(-50%,-50%);cursor:crosshair;z-index:2}
+.port:hover{box-shadow:0 0 0 3px var(--spine-glow)}
+.port.in{left:0}.port.out{left:210px}
+.plabel{position:absolute;font-family:var(--mono);font-size:9px;color:var(--ink-faint);transform:translateY(-50%);pointer-events:none}
+.plabel.in{left:14px}.plabel.out{right:14px;text-align:right}
+
+/* collapsed system node */
+.sys{position:absolute;width:190px;background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px dashed var(--s-expert);border-radius:12px;box-shadow:0 14px 34px -22px #000;user-select:none}
+.sys.selected{border-style:solid;border-color:var(--spine);box-shadow:0 0 0 1px var(--spine),0 0 22px -4px var(--spine-glow)}
+.sys .nhead{padding:9px 12px;cursor:grab;display:flex;align-items:center;gap:8px}
+.sys .sicon{color:var(--s-expert)}
+.sys .smeta{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);padding:0 12px 10px}
+.sys .expand{margin-left:auto;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;font-size:10px;padding:2px 6px;color:var(--ink-dim)}
+
+/* floating overlays on the stage */
+.palette{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;display:flex;
+  gap:8px;align-items:center;flex-wrap:wrap;max-width:min(66%,560px);padding:9px 12px;
+  background:rgba(16,21,31,.92);border:1px solid var(--line-2);border-radius:12px;box-shadow:0 18px 50px -20px #000;backdrop-filter:blur(12px)}
+.legend{position:absolute;top:14px;right:14px;z-index:6;display:flex;flex-direction:column;gap:8px;
+  padding:9px 11px;background:rgba(16,21,31,.9);border:1px solid var(--line-2);border-radius:10px;backdrop-filter:blur(10px)}
+.legend .row{display:flex;gap:10px;flex-wrap:wrap}
+.legend .key{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;color:var(--ink-dim)}
+.legend-dot{width:9px;height:9px;border-radius:50%}
+.controls{position:absolute;left:14px;bottom:14px;z-index:6;display:flex;flex-direction:column;gap:6px}
+.controls button{width:30px;height:30px;background:rgba(16,21,31,.92);border:1px solid var(--line-2);border-radius:8px;color:var(--ink-dim);font-size:15px}
+.controls button:hover{border-color:var(--spine);color:var(--ink)}
+
+.readout{position:absolute;left:14px;top:14px;z-index:5;width:300px;max-height:calc(100% - 28px);overflow:auto;
+  background:rgba(16,21,31,.93);border:1px solid var(--line-2);border-radius:12px;padding:12px 14px;backdrop-filter:blur(12px)}
+.readout h3{margin:0 0 2px;font-size:14px}
+.scope-switch{display:flex;gap:3px;margin:8px 0;background:var(--bg-2);border-radius:8px;padding:3px}
+.scope-switch button{flex:1;background:none;border:0;border-radius:6px;padding:5px 2px;font-family:var(--mono);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-faint)}
+.scope-switch button.on{background:var(--panel-2);color:var(--spine)}
+.ro-row{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:11px;padding:3px 0;border-bottom:1px solid var(--line)}
+.ro-row .k{color:var(--ink-faint)}
+.ro-row .v{color:var(--ink)}
+.ro-sec{margin-top:10px}
+.ro-sec .lab{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px}
+.ro-list{display:flex;flex-direction:column;gap:3px}
+.ro-item{display:flex;justify-content:space-between;gap:8px;font-family:var(--mono);font-size:10.5px;color:var(--ink-dim)}
+.ro-item .bad{color:var(--s-bad)}
+.ro-empty{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
+.bneck{cursor:pointer}
+.bneck:hover{color:var(--ink)}
+
+/* ---- inspector ---- */
+.inspector{background:linear-gradient(180deg,var(--bg-2),var(--bg));border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.insp-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:16px 16px 10px;border-bottom:1px solid var(--line)}
+.insp-head .eyebrow{display:block}
+.insp-head .insp-id{font-family:var(--mono);font-size:12px;color:var(--ink);margin-top:3px;word-break:break-all}
+.insp-x{background:var(--panel-2);border:1px solid var(--line-2);border-radius:7px;width:26px;height:26px;color:var(--ink-dim);font-size:15px;flex:none}
+.insp-x:hover{border-color:var(--spine);color:var(--ink)}
+.insp-body{overflow-y:auto;padding:12px 16px 40px;flex:1;min-height:0}
+.field{margin-bottom:12px}
+.field-label{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px}
+.field-hint{display:block;font-size:10.5px;color:var(--ink-faint);margin-top:4px;font-style:italic}
+.field-unit{color:var(--ink-faint)}
+.clear-btn,.set-btn{background:none;border:0;color:var(--spine);font-family:var(--mono);font-size:10px;cursor:pointer;padding:0;margin-left:auto}
+.set-btn{color:var(--ink-faint)}
+.set-btn:hover{color:var(--spine)}
+.row-add{background:var(--panel-2);border:1px dashed var(--line-2);color:var(--ink-dim);border-radius:7px;padding:5px 8px;font-size:11px;width:100%;margin-top:6px}
+.row-add:hover{border-color:var(--spine);color:var(--ink)}
+.row-del{background:none;border:0;color:var(--ink-faint);font-size:14px;line-height:1}
+.row-del:hover{color:var(--s-bad)}
+.danger{width:100%;margin-top:18px;background:var(--f-bad);border:1px solid var(--s-bad);color:#ffd9da;border-radius:8px;padding:8px;font-size:12px}
+.danger:hover{background:var(--s-bad);color:#fff}
+.static-val{font-family:var(--mono);font-size:12px;color:var(--ink)}
+.static-val.dim{color:var(--ink-dim)}
+.checkrow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-dim);cursor:pointer;margin:3px 0}
+.checkrow input{accent-color:var(--spine);width:15px;height:15px}
+.chip-list{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:3px 6px;color:var(--ink-dim)}
+.chip-x{background:none;border:0;color:var(--ink-faint);font-size:12px;line-height:1}
+.chip-x:hover{color:var(--s-bad)}
+.stack-empty{font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+.inline-row{display:flex;gap:6px;align-items:center}
+.inline-row .field-input{flex:1}
+.slot-group{border:1px solid var(--line);border-radius:8px;padding:7px;margin-bottom:6px;background:var(--bg-2)}
+.slot-row{display:flex;gap:6px;align-items:center;margin-bottom:5px}
+.slot-row:last-child{margin-bottom:0}
+.slot-x,.slot-unit,.slot-total{font-family:var(--mono);font-size:10px;color:var(--ink-faint);white-space:nowrap}
+.slot-cat-dot{width:9px;height:9px;border-radius:50%;flex:none}
+.recipe-summary{background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:8px}
+.recipe-io{display:flex;gap:8px;margin-top:4px}
+.recipe-io-label{font-family:var(--mono);font-size:10px;color:var(--ink-faint);width:22px;flex:none;padding-top:2px}
+.recipe-chips{display:flex;flex-wrap:wrap;gap:4px}
+.recipe-chip{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10.5px;color:var(--ink-dim)}
+.recipe-list{max-height:220px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px}
+.recipe-opt{padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer;font-size:11px}
+.recipe-opt:last-child{border-bottom:0}
+.recipe-opt:hover{background:var(--panel)}
+
+/* combobox */
+.combo{position:relative}
+.combo-pop{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;max-height:240px;overflow:auto;background:var(--panel);border:1px solid var(--line-2);border-radius:8px;box-shadow:0 18px 44px -18px #000}
+.combo-opt{display:flex;align-items:center;gap:7px;padding:6px 9px;font-size:12px;cursor:pointer;color:var(--ink-dim)}
+.combo-opt:hover,.combo-opt.active{background:var(--panel-2);color:var(--ink)}
+.combo-opt .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.combo-empty{padding:7px 9px;font-size:11px;color:var(--ink-faint);font-family:var(--mono)}
+
+.mi-body{display:flex;flex-direction:column;gap:7px;margin-top:7px}
+.mi-msg{font-family:var(--mono);font-size:10.5px;color:var(--s-ref)}
+.mi-msg.bad{color:var(--s-bad)}
+
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:50;background:var(--panel);border:1px solid var(--line-2);border-radius:9px;padding:9px 14px;font-size:12.5px;box-shadow:0 18px 44px -18px #000;opacity:0;transition:opacity .2s}
+.toast.show{opacity:1}
+.toast.bad{border-color:var(--s-bad)}
+
+.boot{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;color:var(--ink-dim)}
+.boot .eyebrow{color:var(--spine)}
+</style>
+</head>
+<body>
+<div id="app" class="shell">
+  <div class="stage boot" id="bootmsg">
+    <p class="eyebrow">Bridge</p>
+    <div class="mono">connecting…</div>
+  </div>
+</div>
+<!-- Standalone export injects the baked World here (view-only, no backend). -->
+<script id="world-data" type="application/json"><!--WORLD_DATA_INJECTION_POINT--></script>
+<script>
+"use strict";
+/* ============================================================================
+   Process Simulation — single-file UI (vanilla JS, no build step).
+   Talks to backend.Api over the pywebview bridge (desktop) or POST /api/<method>
+   (server). The World is the single source of truth; every structural gesture
+   and field edit goes through apply_edit and is followed by a recompute.
+   ============================================================================ */
+
+/* ---- tiny DOM builders ---- */
+function el(tag, props){
+  const n = document.createElement(tag);
+  if(props) for(const k in props){
+    const v = props[k];
+    if(v==null||v===false) continue;
+    if(k==="class") n.className=v;
+    else if(k==="style"&&typeof v==="object") Object.assign(n.style,v);
+    else if(k==="html") n.innerHTML=v;
+    else if(k.slice(0,2)==="on"&&typeof v==="function") n.addEventListener(k.slice(2).toLowerCase(),v);
+    else n.setAttribute(k, v===true?"":v);
+  }
+  for(let i=2;i<arguments.length;i++) add(n, arguments[i]);
+  return n;
+}
+function add(n, c){
+  if(c==null||c===false) return;
+  if(Array.isArray(c)){ c.forEach(x=>add(n,x)); return; }
+  n.append(c.nodeType? c : document.createTextNode(c));
+}
+function svg(tag, attrs){
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  if(attrs) for(const k in attrs){ if(attrs[k]!=null) n.setAttribute(k, attrs[k]); }
+  return n;
+}
+const $ = s => document.querySelector(s);
+
+/* ---- transport: pywebview bridge, else HTTP; unwrap the {ok,data} envelope ---- */
+async function rawCall(method, args){
+  if(window.pywebview && window.pywebview.api && window.pywebview.api[method]){
+    return await window.pywebview.api[method](...args);
+  }
+  const r = await fetch("api/"+method, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({args})
+  });
+  if(!r.ok){
+    let msg = "HTTP "+r.status;
+    try{ const j = await r.json(); if(j.error) msg = j.error; }catch(e){}
+    throw new Error(msg);
+  }
+  const j = await r.json();
+  return j.result;
+}
+async function callApi(method, ...args){
+  const env = await rawCall(method, args);
+  if(env && typeof env==="object" && "ok" in env){
+    if(!env.ok) throw new Error((env.error&&env.error.message) || "call failed");
+    return env.data;
+  }
+  return env; // tolerate a bare result
+}
+function hasBackend(){
+  return (window.pywebview && window.pywebview.api) || location.protocol.startsWith("http");
+}
+
+/* ============================================================================
+   State
+   ============================================================================ */
+let WORLD = null;
+let REPORT = null;
+let SYSTEM_REPORTS = {};
+let SEL = null;                 // {kind,id} | null
+let SCOPE = "world";
+let SYSTEM_ID = null;
+let MULTI = new Set();          // canvas multi-selected node ids (for grouping)
+let view = {x:0, y:0, k:1};
+const HISTORY = [];             // undo snapshots (world dicts)
+let BY = {items:{},defs:{},recipes:{},nodes:{},systems:{}};
+
+function reindex(){
+  const idx = {items:{},defs:{},recipes:{},nodes:{},systems:{}};
+  (WORLD.items||[]).forEach(i=>idx.items[i.id]=i);
+  (WORLD.machineDefs||[]).forEach(d=>idx.defs[d.id]=d);
+  (WORLD.recipes||[]).forEach(r=>idx.recipes[r.id]=r);
+  (WORLD.nodes||[]).forEach(n=>idx.nodes[n.id]=n);
+  (WORLD.systems||[]).forEach(s=>idx.systems[s.id]=s);
+  BY = idx;
+}
+
+/* ============================================================================
+   Constants & maps
+   ============================================================================ */
+const CATEGORY_COLOR = { solid:"var(--s-teach)", liquid:"var(--s-indep)", energy:"var(--subedge)" };
+const catColor = c => CATEGORY_COLOR[c] || "var(--ink-faint)";
+const STATUS_COLOR = { ok:"var(--s-ref)", shortfall:"var(--s-bad)", overflow:"var(--s-learn)", stalled:"var(--s-not)" };
+const STATUS_FILL  = { ok:"var(--f-ref)", shortfall:"var(--f-bad)", overflow:"var(--f-learn)", stalled:"var(--f-not)" };
+const statusColor = s => STATUS_COLOR[s||"stalled"];
+const TPS = 20;
+const toPerTick = v => v/TPS, toPerSecond = v => v*TPS;
+
+function defaultMovementCapacity(cat){
+  if(cat==="solid") return 16;
+  if(cat==="liquid") return 1e9;
+  return 5120; // energy: 256 EU/t × 20
+}
+
+/* ---- unit scaling ---- */
+function scaleMag(m){
+  const a = Math.abs(m);
+  const S=[[1e9,1e9,"G"],[1e6,1e6,"M"],[1e3,1e3,"k"]];
+  for(const [t,d,s] of S) if(a>=t) return {v:sig(m/d), s};
+  return {v:sig(m), s:""};
+}
+function sig(v,n=3){ if(v===0) return "0"; return Number(v.toPrecision(n)).toString(); }
+function fmtRateFor(cat, rate){
+  if(cat==="energy"){ const {v,s}=scaleMag(toPerTick(rate)); return `${v}${s} EU/t`; }
+  const {v,s}=scaleMag(rate); return `${v}${s}${cat==="liquid"?" mB":""}/s`;
+}
+function fmtEnergy(perSec){
+  const pt=toPerTick(perSec), sign=pt>0?"+":pt<0?"−":"";
+  const {v,s}=scaleMag(Math.abs(pt)); return `${sign}${v}${s} EU/t`;
+}
+function fmtCapacity(v, cat){
+  const unit = cat==="liquid"?" mB":cat==="energy"?" EU":"";
+  const {v:val,s}=scaleMag(v); return `${val}${s}${unit}`;
+}
+
+/* ---- ids & references ---- */
+function slugify(name){
+  const s=(name||"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase()
+    .replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").replace(/_+/g,"_");
+  return s||"item";
+}
+const KIND_FIELD = { item:"items", recipe:"recipes", machineDef:"machineDefs", node:"nodes", pipe:"pipes", system:"systems" };
+function idsOfKind(kind){ return new Set((WORLD[KIND_FIELD[kind]]||[]).map(e=>e.id)); }
+function uniqueId(base, taken){ if(!taken.has(base)) return base; for(let i=2;;i++){ const c=`${base}_${i}`; if(!taken.has(c)) return c; } }
+function idFromName(kind, name){ return uniqueId(slugify(name), idsOfKind(kind)); }
+function freshId(prefix, taken){ for(let i=1;;i++){ const c=`${prefix}_${i}`; if(!taken.has(c)) return c; } }
+
+function renameEntity(w, kind, oldId, newId){
+  if(oldId===newId) return w;
+  w = structuredClone(w);
+  const ren = list => (list||[]).map(e=> e.id===oldId?{...e,id:newId}:e);
+  if(kind==="item"){
+    w.items = ren(w.items);
+    const reStack = s => { const n={...s}; if(n.itemId===oldId)n.itemId=newId; if(n.tag===oldId)n.tag=newId; return n; };
+    for(const r of w.recipes||[]){ r.inputs=(r.inputs||[]).map(reStack); r.outputs=(r.outputs||[]).map(reStack); }
+    for(const d of w.machineDefs||[]){ if(d.sourceItemId===oldId)d.sourceItemId=newId; if(d.inputItemId===oldId)d.inputItemId=newId; if(d.outputItemId===oldId)d.outputItemId=newId;
+      if(d.members) d.members=d.members.map(m=>m===oldId?newId:m); }
+    for(const it of w.items||[]){ if(it.members) it.members=it.members.map(m=>m===oldId?newId:m); }
+  } else if(kind==="recipe"){
+    w.recipes = ren(w.recipes);
+    for(const d of w.machineDefs||[]) if(d.allowedRecipeIds) d.allowedRecipeIds=d.allowedRecipeIds.map(x=>x===oldId?newId:x);
+    for(const n of w.nodes||[]) if(n.recipeId===oldId) n.recipeId=newId;
+  } else if(kind==="machineDef"){
+    w.machineDefs = ren(w.machineDefs);
+    for(const n of w.nodes||[]) if(n.machineDefId===oldId) n.machineDefId=newId;
+  }
+  return w;
+}
+
+/* ---- ports from a def's slot layout ---- */
+function portId(cat, dir){ return cat+":"+dir; }
+function parsePortId(id){
+  if(!id) return null;
+  const [c,d]=id.split(":");
+  if((c==="solid"||c==="liquid"||c==="energy")&&(d==="in"||d==="out")) return {category:c,direction:d};
+  return null;
+}
+function portsForDef(def){
+  if(!def || !def.slots || !def.slots.length) return [];
+  const merged = new Map();
+  for(const g of def.slots){
+    const id=portId(g.category,g.direction);
+    const cap=(g.slots||0)*(g.stackSize||0);
+    if(merged.has(id)) merged.get(id).capacity+=cap;
+    else merged.set(id,{id,category:g.category,direction:g.direction,capacity:cap});
+  }
+  const dirRank={in:0,out:1}, catRank={solid:0,liquid:1,energy:2};
+  return [...merged.values()].sort((a,b)=> dirRank[a.direction]-dirRank[b.direction] || catRank[a.category]-catRank[b.category]);
+}
+
+/* ---- systems: collapse state & flattening ---- */
+function flattenSystem(sysId, seen){
+  seen = seen || new Set();
+  const nodeIds = new Set(), systemIds = new Set();
+  const walk = id => {
+    if(seen.has(id)) return; seen.add(id);
+    const s = BY.systems[id]; if(!s) return;
+    systemIds.add(id);
+    (s.memberNodeIds||[]).forEach(n=>nodeIds.add(n));
+    (s.memberSystemIds||[]).forEach(walk);
+  };
+  walk(sysId);
+  systemIds.delete(sysId);
+  return {nodeIds, systemIds};
+}
+function collapseState(){
+  const collapsed = (WORLD.systems||[]).filter(s=>s.collapsed);
+  const flat = new Map(collapsed.map(s=>[s.id, flattenSystem(s.id)]));
+  const nested = new Set();
+  for(const s of collapsed) for(const o of collapsed)
+    if(s.id!==o.id && flat.get(o.id).systemIds.has(s.id)) nested.add(s.id);
+  const rendered = collapsed.filter(s=>!nested.has(s.id));
+  const hidden = new Set(), proxyForNode = new Map();
+  for(const s of rendered) for(const n of flat.get(s.id).nodeIds){ hidden.add(n); if(!proxyForNode.has(n)) proxyForNode.set(n,s.id); }
+  return {rendered, hidden, proxyForNode};
+}
+function centroidOf(nodeIds){
+  const pts = nodeIds.map(id=>BY.nodes[id]).filter(n=>n&&n.x!=null&&n.y!=null);
+  if(!pts.length) return {x:0,y:0};
+  const sx=pts.reduce((a,n)=>a+n.x,0), sy=pts.reduce((a,n)=>a+n.y,0);
+  return {x:Math.round(sx/pts.length), y:Math.round(sy/pts.length)};
+}
+function freshSystemId(){ return freshId("system", idsOfKind("system")); }
+
+/* ---- sparse-field helpers ---- */
+function withField(o,k,v){ return {...o,[k]:v}; }
+function withoutField(o,k){ const n={...o}; delete n[k]; return n; }
+
+/* ============================================================================
+   Edit pipeline — snapshot, apply, re-render, recompute
+   ============================================================================ */
+let BUSY = false;
+function snapshot(){ HISTORY.push(structuredClone(WORLD)); if(HISTORY.length>100) HISTORY.shift(); updateUndo(); }
+function updateUndo(){ const b=$("#undoBtn"); if(b) b.disabled = HISTORY.length===0; }
+
+async function applyEdits(edits, {record=true}={}){
+  if(!edits.length) return;
+  if(record) snapshot();
+  try{
+    let next=null;
+    for(const e of edits) next = await callApi("apply_edit", e);
+    if(next){ WORLD=next; reindex(); }
+  }catch(err){ toast(err.message,true); }
+  renderAll();
+  await recompute();
+}
+async function replaceWorld(next, {record=true}={}){
+  if(record) snapshot();
+  try{ WORLD = await callApi("set_world", next); reindex(); }
+  catch(err){ toast(err.message,true); }
+  renderAll();
+  await recompute();
+}
+function upsert(kind, entity){ return {op:"upsert", kind, entity}; }
+function removeEdit(kind, id){ return {op:"remove", kind, id}; }
+
+function recomputeRequest(){
+  if(SCOPE==="world") return {scope:"world"};
+  if(SCOPE==="node")  return SEL&&SEL.kind==="node"? {scope:"node",nodeId:SEL.id} : null;
+  if(SCOPE==="process") return SEL&&SEL.kind==="node"? {scope:"process",nodeId:SEL.id} : null;
+  if(SCOPE==="system") return SYSTEM_ID? {scope:"system",systemId:SYSTEM_ID} : null;
+  return null;
+}
+async function recompute(){
+  const req = recomputeRequest();
+  if(!req){ REPORT=null; }
+  else { try{ REPORT = await callApi("recompute", req); }catch(e){ REPORT=null; } }
+  // per-collapsed-system aggregate reports
+  const ids = collapseState().rendered.map(s=>s.id);
+  const sr={};
+  for(const id of ids){ try{ sr[id] = await callApi("recompute",{scope:"system",systemId:id}); }catch(e){} }
+  SYSTEM_REPORTS = sr;
+  paintOverlay();
+  renderReadout();
+}
+
+function undo(){
+  const prev = HISTORY.pop(); updateUndo();
+  if(prev) replaceWorld(prev, {record:false});
+}
+
+/* ============================================================================
+   Rendering — rail, graph, inspector, overlay
+   ============================================================================ */
+function renderAll(){ reindex(); renderShell(); renderRail(); renderGraph(); renderInspector(); paintOverlay(); renderReadout(); }
+
+function renderShell(){
+  const app=$("#app");
+  app.className = "shell" + (SEL?" has-inspector":"");
+}
+
+/* ---------- rail ---------- */
+const railOpen = { nodes:true, systems:true, items:false, recipes:false, machineDefs:false };
+let railQuery = "";
+const RAIL_CAP = 60;
+
+function renderRail(){
+  let rail = $("#rail");
+  if(!rail){ rail = el("aside",{class:"rail",id:"rail"}); $("#app").prepend(rail); }
+  rail.textContent="";
+  rail.append(
+    el("div",{class:"brand"},
+      el("p",{class:"eyebrow"},"Production Chain Planner"),
+      el("h1",null,"Process Simulation"),
+      el("div",{class:"sub"},"rate-balance · node graph")),
+  );
+  const scroll = el("div",{class:"rail-scroll"});
+  rail.append(scroll);
+
+  scroll.append(el("div",{class:"rail-head"},
+    el("button",{class:"tool-btn",id:"undoBtn",disabled:HISTORY.length===0,title:"Undo (Ctrl+Z)",onclick:undo},"↶ Undo"),
+    el("button",{class:"tool-btn",title:"Save / load project",onclick:openProjectDialog},"⇄ Project")
+  ));
+
+  scroll.append(miImportSection());
+
+  // search
+  const search = el("input",{class:"field-input mono",type:"text",placeholder:"search library…",value:railQuery,
+    oninput:e=>{ railQuery=e.target.value; renderRailSections(); }});
+  scroll.append(el("div",{class:"rail-search"}, search));
+
+  const sectionsHost = el("div",{id:"railSections"});
+  scroll.append(sectionsHost);
+  renderRailSections();
+}
+
+function railMatch(label,id){ const q=railQuery.trim().toLowerCase(); return q===""||(label||"").toLowerCase().includes(q)||(id||"").toLowerCase().includes(q); }
+function cmp(a,b){ return (a||"").localeCompare(b||"", undefined, {numeric:true,sensitivity:"base"}); }
+
+function renderRailSections(){
+  const host=$("#railSections"); if(!host) return; host.textContent="";
+  const defName = id => (BY.defs[id]&&BY.defs[id].name)||id;
+  const sections=[
+    {key:"nodes",title:"Nodes",rows:(WORLD.nodes||[]).map(n=>({kind:"node",id:n.id,label:defName(n.machineDefId),dot:"var(--s-not)"}))},
+    {key:"systems",title:"Systems",rows:(WORLD.systems||[]).map(s=>({kind:"system",id:s.id,label:s.name||s.id,dot:"var(--s-expert)"}))},
+    {key:"items",title:"Items",add:"item",rows:(WORLD.items||[]).map(i=>({kind:"item",id:i.id,label:i.name||i.id,dot:i.isTag?"var(--ink-faint)":catColor(i.category)}))},
+    {key:"recipes",title:"Recipes",add:"recipe",rows:(WORLD.recipes||[]).map(r=>({kind:"recipe",id:r.id,label:r.name||r.id,dot:"var(--subedge)"}))},
+    {key:"machineDefs",title:"Machine defs",add:"machineDef",drag:true,rows:(WORLD.machineDefs||[]).map(d=>({kind:"machineDef",id:d.id,label:d.name||d.id,dot:"var(--s-teach)"}))},
+  ];
+  for(const sec of sections){
+    const filtered = sec.rows.filter(r=>railMatch(r.label,r.id)).sort((a,b)=>cmp(a.label,b.label));
+    const open = railQuery.trim()!=="" || railOpen[sec.key];
+    const head = el("div",{class:"rail-section-head"},
+      el("button",{class:"rail-section-toggle eyebrow quiet",onclick:()=>{ railOpen[sec.key]=!railOpen[sec.key]; renderRailSections(); }},
+        el("span",{class:"rail-caret"+(open?" open":"")},"▸"), sec.title,
+        el("span",{class:"rail-count mono"}, String(sec.rows.length))),
+      sec.add? el("button",{class:"rail-add",title:"New "+sec.title.toLowerCase().replace(/s$/,""),onclick:()=>createEntity(sec.add)},"+"):null
+    );
+    const body = el("div");
+    if(open){
+      if(filtered.length===0) body.append(el("div",{class:"leaf"},"none"));
+      else{
+        filtered.slice(0,RAIL_CAP).forEach(r=>body.append(leaf(r,sec.drag)));
+        if(filtered.length>RAIL_CAP) body.append(el("div",{class:"leaf rail-more mono"},`+${filtered.length-RAIL_CAP} more — search to narrow`));
+      }
+    }
+    host.append(el("div",{class:"rail-section"}, head, body));
+  }
+}
+function leaf(r, draggable){
+  const seld = SEL && SEL.kind===r.kind && SEL.id===r.id;
+  const node = el("div",{class:"leaf clickable"+(seld?" selected":"")+(draggable?" draggable":""),
+    onclick:()=>select(r.kind, r.id)},
+    el("span",{class:"dot",style:{background:r.dot}}),
+    el("span",null,r.label),
+    el("span",{class:"leaf-id"},r.id));
+  if(draggable){
+    node.setAttribute("draggable","true");
+    node.addEventListener("dragstart",e=>{ e.dataTransfer.setData("text/def-id", r.id); e.dataTransfer.effectAllowed="copy"; });
+  }
+  return node;
+}
+
+/* ---------- graph (canvas) ---------- */
+const NODE_W=210, HEAD_H=0; // HEAD height measured per node at render via layout model
+function portAnchors(def){
+  // deterministic anchor layout matching the rendered node body
+  const ports=portsForDef(def);
+  const ins=ports.filter(p=>p.direction==="in"), outs=ports.filter(p=>p.direction==="out");
+  return {ins,outs,rows:Math.max(ins.length,outs.length,1)};
+}
+
+function renderGraph(){
+  let canvas=$("#canvas");
+  if(!canvas){
+    const stage=el("section",{class:"stage",id:"stage"});
+    canvas=el("div",{class:"canvas",id:"canvas"});
+    const vp=el("div",{id:"viewport"});
+    vp.append(svg("svg",{id:"edges"}));
+    canvas.append(vp);
+    stage.append(canvas, paletteEl(), legendEl(), controlsEl(), el("div",{id:"readout"}));
+    // replace boot / insert as middle column
+    const boot=$("#bootmsg"); if(boot) boot.remove();
+    const app=$("#app");
+    const existing=$("#stage");
+    if(existing) existing.replaceWith(stage); else app.insertBefore(stage, $("#inspector"));
+    wireCanvas(canvas);
+  }
+  const vp=$("#viewport");
+  // clear old nodes (keep the edges svgs)
+  [...vp.querySelectorAll(".node,.sys")].forEach(n=>n.remove());
+  const edges=$("#edges"); edges.textContent="";
+  let edgesHit=$("#edges-hit");
+  if(!edgesHit){ edgesHit=svg("svg",{id:"edges-hit"}); vp.append(edgesHit); }
+  edgesHit.textContent="";
+
+  const cs = collapseState();
+  const anchorPos = {}; // key -> {x,y} scene coords for pipe endpoints
+
+  // Fallback grid for nodes authored without coordinates, so they never stack
+  // at the origin (dragging then persists real x/y, which win).
+  let fbIdx=0;
+  const fallback=()=>({x:(fbIdx%4)*250, y:Math.floor(fbIdx/4)*170, _i:fbIdx++});
+
+  // machine nodes
+  for(const n of WORLD.nodes||[]){
+    if(cs.hidden.has(n.id)) continue;
+    const def=BY.defs[n.machineDefId];
+    const fb = (n.x==null||n.y==null)? fallback() : null;
+    const x = n.x!=null?n.x:fb.x, y=n.y!=null?n.y:fb.y;
+    const {ins,outs,rows}=portAnchors(def);
+    const dom = nodeDom(n, def, ins, outs);
+    dom.style.left=x+"px"; dom.style.top=y+"px";
+    const spacer = dom.querySelector(".nports");
+    spacer.style.height = (rows*22+8)+"px";
+    vp.append(dom);
+    // measure head height (everything above the ports area) to place anchors;
+    // ports are absolute children of the node, so their `top` is node-relative.
+    const headH = spacer.offsetTop;
+    const place=(list,dir)=>list.forEach((p,i)=>{
+      const rowY = headH + (i+0.5)*22 + 6;
+      const px = dir==="in"? 0 : NODE_W;
+      anchorPos[n.id+"|"+p.id] = {x:x+px, y:y+rowY};
+      const dot=el("div",{class:"port "+dir,style:{top:rowY+"px",background:catColor(p.category)},
+        title:p.category+" "+dir,"data-node":n.id,"data-port":p.id,"data-cat":p.category,"data-dir":dir});
+      dot.addEventListener("pointerdown",startConnect);
+      dom.append(dot);
+      dom.append(el("div",{class:"plabel "+dir,style:{top:rowY+"px"}},p.category));
+    });
+    place(ins,"in"); place(outs,"out");
+  }
+
+  // collapsed system nodes
+  for(const s of cs.rendered){
+    const fb=centroidOf([...flattenSystem(s.id).nodeIds]);
+    const x=s.x!=null?s.x:fb.x, y=s.y!=null?s.y:fb.y;
+    const dom=sysDom(s);
+    dom.style.left=x+"px"; dom.style.top=y+"px";
+    vp.append(dom);
+    anchorPos["sys:"+s.id+"|in"]={x, y:y+dom.offsetHeight/2};
+    anchorPos["sys:"+s.id+"|out"]={x:x+190, y:y+dom.offsetHeight/2};
+  }
+
+  // edges (pipes), re-pointed across collapsed boundaries
+  for(const p of WORLD.pipes||[]){
+    const aProxy=cs.proxyForNode.get(p.a.nodeId)||null;
+    const bProxy=cs.proxyForNode.get(p.b.nodeId)||null;
+    if(aProxy && aProxy===bProxy) continue; // internal to one collapsed system
+    const aKey = aProxy? "sys:"+aProxy+"|out" : p.a.nodeId+"|"+(p.a.port||portId(p.category,"out"));
+    const bKey = bProxy? "sys:"+bProxy+"|in"  : p.b.nodeId+"|"+(p.b.port||portId(p.category,"in"));
+    const a=anchorPos[aKey], b=anchorPos[bKey];
+    if(!a||!b) continue;
+    const d=edgePath(a,b);
+    // wide transparent hit path (reliable clicking) + the visible edge
+    const hit=svg("path",{d,fill:"none",stroke:"transparent","stroke-width":16,
+      "data-pipe":p.id,class:"pipe-hit"});
+    hit.style.cursor="pointer";
+    hit.addEventListener("pointerdown",e=>{ e.stopPropagation(); select("pipe",p.id); });
+    const path=svg("path",{d,fill:"none",stroke:catColor(p.category),"stroke-width":2,
+      "data-pipe":p.id,class:"pipe-edge"});
+    $("#edges").append(path);
+    edgesHit.append(hit);
+  }
+
+  // temp connect line placeholder
+  $("#edges").append(svg("path",{id:"tempEdge",fill:"none","stroke-dasharray":"5 4","stroke-width":2,stroke:"var(--spine)",style:"display:none"}));
+
+  // keep the transparent hit layer above the nodes
+  vp.append(edgesHit);
+  applyView();
+}
+function edgePath(a,b){
+  const dx=Math.max(40, Math.abs(b.x-a.x)*0.5);
+  return `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`;
+}
+
+function nodeDom(n, def, ins, outs){
+  const seld = SEL&&SEL.kind==="node"&&SEL.id===n.id;
+  const title = (def&&def.name)||n.machineDefId;
+  const meta=[];
+  if(n.recipeId) meta.push(n.recipeId);
+  if(n.overclock!=null && n.overclock!==1) meta.push("×"+n.overclock);
+  if(n.count!=null && n.count!==1) meta.push("∥"+n.count);
+  const dom=el("div",{class:"node"+(seld||MULTI.has(n.id)?" selected":""),"data-id":n.id},
+    el("span",{class:"nbar","data-bar":n.id}),
+    el("div",{class:"nhead"},
+      el("span",{class:"ntitle"},title),
+      el("span",{class:"nid"},n.id)),
+  );
+  const metaRow=el("div",{class:"nmeta"},"data-meta"); metaRow.textContent="";
+  metaRow.setAttribute("data-meta",n.id);
+  if(meta.length) metaRow.append(el("span",{class:"chip mono"},meta.join("  ")));
+  dom.append(metaRow);
+  if(def&&def.storage) dom.append(el("div",{class:"nstore mono"},"▭ "+fmtCapacity(def.storage.capacity*(n.count||1),def.storage.category)));
+  dom.append(el("div",{class:"nports"}));
+  // header drag + select (shift-click toggles multi-select for grouping)
+  const head=dom.querySelector(".nhead");
+  head.addEventListener("pointerdown",e=>startNodeDrag(e,n.id,dom,false));
+  dom.addEventListener("click",e=>{ e.stopPropagation(); if(dragMoved) return;
+    if(e.shiftKey) toggleMulti(n.id); else select("node",n.id); });
+  return dom;
+}
+function sysDom(s){
+  const seld=SEL&&SEL.kind==="system"&&SEL.id===s.id;
+  const rep=SYSTEM_REPORTS[s.id];
+  const count=flattenSystem(s.id).nodeIds.size;
+  const st = rep? aggregateStatus(rep): null;
+  const dom=el("div",{class:"sys"+(seld?" selected":""),"data-sys":s.id},
+    el("div",{class:"nhead"},
+      el("span",{class:"sicon"},"▦"),
+      el("span",{class:"ntitle"}, s.name||s.id),
+      el("button",{class:"expand",title:"Expand",onpointerdown:e=>e.stopPropagation(),onclick:e=>{ e.stopPropagation(); toggleCollapse(s.id); }},"expand")),
+    el("div",{class:"smeta"}, `${count} machine${count===1?"":"s"}`+(st?" · "+st:"")+(rep&&rep.netEnergy?" · "+fmtEnergy(rep.netEnergy):""))
+  );
+  const head=dom.querySelector(".nhead");
+  head.addEventListener("pointerdown",e=>startNodeDrag(e,s.id,dom,true));
+  dom.addEventListener("click",e=>{ e.stopPropagation(); if(!dragMoved) select("system",s.id); });
+  return dom;
+}
+function aggregateStatus(rep){
+  const st=Object.values(rep.balances||{}).map(b=>b.status);
+  if(st.includes("shortfall")) return "shortfall";
+  if(st.includes("overflow")) return "overflow";
+  if(st.includes("ok")) return "ok";
+  return null;
+}
+
+function applyView(){ $("#viewport").style.transform=`translate(${view.x}px,${view.y}px) scale(${view.k})`; }
+function viewportBox(){ const r=$("#canvas").getBoundingClientRect(); return {w:r.width,h:r.height,cx:r.width/2,cy:r.height/2}; }
+function fit(){
+  const cs=collapseState();
+  const pts=[];
+  for(const n of WORLD.nodes||[]){ if(cs.hidden.has(n.id)) continue; pts.push({x:n.x||0,y:n.y||0,w:NODE_W,h:160}); }
+  for(const s of cs.rendered){ const fb=centroidOf([...flattenSystem(s.id).nodeIds]); pts.push({x:s.x!=null?s.x:fb.x,y:s.y!=null?s.y:fb.y,w:190,h:90}); }
+  const vb=viewportBox();
+  if(!pts.length){ view={x:vb.cx, y:vb.cy, k:1}; applyView(); return; }
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const p of pts){ minX=Math.min(minX,p.x); minY=Math.min(minY,p.y); maxX=Math.max(maxX,p.x+p.w); maxY=Math.max(maxY,p.y+p.h); }
+  const w=maxX-minX, h=maxY-minY, pad=0.15;
+  const k=Math.min(2, Math.max(0.2, Math.min(vb.w*(1-pad)/w, vb.h*(1-pad)/h, 1)));
+  view={k, x: vb.cx - (minX+w/2)*k, y: vb.cy - (minY+h/2)*k};
+  applyView();
+}
+
+/* ---------- palette / legend / controls ---------- */
+function paletteEl(){
+  const host=el("div",{class:"palette",id:"palette"});
+  host.append(el("span",{class:"eyebrow quiet"},"Add machine"));
+  host.append(el("div",{id:"paletteCombo",style:{minWidth:"210px"}}));
+  host.append(el("button",{class:"tool-btn",id:"groupBtn",style:{display:"none"},onclick:groupSelected},"▦ Group"));
+  return host;
+}
+function refreshPalette(){
+  const host=$("#paletteCombo"); if(!host) return; host.textContent="";
+  const opts=(WORLD.machineDefs||[]).map(d=>({value:d.id,label:d.name||d.id,hint:d.storage?"buffer":""}));
+  host.append(combo("", opts, id=>{ const d=BY.defs[id]; if(d) placeMachine(d); }, "+ place a machine…", {clearOnPick:true}));
+  const gb=$("#groupBtn");
+  const cs=collapseState();
+  const groupable=[...MULTI].filter(id=>!cs.hidden.has(id));
+  if(groupable.length>=2){ gb.style.display=""; gb.textContent="▦ Group "+groupable.length; } else gb.style.display="none";
+}
+function legendEl(){
+  const L=el("div",{class:"legend"});
+  L.append(el("div",{class:"eyebrow quiet"},"Category"));
+  L.append(el("div",{class:"row"},
+    ["solid","liquid","energy"].map(c=>el("span",{class:"key"},el("span",{class:"legend-dot",style:{background:catColor(c)}}),c))));
+  L.append(el("div",{class:"eyebrow quiet",style:{marginTop:"4px"}},"Status"));
+  L.append(el("div",{class:"row"},
+    ["ok","shortfall","overflow","stalled"].map(s=>el("span",{class:"key"},el("span",{class:"legend-dot",style:{background:STATUS_COLOR[s]}}),s))));
+  return L;
+}
+function controlsEl(){
+  return el("div",{class:"controls"},
+    el("button",{title:"Zoom in",onclick:()=>zoomBy(1.2)},"+"),
+    el("button",{title:"Zoom out",onclick:()=>zoomBy(1/1.2)},"−"),
+    el("button",{title:"Fit",onclick:fit},"⛶"));
+}
+function zoomBy(f){
+  const vb=viewportBox();
+  const nk=Math.min(2.5,Math.max(0.2,view.k*f));
+  view.x=vb.cx-(vb.cx-view.x)*(nk/view.k);
+  view.y=vb.cy-(vb.cy-view.y)*(nk/view.k);
+  view.k=nk; applyView();
+}
+
+/* ---------- canvas interactions ---------- */
+let pan=null, dragMoved=false;
+function wireCanvas(canvas){
+  canvas.addEventListener("pointerdown",e=>{
+    if(e.target.closest(".node")||e.target.closest(".sys")||e.target.closest(".port")) return;
+    if(e.target.closest("path.pipe-edge")) return;
+    pan={sx:e.clientX,sy:e.clientY,vx:view.x,vy:view.y}; dragMoved=false;
+    canvas.classList.add("dragging"); canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove",e=>{
+    if(nodeDrag){ moveNodeDrag(e); return; }
+    if(!pan) return;
+    const dx=e.clientX-pan.sx, dy=e.clientY-pan.sy;
+    if(Math.hypot(dx,dy)>4) dragMoved=true;
+    view.x=pan.vx+dx; view.y=pan.vy+dy; applyView();
+  });
+  canvas.addEventListener("pointerup",e=>{
+    if(nodeDrag){ endNodeDrag(e); return; }
+    const wasClick = pan && !dragMoved;
+    pan=null; canvas.classList.remove("dragging");
+    if(wasClick) clearSel();
+  });
+  canvas.addEventListener("wheel",e=>{
+    e.preventDefault();
+    const r=canvas.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+    const f=e.deltaY<0?1.12:1/1.12, nk=Math.min(2.5,Math.max(0.2,view.k*f));
+    view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView();
+  },{passive:false});
+  // drop a machine def from the rail
+  canvas.addEventListener("dragover",e=>{ if(e.dataTransfer.types.includes("text/def-id")){ e.preventDefault(); e.dataTransfer.dropEffect="copy"; } });
+  canvas.addEventListener("drop",e=>{
+    const id=e.dataTransfer.getData("text/def-id"); if(!id) return; e.preventDefault();
+    const d=BY.defs[id]; if(!d) return;
+    const p=screenToScene(e.clientX,e.clientY); placeMachine(d,p);
+  });
+}
+function screenToScene(cx,cy){
+  const r=$("#canvas").getBoundingClientRect();
+  return {x:(cx-r.left-view.x)/view.k, y:(cy-r.top-view.y)/view.k};
+}
+
+/* node / system drag */
+let nodeDrag=null;
+function startNodeDrag(e,id,dom,isSystem){
+  e.stopPropagation();
+  dom.setPointerCapture(e.pointerId);
+  const cur=isSystem?BY.systems[id]:BY.nodes[id];
+  const startX=cur.x!=null?cur.x:0, startY=cur.y!=null?cur.y:0;
+  nodeDrag={id,dom,isSystem,sx:e.clientX,sy:e.clientY,startX,startY,moved:false};
+  dragMoved=false;
+  dom.classList.add("dragging");
+}
+function moveNodeDrag(e){
+  const d=nodeDrag;
+  const nx=d.startX+(e.clientX-d.sx)/view.k, ny=d.startY+(e.clientY-d.sy)/view.k;
+  if(Math.hypot(e.clientX-d.sx,e.clientY-d.sy)>3){ d.moved=true; dragMoved=true; }
+  d.dom.style.left=Math.round(nx)+"px"; d.dom.style.top=Math.round(ny)+"px";
+  // live-update pipes by re-rendering edges cheaply
+  d._nx=Math.round(nx); d._ny=Math.round(ny);
+  liveRedrawEdges();
+}
+function endNodeDrag(e){
+  const d=nodeDrag; nodeDrag=null; d.dom.classList.remove("dragging");
+  if(!d.moved){ return; }
+  const x=d._nx!=null?d._nx:d.startX, y=d._ny!=null?d._ny:d.startY;
+  if(d.isSystem){ const s=BY.systems[d.id]; applyEdits([upsert("system",{...s,x,y})]); }
+  else { const n=BY.nodes[d.id]; applyEdits([upsert("node",{...n,x,y})]); }
+}
+function liveRedrawEdges(){
+  // recompute anchors from current DOM positions and redraw edges only
+  const vp=$("#viewport");
+  const posOf=(dom)=>({x:parseFloat(dom.style.left)||0, y:parseFloat(dom.style.top)||0});
+  const anchors={};
+  vp.querySelectorAll(".node").forEach(dom=>{
+    const id=dom.getAttribute("data-id"); const p=posOf(dom);
+    dom.querySelectorAll(".port").forEach(pt=>{
+      const port=pt.getAttribute("data-port"), dir=pt.getAttribute("data-dir");
+      const py=parseFloat(pt.style.top); anchors[id+"|"+port]={x:p.x+(dir==="in"?0:NODE_W), y:p.y+py};
+    });
+  });
+  vp.querySelectorAll(".sys").forEach(dom=>{
+    const id=dom.getAttribute("data-sys"); const p=posOf(dom);
+    anchors["sys:"+id+"|in"]={x:p.x,y:p.y+dom.offsetHeight/2};
+    anchors["sys:"+id+"|out"]={x:p.x+190,y:p.y+dom.offsetHeight/2};
+  });
+  const cs=collapseState();
+  vp.querySelectorAll("path[data-pipe]").forEach(path=>{
+    const pid=path.getAttribute("data-pipe"); const p=(WORLD.pipes||[]).find(x=>x.id===pid); if(!p) return;
+    const aProxy=cs.proxyForNode.get(p.a.nodeId)||null, bProxy=cs.proxyForNode.get(p.b.nodeId)||null;
+    const aKey=aProxy?"sys:"+aProxy+"|out":p.a.nodeId+"|"+(p.a.port||portId(p.category,"out"));
+    const bKey=bProxy?"sys:"+bProxy+"|in":p.b.nodeId+"|"+(p.b.port||portId(p.category,"in"));
+    const a=anchors[aKey],b=anchors[bKey]; if(a&&b) path.setAttribute("d",edgePath(a,b));
+  });
+}
+
+/* port connect → new pipe */
+let connectState=null;
+function startConnect(e){
+  e.stopPropagation(); e.preventDefault();
+  const dot=e.currentTarget;
+  const nodeId=dot.getAttribute("data-node"), port=dot.getAttribute("data-port"),
+        cat=dot.getAttribute("data-cat"), dir=dot.getAttribute("data-dir");
+  const from=screenToScene(e.clientX,e.clientY);
+  connectState={nodeId,port,cat,dir,from};
+  const t=$("#tempEdge"); if(t) t.style.display="";
+  window.addEventListener("pointermove", moveConnect);
+  window.addEventListener("pointerup", endConnect, {once:true});
+}
+function moveConnect(e){
+  if(!connectState) return;
+  const to=screenToScene(e.clientX,e.clientY);
+  const t=$("#tempEdge"); if(t) t.setAttribute("d",edgePath(connectState.from,to));
+}
+function endConnect(e){
+  window.removeEventListener("pointermove", moveConnect);
+  const t=$("#tempEdge"); if(t) t.style.display="none";
+  const target=document.elementFromPoint(e.clientX,e.clientY);
+  const dot=target&&target.closest&&target.closest(".port");
+  const cs=connectState; connectState=null;
+  if(!dot) return;
+  const tNode=dot.getAttribute("data-node"), tPort=dot.getAttribute("data-port"),
+        tCat=dot.getAttribute("data-cat"), tDir=dot.getAttribute("data-dir");
+  // normalize out→in
+  let a,b;
+  if(cs.dir==="out"&&tDir==="in"){ a={nodeId:cs.nodeId,port:cs.port,cat:cs.cat}; b={nodeId:tNode,port:tPort,cat:tCat}; }
+  else if(cs.dir==="in"&&tDir==="out"){ a={nodeId:tNode,port:tPort,cat:tCat}; b={nodeId:cs.nodeId,port:cs.port,cat:cs.cat}; }
+  else { toast("connect an output to an input",true); return; }
+  if(a.cat!==b.cat){ toast("ports must share a category",true); return; }
+  if(a.nodeId===b.nodeId){ toast("cannot wire a node to itself",true); return; }
+  const id=freshId("pipe", idsOfKind("pipe"));
+  const pipe={id,category:a.cat,movementCapacity:defaultMovementCapacity(a.cat),overclock:1,
+    a:{nodeId:a.nodeId,role:"out",port:a.port}, b:{nodeId:b.nodeId,role:"in",port:b.port}};
+  applyEdits([upsert("pipe",pipe)]);
+  select("pipe",id);
+}
+
+/* placement */
+function placeMachine(def, scenePos){
+  let pos=scenePos;
+  if(!pos){
+    const r=$("#canvas").getBoundingClientRect();
+    const base=screenToScene(r.left+r.width/2, r.top+r.height/2);
+    const step=(WORLD.nodes||[]).length%6;
+    pos={x:base.x+step*28, y:base.y+step*28};
+  }
+  const id=freshId(def.id, idsOfKind("node"));
+  const node={id,machineDefId:def.id,x:Math.round(pos.x),y:Math.round(pos.y)};
+  applyEdits([upsert("node",node)]);
+  select("node",id);
+}
+
+/* selection */
+function select(kind,id){ SEL={kind,id}; MULTI.clear(); if(kind==="system") SYSTEM_ID=id; renderAll();
+  const req=recomputeRequest(); if(req&&(SCOPE==="node"||SCOPE==="process"||SCOPE==="system")) recompute(); }
+function clearSel(){ SEL=null; MULTI.clear(); renderAll(); }
+// Shift-click a node to add/remove it from the multi-selection (≥2 → "Group").
+function toggleMulti(id){ if(MULTI.has(id)) MULTI.delete(id); else MULTI.add(id); SEL=null; renderAll(); }
+
+/* delete selected via keyboard */
+window.addEventListener("keydown",e=>{
+  const tag=(e.target&&e.target.tagName)||"";
+  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==="z"||e.key==="Z")){
+    if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT") return;
+    e.preventDefault(); undo(); return;
+  }
+  if(e.key==="Escape"){ clearSel(); return; }
+  if((e.key==="Delete"||e.key==="Backspace")&&SEL){
+    if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT") return;
+    e.preventDefault(); deleteSelected();
+  }
+});
+function deleteSelected(){
+  if(!SEL) return;
+  const {kind,id}=SEL;
+  if(kind==="node"){
+    // also drop incident pipes
+    const pipes=(WORLD.pipes||[]).filter(p=>p.a.nodeId===id||p.b.nodeId===id).map(p=>removeEdit("pipe",p.id));
+    SEL=null; applyEdits([...pipes, removeEdit("node",id)]);
+  } else if(kind==="pipe"){ SEL=null; applyEdits([removeEdit("pipe",id)]); }
+  else if(kind==="system"){ SEL=null; applyEdits([removeEdit("system",id)]); }
+  else if(kind==="item"||kind==="recipe"||kind==="machineDef"){ SEL=null; applyEdits([removeEdit(kind,id)]); }
+}
+
+/* grouping */
+function groupSelected(){
+  const cs=collapseState();
+  const ids=[...MULTI].filter(id=>!cs.hidden.has(id));
+  if(ids.length<2) return;
+  const id=freshSystemId();
+  const {x,y}=centroidOf(ids);
+  MULTI.clear();
+  applyEdits([upsert("system",{id,memberNodeIds:ids,collapsed:true,x,y})]);
+  select("system",id);
+}
+function toggleCollapse(sysId){
+  const s=BY.systems[sysId]; if(!s) return;
+  let next={...s,collapsed:!s.collapsed};
+  if(!s.collapsed){ const {x,y}=centroidOf([...flattenSystem(sysId).nodeIds]); next.x=x; next.y=y; }
+  applyEdits([upsert("system",next)]);
+}
+
+/* ============================================================================
+   Overlay painting (status/flow) + balance readout
+   ============================================================================ */
+function paintOverlay(){
+  if(!$("#viewport")) return;
+  const balances=(REPORT&&REPORT.balances)||{};
+  const duty=(REPORT&&REPORT.nodeDuty)||{};
+  const flows=(REPORT&&REPORT.pipeFlows)||{};
+  for(const n of WORLD.nodes||[]){
+    const dom=$(`.node[data-id="${cssEsc(n.id)}"]`); if(!dom) continue;
+    const b=balances[n.id];
+    const bar=dom.querySelector(".nbar"); if(bar) bar.style.background=statusColor(b&&b.status);
+    dom.style.setProperty("box-shadow", (SEL&&SEL.kind==="node"&&SEL.id===n.id)?"":"");
+    // status chip + duty
+    const meta=dom.querySelector(`.nmeta[data-meta="${cssEsc(n.id)}"]`);
+    if(meta){
+      [...meta.querySelectorAll(".chip.status,.chip.duty")].forEach(x=>x.remove());
+      if(b&&b.status){
+        const chip=el("span",{class:"chip mono status",style:{background:STATUS_FILL[b.status],color:STATUS_COLOR[b.status]}},b.status);
+        meta.prepend(chip);
+      }
+      const d=duty[n.id];
+      if(d!=null && d<0.999){
+        meta.append(el("span",{class:"chip mono duty",style:{color:(b&&b.status==="shortfall")?"var(--s-bad)":"var(--ink-dim)"}},Math.round(d*100)+"%"));
+      }
+    }
+  }
+  // edges: thickness + dash by flow
+  $("#edges")&&$("#edges").querySelectorAll("path.pipe-edge").forEach(path=>{
+    const pid=path.getAttribute("data-pipe"); const pf=flows[pid];
+    if(pf){
+      const w=2+Math.min(6, Math.log10(1+Math.abs(pf.flow)) );
+      path.setAttribute("stroke-width", w.toFixed(1));
+      if(pf.shortfall) path.setAttribute("stroke-dasharray","6 4"); else path.removeAttribute("stroke-dasharray");
+    } else { path.setAttribute("stroke-width","2"); path.removeAttribute("stroke-dasharray"); }
+    const selp = SEL&&SEL.kind==="pipe"&&SEL.id===pid;
+    path.setAttribute("stroke", selp? "var(--spine)" : catColor((WORLD.pipes||[]).find(x=>x.id===pid)?.category));
+  });
+}
+function cssEsc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/["\\]/g,"\\$&"); }
+
+function renderReadout(){
+  const host=$("#readout"); if(!host) return; host.textContent="";
+  const panel=el("div",{class:"readout"});
+  panel.append(el("div",{class:"eyebrow"},"Balance"));
+  // scope switch
+  const sw=el("div",{class:"scope-switch"});
+  for(const sc of ["world","process","node","system"]){
+    sw.append(el("button",{class:SCOPE===sc?"on":"",onclick:()=>setScope(sc)}, sc));
+  }
+  panel.append(sw);
+  const rep=REPORT;
+  if(!rep){
+    panel.append(el("div",{class:"ro-empty"},
+      SCOPE==="node"||SCOPE==="process"?"select a machine":SCOPE==="system"?"select a system":"—"));
+    host.append(panel); return;
+  }
+  panel.append(roRow("nodes", String((rep.nodeIds||[]).length)));
+  panel.append(roRow("net energy", rep.netEnergy!=null?fmtEnergy(rep.netEnergy):"—"));
+  // feedstock in
+  panel.append(ioSection("Feedstock in", rep.externalInputs));
+  panel.append(ioSection("Actual yield", rep.externalOutputs));
+  // bottlenecks
+  const bn=rep.bottlenecks||[];
+  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},"Bottlenecks"));
+  if(!bn.length) sec.append(el("div",{class:"ro-empty"},"none"));
+  else{
+    const list=el("div",{class:"ro-list"});
+    bn.slice(0,8).forEach(b=>{
+      const nm=(BY.defs[BY.nodes[b.nodeId]?.machineDefId]?.name)||b.nodeId;
+      const it=(BY.items[b.itemId]?.name)||b.itemId;
+      list.append(el("div",{class:"ro-item bneck",onclick:()=>select("node",b.nodeId)},
+        el("span",null, nm+" · "+it),
+        el("span",{class:"bad"}, "−"+fmtShort(b.shortfall))));
+    });
+    sec.append(list);
+  }
+  panel.append(sec);
+  host.append(panel);
+}
+function fmtShort(v){ const {v:val,s}=scaleMag(v); return val+s; }
+function roRow(k,v){ return el("div",{class:"ro-row"}, el("span",{class:"k"},k), el("span",{class:"v"},v)); }
+function ioSection(label, map){
+  const keys=Object.keys(map||{});
+  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},label));
+  if(!keys.length){ sec.append(el("div",{class:"ro-empty"},"none")); return sec; }
+  const list=el("div",{class:"ro-list"});
+  keys.sort((a,b)=>Math.abs(map[b])-Math.abs(map[a])).slice(0,10).forEach(k=>{
+    const it=BY.items[k]; const nm=(it&&it.name)||k;
+    list.append(el("div",{class:"ro-item"}, el("span",null,nm), el("span",null, fmtRateFor(it&&it.category, map[k]))));
+  });
+  sec.append(list); return sec;
+}
+function setScope(sc){
+  if(sc==="system"&&!SYSTEM_ID){ SYSTEM_ID=(WORLD.systems&&WORLD.systems[0]&&WORLD.systems[0].id)||null; }
+  SCOPE=sc; renderReadout(); recompute();
+}
+
+/* ============================================================================
+   Inspector
+   ============================================================================ */
+function renderInspector(){
+  let insp=$("#inspector");
+  if(!SEL){ if(insp) insp.remove(); return; }
+  if(!insp){ insp=el("aside",{class:"inspector",id:"inspector"}); $("#app").append(insp); }
+  insp.textContent="";
+  const kindLabel={item:"Item",recipe:"Recipe",machineDef:"Machine def",node:"Machine node",pipe:"Pipe",system:"System"}[SEL.kind];
+  insp.append(el("div",{class:"insp-head"},
+    el("div",null, el("span",{class:"eyebrow"},kindLabel), el("div",{class:"insp-id mono"}, selTitle())),
+    el("button",{class:"insp-x",title:"Close",onclick:clearSel},"×")));
+  const body=el("div",{class:"insp-body"});
+  insp.append(body);
+  const ent = currentEntity();
+  if(!ent){ body.append(el("div",{class:"stack-empty"},"(gone)")); return; }
+  ({item:itemInspector,recipe:recipeInspector,machineDef:defInspector,node:nodeInspector,pipe:pipeInspector,system:systemInspector}[SEL.kind])(body, ent);
+}
+function selTitle(){
+  const e=currentEntity(); if(!e) return SEL.id;
+  if(SEL.kind==="node") return (BY.defs[e.machineDefId]?.name||e.machineDefId)+" · "+e.id;
+  return e.name? e.id : e.id;
+}
+function currentEntity(){
+  if(!SEL) return null;
+  const map={item:"items",recipe:"recipes",machineDef:"machineDefs",node:"nodes",pipe:"pipes",system:"systems"};
+  return (WORLD[map[SEL.kind]]||[]).find(e=>e.id===SEL.id)||null;
+}
+
+/* save an entity edit + optional rename */
+function saveEntity(kind, entity){ applyEdits([upsert(kind,entity)]); }
+function renameAndSave(kind, oldId, newId){
+  if(!newId||oldId===newId) return;
+  const taken=idsOfKind(kind); if(taken.has(newId)){ toast("id already exists",true); return; }
+  const w=renameEntity(WORLD, kind, oldId, newId);
+  if(SEL&&SEL.kind===kind&&SEL.id===oldId) SEL={kind,id:newId};
+  replaceWorld(w);
+}
+
+/* ---- field kit ---- */
+function field(label, control, hint, unit){
+  const f=el("div",{class:"field"});
+  f.append(el("span",{class:"field-label mono"}, label, unit?el("span",{class:"field-unit"},unit):null, typeof control==="object"&&control._labelExtra?control._labelExtra:null));
+  f.append(control);
+  if(hint) f.append(el("span",{class:"field-hint"},hint));
+  return f;
+}
+function textInput(value,onChange,placeholder){
+  return el("input",{class:"field-input",type:"text",value:value||"",placeholder:placeholder||"",
+    oninput:e=>onChange(e.target.value)});
+}
+function numberInput(value,onChange,opts){
+  opts=opts||{};
+  const inp=el("input",{class:"field-input",type:"number",value:value==null?"":value,
+    min:opts.min, max:opts.max, step:opts.step||"any",
+    oninput:e=>{ const v=e.target.value; if(v==="") return; const n=Number(v); if(!Number.isNaN(n)) onChange(n); }});
+  return inp;
+}
+function selectInput(value,options,onChange){
+  const s=el("select",{class:"field-input",onchange:e=>onChange(e.target.value)});
+  for(const o of options){ const op=el("option",{value:o.value}, o.label); if(o.value===value) op.selected=true; s.append(op); }
+  return s;
+}
+function checkbox(checked,onChange,label){
+  const row=el("label",{class:"checkrow"},
+    el("input",{type:"checkbox",onchange:e=>onChange(e.target.checked)}),
+    el("span",null,label));
+  if(checked) row.querySelector("input").checked=true;
+  return row;
+}
+function optionalNumber(label, value, {onSet,onClear,fallback=0,min,max,step,unit,hint}){
+  if(value==null){
+    return field(label,
+      el("button",{class:"set-btn",onclick:()=>onSet(fallback)}, "+ set"), hint, unit);
+  }
+  const ctrl=numberInput(value,onSet,{min,max,step});
+  const f=field(label, ctrl, hint, unit);
+  f.querySelector(".field-label").append(el("button",{class:"clear-btn",title:"Unset",onclick:onClear},"unset"));
+  return f;
+}
+function optional(label, present, {onAdd,onClear,hint,child}){
+  if(!present){
+    return field(label, el("button",{class:"set-btn",onclick:onAdd},"+ set"), hint);
+  }
+  const f=field(label, child, hint);
+  f.querySelector(".field-label").append(el("button",{class:"clear-btn",title:"Unset",onclick:onClear},"unset"));
+  return f;
+}
+function dangerButton(text,onClick){ return el("button",{class:"danger",onclick:onClick}, text); }
+
+/* lightweight combobox: input + filtered dropdown (native-feel, robust) */
+function combo(value, options, onChange, placeholder, opts){
+  opts=opts||{};
+  const byVal=new Map(options.map(o=>[o.value,o]));
+  const cur=byVal.get(value);
+  const wrap=el("div",{class:"combo"});
+  const input=el("input",{class:"field-input mono",type:"text",placeholder:placeholder||"",
+    value: cur? (cur.label):""});
+  const pop=el("div",{class:"combo-pop",style:{display:"none"}});
+  wrap.append(input,pop);
+  let active=-1, filtered=options;
+  function render(q){
+    pop.textContent="";
+    const ql=(q||"").toLowerCase();
+    filtered=options.filter(o=> ql===""|| (o.label||"").toLowerCase().includes(ql) || (o.value||"").toLowerCase().includes(ql));
+    if(!filtered.length){ pop.append(el("div",{class:"combo-empty"},"no matches")); return; }
+    filtered.slice(0,200).forEach((o,i)=>{
+      const row=el("div",{class:"combo-opt"+(i===active?" active":"")},
+        o.dot?el("span",{class:"dot",style:{background:o.dot}}):null,
+        el("span",null,o.label),
+        o.hint?el("span",{class:"leaf-id"},o.hint):null);
+      row.addEventListener("pointerdown",ev=>{ ev.preventDefault(); pick(o); });
+      pop.append(row);
+    });
+  }
+  function open(){ render(""); pop.style.display=""; }
+  function close(){ pop.style.display="none"; active=-1; }
+  function pick(o){ onChange(o.value); if(opts.clearOnPick){ input.value=""; } else { input.value=o.label; } close(); input.blur(); }
+  input.addEventListener("focus",()=>{ input.select?input.select():0; open(); });
+  input.addEventListener("input",()=>{ active=-1; render(input.value); pop.style.display=""; });
+  input.addEventListener("keydown",e=>{
+    if(e.key==="ArrowDown"){ e.preventDefault(); active=Math.min(filtered.length-1,active+1); render(input.value); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); active=Math.max(0,active-1); render(input.value); }
+    else if(e.key==="Enter"){ if(filtered[active]) { e.preventDefault(); pick(filtered[active]); } }
+    else if(e.key==="Escape"){ close(); }
+  });
+  input.addEventListener("blur",()=>setTimeout(close,120));
+  return wrap;
+}
+function itemOptions(items){ return items.map(i=>({value:i.id,label:(i.isTag?"# ":"")+(i.name||i.id),dot:i.isTag?"var(--ink-faint)":catColor(i.category)})); }
+
+/* ---- id editor (rename) ---- */
+function idEditor(kind, entity){
+  const wrap=el("div",{class:"inline-row"});
+  const inp=el("input",{class:"field-input mono",type:"text",value:entity.id});
+  const btn=el("button",{class:"tool-btn",title:"Rename id everywhere",onclick:()=>renameAndSave(kind, entity.id, slugify(inp.value))},"↻ name");
+  wrap.append(inp,btn);
+  return wrap;
+}
+
+/* ---- Item ---- */
+const CAT_OPTS=[{value:"solid",label:"solid"},{value:"liquid",label:"liquid"},{value:"energy",label:"energy"}];
+function itemInspector(body, it){
+  body.append(field("id", idEditor("item",it), "derived from the name; edit to rename everywhere"));
+  body.append(field("name", textInput(it.name, v=>saveEntity("item", withField(it,"name",v)))));
+  body.append(field("category", selectInput(it.category, CAT_OPTS, v=>saveEntity("item", withField(it,"category",v)))));
+  body.append(optional("fuel energy (eu)", it.eu!=null, {
+    onAdd:()=>saveEntity("item", withField(it,"eu",1000)),
+    onClear:()=>saveEntity("item", withoutField(it,"eu")),
+    hint:"stored EU per unit; set only for fuels",
+    child:numberInput(it.eu, v=>saveEntity("item", withField(it,"eu",v)), {min:0})
+  }));
+  body.append(optional("tag resource", !!it.isTag, {
+    onAdd:()=>saveEntity("item", withField(it,"isTag",true)),
+    onClear:()=>saveEntity("item", withoutField(withoutField(it,"isTag"),"members")),
+    hint:"a group ('any item in this set'), e.g. c:ingots/iron",
+    child: tagMembersEditor(it)
+  }));
+  body.append(dangerButton("Delete item", ()=>{ if(confirm("Delete this item?")) deleteSelected(); }));
+}
+function tagMembersEditor(it){
+  const wrap=el("div");
+  const members=it.members||[];
+  if(members.length) wrap.append(el("div",{class:"chip-list"}, members.map(m=>
+    el("span",{class:"chip mono"}, (BY.items[m]?.name)||m,
+      el("button",{class:"chip-x",onclick:()=>saveEntity("item", withField(it,"members",members.filter(x=>x!==m)))},"×")))));
+  const addable=(WORLD.items||[]).filter(x=>x.id!==it.id&&!x.isTag&&!members.includes(x.id));
+  wrap.append(combo("", itemOptions(addable), id=>saveEntity("item", withField(it,"members",[...members,id])), "+ add member…",{clearOnPick:true}));
+  return wrap;
+}
+
+/* ---- Recipe ---- */
+function recipeInspector(body, r){
+  body.append(field("id", idEditor("recipe",r), "derived from the name"));
+  body.append(field("name", textInput(r.name, v=>saveEntity("recipe", v.trim()===""?withoutField(r,"name"):withField(r,"name",v)), "(unnamed)")));
+  body.append(field("cycle time", numberInput(r.timeSeconds, v=>saveEntity("recipe", withField(r,"timeSeconds",v)), {min:0,step:0.05}), null, "s"));
+  body.append(optionalNumber("energy draw", r.euPerTick, {
+    onSet:v=>saveEntity("recipe", withField(r,"euPerTick",v)),
+    onClear:()=>saveEntity("recipe", withoutField(r,"euPerTick")),
+    fallback:2, min:0, unit:"EU/t", hint:"overrides the machine's default draw while making this"}));
+  body.append(optional("machine type", r.machineType!=null, {
+    onAdd:()=>saveEntity("recipe", withField(r,"machineType","")),
+    onClear:()=>saveEntity("recipe", withoutField(r,"machineType")),
+    hint:"the machine kind that runs it (e.g. macerator)",
+    child:textInput(r.machineType, v=>saveEntity("recipe", withField(r,"machineType",v)))}));
+  body.append(stackListEditor("inputs", r, "inputs"));
+  body.append(stackListEditor("outputs", r, "outputs"));
+  body.append(dangerButton("Delete recipe", ()=>{ if(confirm("Delete this recipe?")) deleteSelected(); }));
+}
+function stackListEditor(label, r, key){
+  const rows=r[key]||[];
+  const f=el("div",{class:"field"});
+  f.append(el("span",{class:"field-label mono"}, label));
+  if(!rows.length) f.append(el("span",{class:"stack-empty mono"},"none"));
+  const setRows=next=>saveEntity("recipe", withField(r,key,next));
+  rows.forEach((s,i)=>{
+    const resId=s.itemId!=null?s.itemId:(s.tag!=null?s.tag:"");
+    const row=el("div",{class:"slot-group"});
+    row.append(el("div",{class:"slot-row"},
+      combo(resId, itemOptions(WORLD.items||[]), id=>{
+        const it=BY.items[id];
+        const ns={...s}; delete ns.itemId; delete ns.tag;
+        if(it&&it.isTag) ns.tag=id; else ns.itemId=id;
+        setRows(rows.map((x,j)=>j===i?ns:x));
+      }, "resource…"),
+      el("button",{class:"row-del",onclick:()=>setRows(rows.filter((_,j)=>j!==i))},"×")));
+    row.append(el("div",{class:"slot-row"},
+      el("span",{class:"slot-x mono"},"qty"),
+      numberInput(s.quantity, v=>setRows(rows.map((x,j)=>j===i?{...x,quantity:v}:x)), {min:0,step:0.5}),
+      el("span",{class:"slot-x mono"},"prob"),
+      numberInput(s.probability==null?"":s.probability, v=>setRows(rows.map((x,j)=>j===i?{...x,probability:v}:x)), {min:0,max:1,step:0.05})));
+    f.append(row);
+  });
+  f.append(el("button",{class:"row-add",onclick:()=>setRows([...rows,{itemId:(WORLD.items&&WORLD.items[0]&&WORLD.items[0].id)||"",quantity:1}])}, "+ add "+label.replace(/s$/,"")));
+  return f;
+}
+
+/* ---- MachineDef ---- */
+const SOURCE_OPTS=[{value:"",label:"none"},{value:"electric",label:"electric"},{value:"liquid",label:"liquid"},{value:"fuel",label:"fuel"}];
+const DIR_OPTS=[{value:"in",label:"in"},{value:"out",label:"out"}];
+const UNIT_CAT={solid:"items",liquid:"mB",energy:"EU"};
+function defInspector(body, def){
+  const items=WORLD.items||[];
+  body.append(field("id", idEditor("machineDef",def), "derived from the name; edit to rename everywhere"));
+  body.append(field("name", textInput(def.name, v=>saveEntity("machineDef", v.trim()===""?withoutField(def,"name"):withField(def,"name",v)), "(unnamed)")));
+
+  const source=def.energySource;
+  const isConverter = def.outputItemId!=null || def.maxFluidRate!=null;
+  const energyItems=items.filter(i=>i.category==="energy");
+  const sourceItems = source==="fuel"? items.filter(i=>i.eu!=null) : source==="electric"? energyItems : items.filter(i=>i.category==="liquid");
+  const outputItems=items.filter(i=>i.category==="liquid"||i.category==="energy");
+  const outputCat=(BY.items[def.outputItemId]||{}).category;
+  const outputUnit=outputCat==="energy"?"EU/t":outputCat==="liquid"?"mB/t":"/t";
+
+  body.append(field("energy source", selectInput(source||"", SOURCE_OPTS, setSource), "how the machine is powered while it runs"));
+  function setSource(next){
+    let d={...def};
+    ["energySource","sourceItemId","baseEnergyConsumption","outputItemId","efficiency","maxFluidRate","inputItemId","materialRatio"].forEach(k=>d=withoutField(d,k));
+    if(next==="electric"){ d=withField(d,"energySource","electric"); d=withField(d,"baseEnergyConsumption",20); if(energyItems[0]) d=withField(d,"sourceItemId",energyItems[0].id); }
+    else if(next==="liquid"||next==="fuel"){ d=withField(d,"energySource",next); d=withField(d,"baseEnergyConsumption",20); }
+    saveEntity("machineDef", d);
+  }
+
+  if(source==="electric"){
+    body.append(field("power carrier", combo(def.sourceItemId||"", itemOptions(energyItems), v=>saveEntity("machineDef",withField(def,"sourceItemId",v)), energyItems.length?"pick an energy item…":"create an energy item"), "routed over electric connections"));
+    body.append(optionalNumber("default energy draw", def.baseEnergyConsumption!=null?toPerTick(def.baseEnergyConsumption):null, {
+      onSet:v=>saveEntity("machineDef",withField(def,"baseEnergyConsumption",toPerSecond(v))),
+      onClear:()=>saveEntity("machineDef",withoutField(def,"baseEnergyConsumption")),
+      fallback:1,min:0,unit:"EU/t",hint:"fallback EU/t; a recipe's own energy overrides it"}));
+    body.append(optional("voltage tier", def.voltageTier!=null, {
+      onAdd:()=>saveEntity("machineDef",withField(def,"voltageTier","LV")),
+      onClear:()=>saveEntity("machineDef",withoutField(def,"voltageTier")),
+      hint:"power-tier label (LV / MV / HV …)",
+      child:textInput(def.voltageTier, v=>saveEntity("machineDef",withField(def,"voltageTier",v)),"e.g. LV")}));
+    body.append(optionalNumber("max draw", def.maxEuPerTick, {
+      onSet:v=>saveEntity("machineDef",withField(def,"maxEuPerTick",v)),
+      onClear:()=>saveEntity("machineDef",withoutField(def,"maxEuPerTick")),
+      fallback:32,min:0,unit:"EU/t",hint:"ceiling — clamps overclock to what the tier can feed"}));
+  }
+  if(source==="liquid"||source==="fuel"){
+    body.append(field(source==="fuel"?"fuel":"source liquid", combo(def.sourceItemId||"", itemOptions(sourceItems), v=>saveEntity("machineDef",withField(def,"sourceItemId",v)), sourceItems.length?"consumed for energy…":"no matching items")));
+    body.append(field("converter", checkbox(isConverter, setConverter, "generates an output from its source")));
+    function setConverter(on){
+      let d={...def};
+      if(on){ d=withoutField(d,"baseEnergyConsumption"); d=withField(d,"maxFluidRate",256); d=withField(d,"outputItemId",(outputItems[0]&&outputItems[0].id)||""); }
+      else { ["maxFluidRate","outputItemId","efficiency","inputItemId","materialRatio"].forEach(k=>d=withoutField(d,k)); d=withField(d,"baseEnergyConsumption",20); }
+      saveEntity("machineDef",d);
+    }
+    if(isConverter){
+      body.append(field("material in", combo(def.inputItemId||"", [{value:"",label:"— none —"}].concat(itemOptions(items)), v=>saveEntity("machineDef", v?withField(def,"inputItemId",v):withoutField(def,"inputItemId")), "pick a material…"), "consumed and turned into the output; leave unset if the source itself is spent"));
+      if(def.inputItemId) body.append(optionalNumber("output per material", def.materialRatio, {
+        onSet:v=>saveEntity("machineDef",withField(def,"materialRatio",v)),
+        onClear:()=>saveEntity("machineDef",withoutField(def,"materialRatio")),
+        fallback:1,min:0,hint:"output units per unit of material; unset = 1:1"}));
+      body.append(field("produces", combo(def.outputItemId||"", itemOptions(outputItems), v=>saveEntity("machineDef",withField(def,"outputItemId",v)), outputItems.length?"pick output…":"no liquid/energy items")));
+      body.append(optionalNumber("output rate", def.maxFluidRate!=null?toPerTick(def.maxFluidRate):null, {
+        onSet:v=>saveEntity("machineDef",withField(def,"maxFluidRate",toPerSecond(v))),
+        onClear:()=>saveEntity("machineDef",withoutField(def,"maxFluidRate")),
+        fallback:8,min:0,unit:outputUnit,hint:"how much output it makes per tick"}));
+      body.append(optionalNumber("energy loss", def.efficiency, {
+        onSet:v=>saveEntity("machineDef",withField(def,"efficiency",v)),
+        onClear:()=>saveEntity("machineDef",withoutField(def,"efficiency")),
+        min:0,max:1,step:0.05,hint:"fraction wasted below full load; 0 = lossless"}));
+    } else {
+      body.append(optionalNumber("energy draw", def.baseEnergyConsumption!=null?toPerTick(def.baseEnergyConsumption):null, {
+        onSet:v=>saveEntity("machineDef",withField(def,"baseEnergyConsumption",toPerSecond(v))),
+        onClear:()=>saveEntity("machineDef",withoutField(def,"baseEnergyConsumption")),
+        fallback:1,min:0,unit:"EU/t",hint:"source consumed while running"}));
+    }
+  }
+
+  // storage
+  body.append(field("storage buffer", checkbox(def.storage!=null, on=>{
+    if(on) saveEntity("machineDef", withField(def,"storage",{category:"solid",capacity:1600}));
+    else saveEntity("machineDef", withoutField(def,"storage"));
+  }, "this machine is a buffer")));
+  if(def.storage){
+    body.append(field("stores", selectInput(def.storage.category, CAT_OPTS, v=>saveEntity("machineDef",withField(def,"storage",{...def.storage,category:v})))));
+    body.append(field("capacity", numberInput(def.storage.capacity, v=>saveEntity("machineDef",withField(def,"storage",{...def.storage,capacity:v})), {min:0}), "per unit; parallel count multiplies it", UNIT_CAT[def.storage.category]));
+  }
+
+  body.append(allowedRecipesEditor(def));
+  body.append(slotListEditor(def));
+  body.append(dangerButton("Delete machine def", ()=>{ if(confirm("Delete this machine def?")) deleteSelected(); }));
+}
+function allowedRecipesEditor(def){
+  const recipes=WORLD.recipes||[];
+  const allowed=def.allowedRecipeIds||[];
+  const f=el("div",{class:"field"});
+  f.append(el("span",{class:"field-label mono"},"allowed recipes"));
+  if(!recipes.length) f.append(el("span",{class:"stack-empty mono"},"no recipes"));
+  const set=ids=>saveEntity("machineDef", ids.length?withField(def,"allowedRecipeIds",ids):withoutField(def,"allowedRecipeIds"));
+  if(allowed.length) f.append(el("div",{class:"chip-list"}, allowed.map(id=>
+    el("span",{class:"chip mono"}, (BY.recipes[id]?.name)||id,
+      el("button",{class:"chip-x",onclick:()=>set(allowed.filter(x=>x!==id))},"×")))));
+  const addable=recipes.filter(r=>!allowed.includes(r.id)).map(r=>({value:r.id,label:r.name||r.id}));
+  if(addable.length) f.append(combo("", addable, id=>{ if(id&&!allowed.includes(id)) set([...allowed,id]); }, "+ allow a recipe…",{clearOnPick:true}));
+  f.append(el("span",{class:"field-hint"},"empty = every recipe allowed"));
+  return f;
+}
+function slotListEditor(def){
+  const rows=def.slots||[];
+  const f=el("div",{class:"field"});
+  f.append(el("span",{class:"field-label mono"},"slots (buffer per category × direction)"));
+  if(!rows.length) f.append(el("span",{class:"stack-empty mono"},"none"));
+  const set=next=>saveEntity("machineDef", withField(def,"slots",next));
+  rows.forEach((s,i)=>{
+    const unit=UNIT_CAT[s.category], total=(s.slots||0)*(s.stackSize||0);
+    const g=el("div",{class:"slot-group"});
+    g.append(el("div",{class:"slot-row"},
+      el("span",{class:"slot-cat-dot",style:{background:catColor(s.category)}}),
+      selectInput(s.category, CAT_OPTS, v=>set(rows.map((x,j)=>j===i?{...x,category:v}:x))),
+      selectInput(s.direction, DIR_OPTS, v=>set(rows.map((x,j)=>j===i?{...x,direction:v}:x))),
+      el("button",{class:"row-del",onclick:()=>set(rows.filter((_,j)=>j!==i))},"×")));
+    g.append(el("div",{class:"slot-row"},
+      numberInput(s.slots, v=>set(rows.map((x,j)=>j===i?{...x,slots:v}:x)), {min:0}),
+      el("span",{class:"slot-x mono"},"slots ×"),
+      numberInput(s.stackSize, v=>set(rows.map((x,j)=>j===i?{...x,stackSize:v}:x)), {min:0}),
+      el("span",{class:"slot-unit mono"},unit),
+      el("span",{class:"slot-total mono"},"= "+total+" "+unit)));
+    f.append(g);
+  });
+  f.append(el("button",{class:"row-add",onclick:()=>set([...rows,{category:"solid",direction:"in",slots:1,stackSize:64}])}, "+ add slot group"));
+  return f;
+}
+
+/* ---- Node ---- */
+function nodeInspector(body, n){
+  const def=BY.defs[n.machineDefId];
+  body.append(field("id", el("span",{class:"static-val mono"},n.id)));
+  body.append(field("machine def", el("span",{class:"static-val mono"}, (def&&def.name)||n.machineDefId)));
+
+  // recipe finder
+  const pool = (def&&def.allowedRecipeIds&&def.allowedRecipeIds.length)
+    ? (WORLD.recipes||[]).filter(r=>def.allowedRecipeIds.includes(r.id))
+    : (WORLD.recipes||[]);
+  body.append(recipeFinder(n, pool));
+
+  body.append(optionalNumber("overclock", n.overclock, {
+    onSet:v=>saveEntity("node",withField(n,"overclock",v)),
+    onClear:()=>saveEntity("node",withoutField(n,"overclock")),
+    fallback:1,min:def&&def.overclockMin,max:def&&def.overclockMax,step:0.25,hint:"default 1"}));
+  body.append(optionalNumber("parallel count", n.count, {
+    onSet:v=>saveEntity("node",withField(n,"count",Math.round(v))),
+    onClear:()=>saveEntity("node",withoutField(n,"count")),
+    fallback:1,min:1,step:1,hint:"default 1"}));
+
+  const bf=el("div",{class:"field"});
+  bf.append(el("span",{class:"field-label mono"},"boundary"));
+  bf.append(checkbox(!!n.assumeInputs, v=>saveEntity("node", v?withField(n,"assumeInputs",true):withoutField(n,"assumeInputs")), "manual insertion — assume inputs available"));
+  bf.append(checkbox(!!n.assumeOutputs, v=>saveEntity("node", v?withField(n,"assumeOutputs",true):withoutField(n,"assumeOutputs")), "manual extraction — assume outputs removed"));
+  bf.append(el("span",{class:"field-hint"},"a machine runs only when its inputs are supplied and its outputs are taken; a boundary machine is fed or emptied by hand"));
+  body.append(bf);
+
+  body.append(dangerButton("Delete machine node", ()=>{ if(confirm("Delete this node?")) deleteSelected(); }));
+}
+function resourceName(id){
+  const it=BY.items[id];
+  if(it) return (it.isTag?"# ":"")+(it.name||it.id);
+  const seg=id.includes(":")?id.split(":")[1]:id; return "# "+seg;
+}
+function resourceDot(id){ const it=BY.items[id]; return it?(it.isTag?"var(--ink-faint)":catColor(it.category)):"var(--ink-faint)"; }
+function stackRes(s){ return s.itemId!=null?s.itemId:(s.tag!=null?s.tag:null); }
+function recipeFinder(n, pool){
+  const bound = n.recipeId? BY.recipes[n.recipeId] : null;
+  const f=el("div",{class:"field"});
+  const lab=el("span",{class:"field-label mono"},"recipe");
+  f.append(lab);
+  const state={changing:false};
+  function paint(){
+    [...f.querySelectorAll(".recipe-dyn")].forEach(x=>x.remove());
+    const dyn=el("div",{class:"recipe-dyn"});
+    if(bound && !state.changing){
+      lab.querySelector(".clear-btn")||lab.append(el("button",{class:"clear-btn",onclick:()=>{ state.changing=true; paint(); }},"change"));
+      dyn.append(recipeSummary(bound));
+    } else if(!pool.length){
+      dyn.append(el("span",{class:"stack-empty mono"},"no recipes available for this machine"));
+    } else {
+      dyn.append(finderBody(n,pool));
+    }
+    if(n.recipeId!=null) dyn.append(el("button",{class:"row-del",style:{marginTop:"6px"},onclick:()=>saveEntity("node",withoutField(n,"recipeId"))},"× unset recipe"));
+    f.append(dyn);
+  }
+  paint();
+  return f;
+}
+function recipeSummary(r){
+  const chips=stacks=>{
+    const rows=stacks||[];
+    if(!rows.length) return el("span",{class:"stack-empty mono"},"none");
+    return rows.map(s=>{ const id=stackRes(s); if(!id) return null;
+      return el("span",{class:"recipe-chip mono"}, el("span",{class:"dot",style:{width:"7px",height:"7px",borderRadius:"50%",background:resourceDot(id)}}),
+        s.quantity+"× "+resourceName(id), s.probability!=null?el("span",{style:{color:"var(--ink-faint)"}}," @"+s.probability):null); });
+  };
+  return el("div",{class:"recipe-summary"},
+    r.name?el("div",{class:"mono",style:{color:"var(--ink-dim)",marginBottom:"3px"}},r.name):null,
+    el("div",{class:"recipe-io"}, el("span",{class:"recipe-io-label mono"},"in"), el("div",{class:"recipe-chips"}, chips(r.inputs))),
+    el("div",{class:"recipe-io"}, el("span",{class:"recipe-io-label mono"},"out"), el("div",{class:"recipe-chips"}, chips(r.outputs))));
+}
+function finderBody(n, pool){
+  const wrap=el("div");
+  const state={input:"",output:""};
+  function resourceOptions(side){
+    const ids=new Set();
+    for(const r of pool) for(const s of (r[side]||[])){ const id=stackRes(s); if(!id) continue; ids.add(id); (BY.items[id]?.members||[]).forEach(m=>ids.add(m)); }
+    return [...ids].map(id=>({value:id,label:resourceName(id),dot:resourceDot(id)})).sort((a,b)=>cmp(a.label,b.label));
+  }
+  function satisfies(recId, chosen){ if(recId===chosen) return true; const m=BY.items[recId]?.members; return m?m.includes(chosen):false; }
+  function matches(){
+    return pool.filter(r=>{
+      const okIn = !state.input || (r.inputs||[]).some(s=>{ const id=stackRes(s); return id&&satisfies(id,state.input); });
+      const okOut= !state.output || (r.outputs||[]).some(s=>{ const id=stackRes(s); return id&&satisfies(id,state.output); });
+      return okIn&&okOut;
+    });
+  }
+  function repaint(){
+    [...wrap.querySelectorAll(".finder-dyn")].forEach(x=>x.remove());
+    const dyn=el("div",{class:"finder-dyn"});
+    const list=matches();
+    const lst=el("div",{class:"recipe-list"});
+    if(!list.length) lst.append(el("div",{class:"combo-empty"},"no matching recipe"));
+    list.slice(0,60).forEach(r=>{
+      lst.append(el("div",{class:"recipe-opt",onclick:()=>saveEntity("node", withField(n,"recipeId",r.id))},
+        recipeOneLine(r)));
+    });
+    dyn.append(lst);
+    wrap.append(dyn);
+  }
+  wrap.append(field("filter by input", combo("", [{value:"",label:"— any —"}].concat(resourceOptions("inputs")), v=>{ state.input=v; repaint(); }, "any input…")));
+  wrap.append(field("filter by output", combo("", [{value:"",label:"— any —"}].concat(resourceOptions("outputs")), v=>{ state.output=v; repaint(); }, "any output…")));
+  wrap.append(el("span",{class:"field-hint"},"pick an input and/or output the machine's recipes use"));
+  repaint();
+  return wrap;
+}
+function recipeOneLine(r){
+  const side=stacks=>(stacks||[]).map(s=>{const id=stackRes(s); return id?(s.quantity+"× "+resourceName(id)):null;}).filter(Boolean).join(", ")||"—";
+  return el("span",{class:"mono"}, (r.name?r.name+" · ":"")+side(r.inputs)+" → "+side(r.outputs));
+}
+
+/* ---- Pipe ---- */
+const ROLE_OPTS=[{value:"in",label:"in (insert only)"},{value:"out",label:"out (extract only)"},{value:"io",label:"io (both)"}];
+const inserts=role=>role==="in"||role==="io", extracts=role=>role==="out"||role==="io";
+function pipeInspector(body, p){
+  body.append(field("id", el("span",{class:"static-val mono"},p.id)));
+  body.append(field("category", el("span",{class:"static-val mono"}, el("span",{class:"legend-dot",style:{background:catColor(p.category),display:"inline-block",marginRight:"6px"}}), p.category)));
+  if(p.category==="liquid"){
+    body.append(field("transfer rate", el("span",{class:"static-val dim"},"unlimited"), "fluid pipes carry an unlimited rate"));
+  } else {
+    body.append(field("transfer rate", numberInput(p.movementCapacity, v=>saveEntity("pipe",withField(p,"movementCapacity",v)), {min:0}), "caps sustained flow (× overclock)"));
+    body.append(optionalNumber("overclock", p.overclock, {
+      onSet:v=>saveEntity("pipe",withField(p,"overclock",v)), onClear:()=>saveEntity("pipe",withoutField(p,"overclock")),
+      fallback:1,min:0,step:0.25,hint:"scales movement capacity"}));
+  }
+  body.append(pipeEnd("end A", p, "a"));
+  body.append(pipeEnd("end B", p, "b"));
+  body.append(dangerButton("Delete pipe", ()=>{ if(confirm("Delete this pipe?")) deleteSelected(); }));
+}
+function pipeEnd(title, p, key){
+  const end=p[key];
+  const nm=(BY.defs[BY.nodes[end.nodeId]?.machineDefId]?.name)||end.nodeId;
+  const box=el("div",{class:"slot-group"});
+  box.append(el("div",{class:"field-label mono"}, title+" · ", el("span",{style:{color:"var(--ink-faint)"}},nm)));
+  const setEnd=ne=>saveEntity("pipe", withField(p,key,ne));
+  box.append(field("role", selectInput(end.role, ROLE_OPTS, role=>{
+    let ne=withField(end,"role",role);
+    if(!inserts(role)) ne=withoutField(ne,"insertPriority");
+    if(!extracts(role)) ne=withoutField(ne,"extractPriority");
+    setEnd(ne);
+  })));
+  if(inserts(end.role)) box.append(optionalNumber("insert priority", end.insertPriority, {
+    onSet:v=>setEnd(withField(end,"insertPriority",Math.round(v))), onClear:()=>setEnd(withoutField(end,"insertPriority")),
+    min:-128,max:127,step:1,hint:"higher fills first"}));
+  if(extracts(end.role)) box.append(optionalNumber("extract priority", end.extractPriority, {
+    onSet:v=>setEnd(withField(end,"extractPriority",Math.round(v))), onClear:()=>setEnd(withoutField(end,"extractPriority")),
+    min:-128,max:127,step:1,hint:"lower drains first"}));
+  return box;
+}
+
+/* ---- System ---- */
+function systemInspector(body, s){
+  const nodes=WORLD.nodes||[];
+  const members=new Set(s.memberNodeIds||[]);
+  const nodeLabel=id=>(BY.defs[BY.nodes[id]?.machineDefId]?.name)||BY.nodes[id]?.machineDefId||id;
+  body.append(field("id", el("span",{class:"static-val mono"},s.id)));
+  body.append(field("name", textInput(s.name, v=>saveEntity("system", withField(s,"name",v)), "unnamed system")));
+  body.append(field("collapsed", checkbox(!!s.collapsed, v=>{
+    let next=withField(s,"collapsed",v);
+    if(v&&!s.collapsed){ const c=centroidOf([...flattenSystem(s.id).nodeIds]); next.x=c.x; next.y=c.y; }
+    saveEntity("system",next);
+  }, "fold members into one node")));
+  // member nodes
+  const mf=el("div",{class:"field"});
+  mf.append(el("span",{class:"field-label mono"}, `member nodes (${members.size})`));
+  if(members.size) mf.append(el("div",{class:"chip-list"}, [...members].map(id=>
+    el("span",{class:"chip mono"}, nodeLabel(id),
+      el("button",{class:"chip-x",onclick:()=>saveEntity("system", withField(s,"memberNodeIds",[...members].filter(x=>x!==id)))},"×")))));
+  const addable=nodes.filter(nn=>!members.has(nn.id)).map(nn=>({value:nn.id,label:nodeLabel(nn.id)}));
+  if(addable.length) mf.append(combo("", addable, id=>saveEntity("system", withField(s,"memberNodeIds",[...members,id])), "+ add member…",{clearOnPick:true}));
+  body.append(mf);
+  body.append(dangerButton("Delete system (keeps members)", ()=>{ if(confirm("Delete this system grouping?")) deleteSelected(); }));
+}
+
+/* ============================================================================
+   Create entities, MI import, project dialog, toast
+   ============================================================================ */
+function createEntity(kind){
+  const name = kind==="item"?"New item":kind==="recipe"?"New recipe":"New machine";
+  const id=idFromName(kind,name);
+  const entity = kind==="item"?{id,name,category:"solid"} : kind==="recipe"?{id,name,timeSeconds:1} : {id,name};
+  applyEdits([upsert(kind,entity)]);
+  select(kind,id);
+}
+
+function miImportSection(){
+  const sec=el("div",{class:"rail-section"});
+  const open={v:false};
+  const head=el("div",{class:"rail-section-head"},
+    el("p",{class:"eyebrow quiet",style:{margin:0}},"Import MI"),
+    el("button",{class:"rail-add",title:"Import Modern Industrialization recipes",onclick:()=>{ open.v=!open.v; render(); }},"+"));
+  sec.append(head);
+  const bodyHost=el("div"); sec.append(bodyHost);
+  function render(){
+    bodyHost.textContent="";
+    if(!open.v) return;
+    const inp=el("input",{class:"field-input mono",type:"text",placeholder:"path to extracted MI jar dir",spellcheck:"false"});
+    const msg=el("span",{class:"mi-msg"});
+    const btn=el("button",{class:"tool-btn",onclick:run},"Import recipes");
+    async function run(){
+      const p=inp.value.trim(); if(!p) return;
+      btn.disabled=true; btn.textContent="Importing…"; msg.className="mi-msg"; msg.textContent="";
+      try{
+        snapshot();
+        const res=await callApi("import_mi_dir", p, {});
+        WORLD=res.world; reindex();
+        const st=res.stats||{};
+        msg.className="mi-msg"; msg.textContent=`Imported ${st.recipesImported||0} recipes · ${st.items||0} items · ${st.machineDefs||0} machines`;
+        renderAll(); await recompute();
+      }catch(err){ msg.className="mi-msg bad"; msg.textContent=err.message; }
+      finally{ btn.disabled=false; btn.textContent="Import recipes"; }
+    }
+    bodyHost.append(el("div",{class:"mi-body"}, inp, btn, msg,
+      el("span",{class:"field-hint"},"reads an extracted MI jar directory (Python host only)")));
+  }
+  return sec;
+}
+
+function openProjectDialog(){
+  const overlay=el("div",{style:{position:"fixed",inset:0,zIndex:60,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.5)"},
+    onclick:e=>{ if(e.target===overlay) overlay.remove(); }});
+  const box=el("div",{style:{width:"420px",background:"var(--panel)",border:"1px solid var(--line-2)",borderRadius:"12px",padding:"18px"}});
+  box.append(el("p",{class:"eyebrow"},"Project"));
+  const inp=el("input",{class:"field-input mono",type:"text",placeholder:"path/to/project.psim.json",style:{marginTop:"8px"}});
+  box.append(inp);
+  const msg=el("span",{class:"mi-msg",style:{display:"block",marginTop:"8px"}});
+  const row=el("div",{style:{display:"flex",gap:"8px",marginTop:"12px"}});
+  row.append(el("button",{class:"tool-btn",onclick:async()=>{
+    const p=inp.value.trim(); if(!p) return;
+    try{ WORLD=await callApi("load_project",p); reindex(); HISTORY.length=0; updateUndo(); SEL=null; renderAll(); await recompute(); fit(); overlay.remove(); }
+    catch(err){ msg.className="mi-msg bad"; msg.textContent=err.message; }
+  }},"Load"));
+  row.append(el("button",{class:"tool-btn",onclick:async()=>{
+    const p=inp.value.trim(); if(!p) return;
+    try{ await callApi("save_project",p); msg.className="mi-msg"; msg.textContent="saved "+p; }
+    catch(err){ msg.className="mi-msg bad"; msg.textContent=err.message; }
+  }},"Save"));
+  row.append(el("button",{class:"tool-btn",style:{marginLeft:"auto"},onclick:()=>overlay.remove()},"Close"));
+  box.append(row,msg);
+  box.append(el("span",{class:"field-hint",style:{marginTop:"8px"}},"paths are on the machine running the backend; the working world also autosaves"));
+  overlay.append(box); document.body.append(overlay); inp.focus();
+}
+
+let toastT=null;
+function toast(text, bad){
+  let t=$("#toast"); if(!t){ t=el("div",{class:"toast",id:"toast"}); document.body.append(t); }
+  t.className="toast"+(bad?" bad":""); t.textContent=text;
+  requestAnimationFrame(()=>t.classList.add("show"));
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"), 3200);
+}
+
+/* ============================================================================
+   Boot
+   ============================================================================ */
+let BOOTED=false;
+async function boot(){
+  if(BOOTED) return;
+  try{
+    if(hasBackend()){
+      WORLD = await callApi("get_world");
+      BOOTED=true;
+    } else {
+      const txt=($("#world-data").textContent||"").trim();
+      WORLD = (txt && !txt.startsWith("<!--"))? JSON.parse(txt) : {};
+      BOOTED=true;
+    }
+  }catch(err){
+    if(BOOTED) return;
+    const b=$("#bootmsg"); if(b) b.innerHTML='<p class="eyebrow">Bridge</p><div class="mono" style="color:var(--s-bad)">'+(err.message||err)+'</div>';
+    return;
+  }
+  if(!WORLD || typeof WORLD!=="object") WORLD={};
+  for(const k of ["items","recipes","machineDefs","nodes","pipes","systems"]) if(!WORLD[k]) WORLD[k]=[];
+  reindex();
+  renderAll();
+  refreshPalette();
+  fit();
+  await recompute();
+  window.addEventListener("resize", ()=>applyView());
+}
+
+// Hook render to also refresh the palette (defs may have changed).
+const _renderAll = renderAll;
+renderAll = function(){ _renderAll(); refreshPalette(); };
+
+if(window.pywebview && window.pywebview.api) boot();
+window.addEventListener("pywebviewready", boot);
+window.addEventListener("load", boot);
+</script>
+</body>
+</html>

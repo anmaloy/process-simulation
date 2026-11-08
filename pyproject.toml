@@ -1,0 +1,16 @@
+# Tooling config only (no build step, no package install needed to run the app).
+# `pytest` from the repo root finds the tests and the `process_sim` package.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# tests were not linted under the prior backend-scoped config; keep that.
+"tests/**" = ["E501", "F401", "I001", "E402"]

@@ -1,0 +1,8 @@
+# Runtime: the desktop app needs pywebview (a system web engine — WebView2 on
+# Windows, WebKit on macOS, WebKitGTK on Linux — is used automatically). The
+# server (server.py) needs nothing beyond the standard library.
+pywebview>=5.0
+
+# Dev / tests only (not needed to run the app):
+#   pytest>=8.0
+#   ruff>=0.6
