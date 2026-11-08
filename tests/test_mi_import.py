@@ -610,3 +610,110 @@ def test_vanilla_ore_tag_resolved_from_convention(tmp_path):
     assert _item(lib, "minecraft:iron_ore").category is Category.SOLID
     # A modded material has no vanilla convention → left unresolved, no phantoms.
     assert (_item(lib, "c:ores/osmium").members or []) == []
+
+
+# --------------------------------------------------------------------------- #
+# Generic discovery (any mod's machine types) + multiblock block variants.
+# --------------------------------------------------------------------------- #
+
+
+def _def(lib, did):
+    return next((d for d in lib.machine_defs if d.id == did), None)
+
+
+def test_discovers_any_namespaced_machine_type(tmp_path):
+    """Without an allowlist, a different mod's machine recipe type is imported.
+
+    A namespaced type with a machine shape is picked up; the ``minecraft``
+    namespace and bare vanilla types are skipped.
+    """
+
+    recipe = tmp_path / "data" / "coolmod" / "recipe"
+    _write(
+        recipe / "grinder" / "ore.json",
+        {
+            "type": "coolmod:grinder",
+            "duration": 100,
+            "eu": 4,
+            "item_inputs": [{"item": "coolmod:raw_ore"}],
+            "item_outputs": [{"item": "coolmod:powder", "amount": 2}],
+        },
+    )
+    _write(
+        recipe / "craft.json",
+        {"type": "minecraft:crafting_shaped", "result": {"id": "x"}},
+    )
+    _write(recipe / "bare.json", {"type": "crafting_shaped", "result": {"id": "y"}})
+    lib = import_mi_library(
+        recipe.parent, include_energy=False
+    ).library  # root at the mod's data dir
+    assert _def(lib, "mi.machine.grinder") is not None
+    assert {r.machine_type for r in lib.recipes} == {"grinder"}
+    assert len(lib.recipes) == 1  # the two vanilla recipes were skipped
+
+
+def test_explicit_machine_types_still_narrow(tmp_path):
+    """Passing ``machine_types`` keeps only those bare type names."""
+
+    recipe = tmp_path / "data" / NS / "recipe"
+    _write(
+        recipe / "macerator" / "a.json",
+        {
+            "type": f"{NS}:macerator",
+            "eu": 2,
+            "duration": 20,
+            "item_outputs": [{"item": f"{NS}:dust"}],
+        },
+    )
+    _write(
+        recipe / "mixer" / "b.json",
+        {
+            "type": f"{NS}:mixer",
+            "eu": 2,
+            "duration": 20,
+            "item_outputs": [{"item": f"{NS}:mix"}],
+        },
+    )
+    lib = import_mi_library(
+        tmp_path, machine_types=("macerator",), include_energy=False
+    ).library
+    assert {r.machine_type for r in lib.recipes} == {"macerator"}
+
+
+def test_multiblock_quarry_and_blast_furnace_variants(tmp_path):
+    """A type run by named steam/electric blocks yields those variants, not one def."""
+
+    recipe = tmp_path / "data" / NS / "recipe"
+    _write(
+        recipe / "quarry" / "stone.json",
+        {
+            "type": f"{NS}:quarry",
+            "eu": 8,
+            "duration": 100,
+            "item_outputs": [{"item": f"{NS}:cobblestone"}],
+        },
+    )
+    _write(
+        recipe / "blast_furnace" / "steel.json",
+        {
+            "type": f"{NS}:blast_furnace",
+            "eu": 16,
+            "duration": 200,
+            "item_inputs": [{"item": f"{NS}:iron"}],
+            "item_outputs": [{"item": f"{NS}:steel"}],
+        },
+    )
+    lib = import_mi_library(tmp_path, include_energy=False).library
+
+    # The generic single def is replaced by the named variant blocks.
+    assert _def(lib, "mi.machine.quarry") is None
+    assert _def(lib, "mi.machine.blast_furnace") is None
+    sq = _def(lib, "mi.machine.steam_quarry")
+    eq = _def(lib, "mi.machine.electric_quarry")
+    assert sq is not None and eq is not None
+    assert sq.energy_source.value == "liquid" and sq.source_item_id == f"{NS}:steam"
+    assert eq.energy_source.value == "electric"
+    # Both variants run the same quarry recipes.
+    assert sq.allowed_recipe_ids == eq.allowed_recipe_ids
+    assert _def(lib, "mi.machine.steam_blast_furnace") is not None
+    assert _def(lib, "mi.machine.electric_blast_furnace") is not None

@@ -530,11 +530,17 @@ function renderShell(){
 /* ---------- rail ---------- */
 const railOpen = { nodes:true, systems:true, items:false, recipes:false, machineDefs:false };
 let railQuery = "";
-const railSearchCollapsed = new Set(); // sections manually collapsed while a search is active
+// Only the big lists (items/recipes run to thousands) are capped; nodes, systems,
+// and machine defs show in full so the whole machine roster is visible at a glance.
 const RAIL_CAP = 60;
+const RAIL_CAPPED = new Set(["items","recipes"]);
 
 function renderRail(){
   let rail = $("#rail");
+  // Preserve the scroll position across re-renders (a selection or edit rebuilds
+  // the rail; without this it would jump back to the top on every click).
+  const prevScrollEl = rail && rail.querySelector(".rail-scroll");
+  const prevScroll = prevScrollEl ? prevScrollEl.scrollTop : 0;
   if(!rail){ rail = el("aside",{class:"rail",id:"rail"}); $("#app").prepend(rail); }
   rail.textContent="";
   rail.append(
@@ -555,12 +561,13 @@ function renderRail(){
 
   // search
   const search = el("input",{class:"field-input mono",type:"text",placeholder:"search library…",value:railQuery,
-    oninput:e=>{ railQuery=e.target.value; if(railQuery.trim()==="") railSearchCollapsed.clear(); renderRailSections(); }});
+    oninput:e=>{ railQuery=e.target.value; renderRailSections(); }});
   scroll.append(el("div",{class:"rail-search"}, search));
 
   const sectionsHost = el("div",{id:"railSections"});
   scroll.append(sectionsHost);
   renderRailSections();
+  scroll.scrollTop = prevScroll;
 }
 
 function railMatch(label,id){ const q=railQuery.trim().toLowerCase(); return q===""||(label||"").toLowerCase().includes(q)||(id||"").toLowerCase().includes(q); }
@@ -578,22 +585,22 @@ function renderRailSections(){
   ];
   for(const sec of sections){
     const filtered = sec.rows.filter(r=>railMatch(r.label,r.id)).sort((a,b)=>cmp(a.label,b.label));
-    // While searching, sections default open (so matches show) but can still be
-    // collapsed individually; otherwise the persistent per-section toggle governs.
-    const searching = railQuery.trim()!=="";
-    const open = searching ? !railSearchCollapsed.has(sec.key) : railOpen[sec.key];
+    // The persistent per-section toggle governs open/closed — searching never
+    // forces a minimized section back open.
+    const open = railOpen[sec.key];
     const head = el("div",{class:"rail-section-head"},
-      el("button",{class:"rail-section-toggle eyebrow quiet",onclick:()=>{ if(searching){ railSearchCollapsed.has(sec.key)?railSearchCollapsed.delete(sec.key):railSearchCollapsed.add(sec.key); } else { railOpen[sec.key]=!railOpen[sec.key]; } renderRailSections(); }},
+      el("button",{class:"rail-section-toggle eyebrow quiet",onclick:()=>{ railOpen[sec.key]=!railOpen[sec.key]; renderRailSections(); }},
         el("span",{class:"rail-caret"+(open?" open":"")},"▸"), sec.title,
         el("span",{class:"rail-count mono"}, String(sec.rows.length))),
       sec.add? el("button",{class:"rail-add",title:"New "+sec.title.toLowerCase().replace(/s$/,""),onclick:()=>createEntity(sec.add)},"+"):null
     );
     const body = el("div");
     if(open){
+      const cap = RAIL_CAPPED.has(sec.key) ? RAIL_CAP : Infinity;
       if(filtered.length===0) body.append(el("div",{class:"leaf"},"none"));
       else{
-        filtered.slice(0,RAIL_CAP).forEach(r=>body.append(leaf(r,sec.drag)));
-        if(filtered.length>RAIL_CAP) body.append(el("div",{class:"leaf rail-more mono"},`+${filtered.length-RAIL_CAP} more — search to narrow`));
+        filtered.slice(0,cap).forEach(r=>body.append(leaf(r,sec.drag)));
+        if(filtered.length>cap) body.append(el("div",{class:"leaf rail-more mono"},`+${filtered.length-cap} more — search to narrow`));
       }
     }
     host.append(el("div",{class:"rail-section"}, head, body));
@@ -673,7 +680,7 @@ function renderGraph(){
     const place=(list,dir)=>list.forEach((p,i)=>{
       const rowY = headH + (i+0.5)*22 + 6;
       const px = dir==="in"? 0 : NODE_W;
-      anchorPos[n.id+"|"+p.id] = {x:x+px, y:y+rowY};
+      anchorPos[n.id+"|"+p.id] = {x:x+px, y:y+rowY, dir: dir==="in"?-1:1};
       const dot=el("div",{class:"port "+dir,style:{top:rowY+"px",background:catColor(p.category)},
         title:p.category+" "+dir,"data-node":n.id,"data-port":p.id,"data-cat":p.category,"data-dir":dir});
       dot.addEventListener("pointerdown",startConnect);
@@ -690,8 +697,8 @@ function renderGraph(){
     const dom=sysDom(s);
     dom.style.left=x+"px"; dom.style.top=y+"px";
     vp.append(dom);
-    anchorPos["sys:"+s.id+"|in"]={x, y:y+dom.offsetHeight/2};
-    anchorPos["sys:"+s.id+"|out"]={x:x+190, y:y+dom.offsetHeight/2};
+    anchorPos["sys:"+s.id+"|in"]={x, y:y+dom.offsetHeight/2, dir:-1};
+    anchorPos["sys:"+s.id+"|out"]={x:x+190, y:y+dom.offsetHeight/2, dir:1};
   }
 
   // pipe junctions (small routing dots) — one anchor at the dot centre
@@ -704,7 +711,7 @@ function renderGraph(){
     const dom=junctionDom(j);
     dom.style.left=x+"px"; dom.style.top=y+"px";
     vp.append(dom);
-    anchorPos["j:"+j.id]={x, y};
+    anchorPos["j:"+j.id]={x, y, dir:0};
   }
   // a pipe end at a junction resolves to that single centre anchor
   const endKey=(end,fallbackDir,cat)=>JUNC.has(end.nodeId)
@@ -743,8 +750,17 @@ function renderGraph(){
   applyView();
 }
 function edgePath(a,b){
-  const dx=Math.max(40, Math.abs(b.x-a.x)*0.5);
-  return `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`;
+  // Control points extend from each end along its facing: a source port faces
+  // right (+1), a sink port left (−1). A junction (dir 0) has no facing, so its
+  // control point sits ON the dot — the curve runs straight in/out instead of
+  // overshooting sideways and whipping back. dx is clamped so a long run doesn't
+  // bow out hugely.
+  const adir = a.dir==null? 1 : a.dir;
+  const bdir = b.dir==null? -1 : b.dir;
+  const dx = Math.min(160, Math.max(40, Math.abs(b.x-a.x)*0.5));
+  const c1x = adir===0 ? a.x : a.x + adir*dx;
+  const c2x = bdir===0 ? b.x : b.x + bdir*dx;
+  return `M ${a.x} ${a.y} C ${c1x} ${a.y}, ${c2x} ${b.y}, ${b.x} ${b.y}`;
 }
 
 function nodeDom(n, def, ins, outs){
@@ -952,18 +968,18 @@ function liveRedrawEdges(){
     const id=dom.getAttribute("data-id"); const p=posOf(dom);
     dom.querySelectorAll(".port").forEach(pt=>{
       const port=pt.getAttribute("data-port"), dir=pt.getAttribute("data-dir");
-      const py=parseFloat(pt.style.top); anchors[id+"|"+port]={x:p.x+(dir==="in"?0:NODE_W), y:p.y+py};
+      const py=parseFloat(pt.style.top); anchors[id+"|"+port]={x:p.x+(dir==="in"?0:NODE_W), y:p.y+py, dir:dir==="in"?-1:1};
     });
   });
   vp.querySelectorAll(".sys").forEach(dom=>{
     const id=dom.getAttribute("data-sys"); const p=posOf(dom);
-    anchors["sys:"+id+"|in"]={x:p.x,y:p.y+dom.offsetHeight/2};
-    anchors["sys:"+id+"|out"]={x:p.x+190,y:p.y+dom.offsetHeight/2};
+    anchors["sys:"+id+"|in"]={x:p.x,y:p.y+dom.offsetHeight/2, dir:-1};
+    anchors["sys:"+id+"|out"]={x:p.x+190,y:p.y+dom.offsetHeight/2, dir:1};
   });
   const JUNC=new Set();
   vp.querySelectorAll(".junction").forEach(dom=>{
     const id=dom.getAttribute("data-junction"); const p=posOf(dom);
-    JUNC.add(id); anchors["j:"+id]={x:p.x,y:p.y};
+    JUNC.add(id); anchors["j:"+id]={x:p.x,y:p.y, dir:0};
   });
   const endKey=(end,dir,cat)=>JUNC.has(end.nodeId)?"j:"+end.nodeId:end.nodeId+"|"+(end.port||portId(cat,dir));
   const cs=collapseState();
