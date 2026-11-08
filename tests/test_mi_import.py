@@ -517,6 +517,24 @@ def test_sample_mi_project_loads_and_balances():
     ) == pytest.approx(0.1)
 
 
+def test_api_import_mi_dir_is_idempotent(mi_root):
+    """Re-importing the same jar must not duplicate — MI ids are stable, so the
+    default policy is ``skip``, not ``rename``. (Guards the autosave-doubling bug:
+    the import persists across launches, so a second import should add nothing.)"""
+
+    api = Api()
+    opts = {"machineTypes": ["macerator", "mixer"]}
+    first = api.import_mi_dir(str(mi_root), opts)["data"]["world"]
+    counts = {k: len(first[k]) for k in ("items", "recipes", "machineDefs")}
+
+    second = api.import_mi_dir(str(mi_root), opts)["data"]
+    after = {k: len(second["world"][k]) for k in ("items", "recipes", "machineDefs")}
+
+    assert after == counts  # nothing added the second time
+    assert second["idRemap"] == {}  # nothing renamed
+    assert second["skippedIds"]  # everything recognised as already present
+
+
 def test_api_import_mi_dir_bad_path_is_error_envelope(tmp_path):
     api = Api()
     res = api.import_mi_dir(str(tmp_path / "nope"))

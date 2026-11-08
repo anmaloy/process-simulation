@@ -340,8 +340,10 @@ class Api:
 
         Builds a library from the MI recipe data under ``path`` (for the chosen
         ``machineTypes``, default the phase-3 subset) and merges it into the
-        current World, resolving id collisions per ``onConflict``. The payload is
-        the usual import shape plus ``stats`` describing what was read.
+        current World, resolving id collisions per ``onConflict`` — which here
+        defaults to ``skip`` (not the library default ``rename``) so re-importing
+        the same jar is idempotent rather than duplicating every entity. The
+        payload is the usual import shape plus ``stats`` describing what was read.
         """
 
         options = options or {}
@@ -359,7 +361,13 @@ class Api:
             result = import_library(
                 self._world,
                 imported.library,
-                on_conflict=ConflictPolicy(options.get("onConflict", "rename")),
+                # MI recipes are canonical reference data keyed by stable ids
+                # (e.g. ``modern_industrialization:iron_dust``), so re-importing
+                # the same jar must be idempotent: ``skip`` leaves an id the World
+                # already holds untouched rather than cloning it under a fresh id.
+                # (The autosave already persists an import across launches, so a
+                # re-import should only ever *add* genuinely new recipes.)
+                on_conflict=ConflictPolicy(options.get("onConflict", "skip")),
             )
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)

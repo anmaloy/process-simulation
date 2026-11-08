@@ -111,7 +111,10 @@ model's camelCase wire format.
   per-node balances, net energy, ranked bottlenecks, and `pipeFlows` — per-pipe
   resolved flow + a starved-edge `shortfall` flag, added for the P8 overlay).
 - **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
-  `error`.
+  `error`. **`import_mi_dir` overrides this default to `skip`** — MI recipes are
+  canonical reference data keyed by stable ids, and an import already persists via
+  the autosave, so re-importing the same jar must be idempotent (add only
+  genuinely new recipes) rather than cloning every entity under a fresh id.
 - **`import_mi_dir`** reads an **extracted Modern Industrialization jar
   directory** (`io/mi_import.py`) and merges its machine recipes into the current
   World via `import_library`. By **default it discovers and imports every
