@@ -255,25 +255,35 @@ class MachineDef(Serializable):
 
 @dataclass
 class MachineNode(Serializable):
-    """A placed machine bound to a def, an optional recipe, overclock, and count.
+    """A placed machine bound to a def, its recipe(s), overclock, and count.
 
     ``x``/``y`` are canvas coordinates, absent until placed by the UI.
 
-    The scope is modelled as an automatic system: a machine runs only to the
-    extent its inputs are actually delivered by connected pipes and its outputs
-    are actually taken downstream. Two **boundary** flags opt a node out of that,
-    for the edge of the system where a player feeds or empties it by hand:
+    A node may run **more than one recipe at once** — e.g. one large macerator
+    fed iron ore *and* coal ore, standing in for several single-recipe machines.
+    ``recipe_ids`` is the canonical list; the node's I/O and energy are the
+    **sum** of every bound recipe (each at the node's ``overclock`` × ``count``).
+    ``recipe_id`` is the legacy single-recipe field, still read from older saves
+    and still accepted when constructing a node; :attr:`recipe_list` returns the
+    effective recipes from whichever is set (``recipe_ids`` wins when present).
+
+    The scope is modelled as an automatic system: a machine runs to the extent
+    its inputs are actually delivered by connected pipes. Unconsumed output is
+    surplus (it leaves as yield / is assumed routed to storage or voided) and
+    never throttles the machine. Two **boundary** flags mark the edge of the
+    system where a player feeds or empties it by hand:
 
     - ``assume_inputs`` (manual insertion): treat any input not supplied by a
       pipe as available, so the machine can run without every feed wired up.
-    - ``assume_outputs`` (manual extraction): treat the outputs as removed, so
-      the machine can run even when nothing downstream consumes them (its output
-      is the system's product).
+    - ``assume_outputs`` (manual extraction): the outputs are removed by hand, so
+      they are counted as the system's product (yield) rather than an internal
+      feed, even where a pipe also carries them.
     """
 
     id: str
     machine_def_id: str
     recipe_id: str | None = None
+    recipe_ids: list[str] | None = None
     overclock: float = 1.0
     count: int = 1
     assume_inputs: bool = False
@@ -281,12 +291,22 @@ class MachineNode(Serializable):
     x: float | None = None
     y: float | None = None
 
+    @property
+    def recipe_list(self) -> list[str]:
+        """The effective recipe ids this node runs (``recipe_ids``, else ``recipe_id``)."""  # noqa: E501
+
+        if self.recipe_ids is not None:
+            return list(self.recipe_ids)
+        return [self.recipe_id] if self.recipe_id else []
+
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> MachineNode:
+        recipe_ids = d.get("recipeIds")
         return cls(
             id=d["id"],
             machine_def_id=d["machineDefId"],
             recipe_id=d.get("recipeId"),
+            recipe_ids=list(recipe_ids) if recipe_ids is not None else None,
             overclock=d.get("overclock", 1.0),
             count=d.get("count", 1),
             assume_inputs=d.get("assumeInputs", False),

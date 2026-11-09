@@ -341,10 +341,10 @@ const catColor = c => CATEGORY_COLOR[c] || "var(--ink-faint)";
 // Node run-band colors (what the canvas shows): green = running 50–100% fully
 // consumed, blue = running ≥50% with surplus (overflow, routed to storage/void —
 // a good state), yellow = running below 50% (throttled, underfed), red = not
-// running (stalled) or over its power ceiling (capped). shortfall stays the
-// per-item input verdict (red; drives the dashed starved edge).
-const STATUS_COLOR = { ok:"var(--s-ref)", overflow:"var(--s-indep)", throttled:"var(--s-learn)", stalled:"var(--s-bad)", capped:"var(--s-bad)", shortfall:"var(--s-bad)" };
-const STATUS_FILL  = { ok:"var(--f-ref)", overflow:"var(--f-indep)", throttled:"var(--f-learn)", stalled:"var(--f-bad)", capped:"var(--f-bad)", shortfall:"var(--f-bad)" };
+// running (stalled). shortfall stays the per-item input verdict (red; drives the
+// dashed starved edge).
+const STATUS_COLOR = { ok:"var(--s-ref)", overflow:"var(--s-indep)", throttled:"var(--s-learn)", stalled:"var(--s-bad)", shortfall:"var(--s-bad)" };
+const STATUS_FILL  = { ok:"var(--f-ref)", overflow:"var(--f-indep)", throttled:"var(--f-learn)", stalled:"var(--f-bad)", shortfall:"var(--f-bad)" };
 const statusColor = s => STATUS_COLOR[s||"stalled"];
 const TPS = 20;
 const toPerTick = v => v/TPS, toPerSecond = v => v*TPS;
@@ -402,7 +402,10 @@ function renameEntity(w, kind, oldId, newId){
   } else if(kind==="recipe"){
     w.recipes = ren(w.recipes);
     for(const d of w.machineDefs||[]) if(d.allowedRecipeIds) d.allowedRecipeIds=d.allowedRecipeIds.map(x=>x===oldId?newId:x);
-    for(const n of w.nodes||[]) if(n.recipeId===oldId) n.recipeId=newId;
+    for(const n of w.nodes||[]){
+      if(n.recipeId===oldId) n.recipeId=newId;
+      if(Array.isArray(n.recipeIds)) n.recipeIds=n.recipeIds.map(x=>x===oldId?newId:x);
+    }
   } else if(kind==="machineDef"){
     w.machineDefs = ren(w.machineDefs);
     for(const n of w.nodes||[]) if(n.machineDefId===oldId) n.machineDefId=newId;
@@ -468,6 +471,16 @@ function freshSystemId(){ return freshId("system", idsOfKind("system")); }
 /* ---- sparse-field helpers ---- */
 function withField(o,k,v){ return {...o,[k]:v}; }
 function withoutField(o,k){ const n={...o}; delete n[k]; return n; }
+
+// A node's effective recipe list: the canonical `recipeIds`, else the legacy
+// single `recipeId` (a node may run several recipes at once — the engine sums
+// them). `setNodeRecipes` writes the canonical list and clears the legacy field.
+function nodeRecipeIds(n){ return Array.isArray(n.recipeIds)?n.recipeIds.slice():(n.recipeId?[n.recipeId]:[]); }
+function setNodeRecipes(n, ids){
+  const o=withoutField(n,"recipeId");
+  if(ids&&ids.length) return withField(o,"recipeIds",ids.slice());
+  return withoutField(o,"recipeIds");
+}
 
 /* ============================================================================
    Edit pipeline — snapshot, apply, re-render, recompute
@@ -772,7 +785,9 @@ function nodeDom(n, def, ins, outs){
   const seld = SEL&&SEL.kind==="node"&&SEL.id===n.id;
   const title = (def&&def.name)||n.machineDefId;
   const meta=[];
-  if(n.recipeId) meta.push(n.recipeId);
+  const rids=nodeRecipeIds(n);
+  if(rids.length===1) meta.push(rids[0]);
+  else if(rids.length>1) meta.push(rids.length+" recipes");
   if(n.overclock!=null && n.overclock!==1) meta.push("×"+n.overclock);
   if(n.count!=null && n.count!==1) meta.push("∥"+n.count);
   const dom=el("div",{class:"node"+(seld||MULTI.has(n.id)?" selected":""),"data-id":n.id},
@@ -825,8 +840,7 @@ function junctionDom(j){
 }
 function aggregateStatus(rep){
   const st=Object.values(rep.balances||{}).map(b=>b.status);
-  // worst-first: red (capped/stalled) → yellow (throttled) → blue (overflow) → green
-  if(st.includes("capped")) return "capped";
+  // worst-first: red (stalled) → yellow (throttled) → blue (overflow) → green
   if(st.includes("stalled")) return "stalled";
   if(st.includes("throttled")) return "throttled";
   if(st.includes("overflow")) return "overflow";
@@ -881,7 +895,7 @@ function legendEl(){
     ["solid","liquid","energy"].map(c=>el("span",{class:"key"},el("span",{class:"legend-dot",style:{background:catColor(c)}}),c))));
   L.append(el("div",{class:"eyebrow quiet",style:{marginTop:"4px"}},"Status"));
   L.append(el("div",{class:"row"},
-    [["ok","50–100%"],["overflow","surplus"],["throttled","<50%"],["stalled","stopped"],["capped","over cap"]].map(([s,lbl])=>
+    [["ok","50–100%"],["overflow","surplus"],["throttled","<50%"],["stalled","stopped"]].map(([s,lbl])=>
       el("span",{class:"key",title:s},el("span",{class:"legend-dot",style:{background:STATUS_COLOR[s]}}),lbl))));
   return L;
 }
@@ -1619,8 +1633,7 @@ function nodeInspector(body, n){
   const bf=el("div",{class:"field"});
   bf.append(el("span",{class:"field-label mono"},"boundary"));
   bf.append(checkbox(!!n.assumeInputs, v=>saveEntity("node", v?withField(n,"assumeInputs",true):withoutField(n,"assumeInputs")), "manual insertion — assume inputs available"));
-  bf.append(checkbox(!!n.assumeOutputs, v=>saveEntity("node", v?withField(n,"assumeOutputs",true):withoutField(n,"assumeOutputs")), "manual extraction — assume outputs removed"));
-  bf.append(el("span",{class:"field-hint"},"a machine runs only when its inputs are supplied and its outputs are taken; a boundary machine is fed or emptied by hand"));
+  bf.append(el("span",{class:"field-hint"},"a machine runs at the rate its delivered inputs allow; unconsumed output is surplus (routed to storage/voided). Manual insertion feeds any unwired input by hand, so an edge machine still runs."));
   body.append(bf);
 
   body.append(dangerButton("Delete machine node", ()=>deleteSelected()));
@@ -1633,23 +1646,32 @@ function resourceName(id){
 function resourceDot(id){ const it=BY.items[id]; return it?(it.isTag?"var(--ink-faint)":catColor(it.category)):"var(--ink-faint)"; }
 function stackRes(s){ return s.itemId!=null?s.itemId:(s.tag!=null?s.tag:null); }
 function recipeFinder(n, pool){
-  const bound = n.recipeId? BY.recipes[n.recipeId] : null;
+  // A node may run several recipes at once; its I/O and energy are the sum. The
+  // bound recipes are listed (each removable), with a finder to add more.
+  const ids = nodeRecipeIds(n);
   const f=el("div",{class:"field"});
-  const lab=el("span",{class:"field-label mono"},"recipe");
-  f.append(lab);
-  const state={changing:false};
+  f.append(el("span",{class:"field-label mono"}, ids.length>1?"recipes":"recipe"));
+  const state={adding: ids.length===0};
   function paint(){
     [...f.querySelectorAll(".recipe-dyn")].forEach(x=>x.remove());
     const dyn=el("div",{class:"recipe-dyn"});
-    if(bound && !state.changing){
-      lab.querySelector(".clear-btn")||lab.append(el("button",{class:"clear-btn",onclick:()=>{ state.changing=true; paint(); }},"change"));
-      dyn.append(recipeSummary(bound));
-    } else if(!pool.length){
-      dyn.append(el("span",{class:"stack-empty mono"},"no recipes available for this machine"));
+    ids.forEach(rid=>{
+      const r=BY.recipes[rid];
+      const row=el("div",{class:"recipe-bound",style:{marginBottom:"6px"}});
+      row.append(r?recipeSummary(r):el("span",{class:"stack-empty mono"},rid+" (missing)"));
+      row.append(el("button",{class:"row-del",style:{marginTop:"4px"},
+        onclick:()=>saveEntity("node", setNodeRecipes(n, ids.filter(x=>x!==rid)))},"× remove"));
+      dyn.append(row);
+    });
+    if(state.adding){
+      if(!pool.length) dyn.append(el("span",{class:"stack-empty mono"},"no recipes available for this machine"));
+      else dyn.append(finderBody(n, pool, ids, rid=>{
+        if(!ids.includes(rid)) saveEntity("node", setNodeRecipes(n, ids.concat([rid])));
+      }));
+      if(ids.length) dyn.append(el("button",{class:"clear-btn",style:{marginTop:"6px"},onclick:()=>{state.adding=false;paint();}},"done"));
     } else {
-      dyn.append(finderBody(n,pool));
+      dyn.append(el("button",{class:"clear-btn",onclick:()=>{state.adding=true;paint();}},"+ add recipe"));
     }
-    if(n.recipeId!=null) dyn.append(el("button",{class:"row-del",style:{marginTop:"6px"},onclick:()=>saveEntity("node",withoutField(n,"recipeId"))},"× unset recipe"));
     f.append(dyn);
   }
   paint();
@@ -1668,7 +1690,9 @@ function recipeSummary(r){
     el("div",{class:"recipe-io"}, el("span",{class:"recipe-io-label mono"},"in"), el("div",{class:"recipe-chips"}, chips(r.inputs))),
     el("div",{class:"recipe-io"}, el("span",{class:"recipe-io-label mono"},"out"), el("div",{class:"recipe-chips"}, chips(r.outputs))));
 }
-function finderBody(n, pool){
+function finderBody(n, pool, boundIds, onPick){
+  boundIds = boundIds || [];
+  onPick = onPick || (r=>{});
   const wrap=el("div");
   const state={input:"",output:""};
   function resourceOptions(side){
@@ -1679,6 +1703,7 @@ function finderBody(n, pool){
   function satisfies(recId, chosen){ if(recId===chosen) return true; const m=BY.items[recId]?.members; return m?m.includes(chosen):false; }
   function matches(){
     return pool.filter(r=>{
+      if(boundIds.includes(r.id)) return false;  // already bound — hide
       const okIn = !state.input || (r.inputs||[]).some(s=>{ const id=stackRes(s); return id&&satisfies(id,state.input); });
       const okOut= !state.output || (r.outputs||[]).some(s=>{ const id=stackRes(s); return id&&satisfies(id,state.output); });
       return okIn&&okOut;
@@ -1691,15 +1716,14 @@ function finderBody(n, pool){
     const lst=el("div",{class:"recipe-list"});
     if(!list.length) lst.append(el("div",{class:"combo-empty"},"no matching recipe"));
     list.slice(0,60).forEach(r=>{
-      lst.append(el("div",{class:"recipe-opt",onclick:()=>saveEntity("node", withField(n,"recipeId",r.id))},
-        recipeOneLine(r)));
+      lst.append(el("div",{class:"recipe-opt",onclick:()=>onPick(r.id)}, recipeOneLine(r)));
     });
     dyn.append(lst);
     wrap.append(dyn);
   }
   wrap.append(field("filter by input", combo("", [{value:"",label:"— any —"}].concat(resourceOptions("inputs")), v=>{ state.input=v; repaint(); }, "any input…")));
   wrap.append(field("filter by output", combo("", [{value:"",label:"— any —"}].concat(resourceOptions("outputs")), v=>{ state.output=v; repaint(); }, "any output…")));
-  wrap.append(el("span",{class:"field-hint"},"pick an input and/or output the machine's recipes use"));
+  wrap.append(el("span",{class:"field-hint"},"pick an input and/or output; add several to run them in one block"));
   repaint();
   return wrap;
 }

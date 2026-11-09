@@ -107,7 +107,9 @@ model's camelCase wire format.
   entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
   "id": <id>}`. `kind` ∈ `item`, `recipe`, `machineDef`, `node`, `pipe`,
   `pipeNode`, `system`. Editing recomputes nothing by itself — the UI follows an
-  edit with a `recompute` call.
+  edit with a `recompute` call. A `node` entity carries `recipeIds` (a list — a
+  node runs every recipe in it, summed) with legacy single `recipeId` still read
+  from older saves.
 - **`recompute` scopes**: `world` (default), `node` (`nodeId` — a single
   machine), `process` (`nodeId` — its connected component via `trace_process`),
   `system` (`systemId`). The payload is `ScopeReport.to_dict()` (external I/O,
@@ -297,12 +299,17 @@ tests/               # pytest for engine/model/io/api/app
   water sets it to `16`. A **storage** def sets `storage`
   (`{category, capacity}`) and is a transparent buffer. Nothing here names a
   specific fluid — the carriers are just items (content).
-- **MachineNode** — a placed machine bound to a recipe, an overclock multiplier,
-  and a parallel count. Two optional **boundary** flags opt a node out of the
-  automatic supply/demand gating for the edge of the system a player tends by
-  hand: `assumeInputs` (manual insertion — treat any input not supplied by a pipe
-  as available) and `assumeOutputs` (manual extraction — treat outputs as removed,
-  so it runs even with nothing downstream). Default off.
+- **MachineNode** — a placed machine bound to **one or more recipes**, an
+  overclock multiplier, and a parallel count. `recipeIds` is the canonical recipe
+  list (a node may run several recipes at once — e.g. one large macerator fed
+  iron ore *and* coal ore — and its I/O and energy are the **sum** of every bound
+  recipe); the legacy single `recipeId` is still read from older saves, and
+  `recipe_list` returns whichever is set. The optional **boundary** flag
+  `assumeInputs` (manual insertion — treat any input not supplied by a pipe as
+  available) lets an edge machine run on hand-fed feedstock. (`assumeOutputs`
+  remains in the model for back-compat but no longer affects the balance — output
+  never throttles a machine in the input-driven model; see "Computation".)
+  Default off.
 - **Pipe** — the graph edge. Carries one category between two machine ports; has
   storage capacity, movement capacity, an overclock multiplier, and per-end
   roles and priorities. **Liquid pipes carry an unlimited rate** — only solids
@@ -328,13 +335,16 @@ and direction sets how much a machine can hold.
 
 ## Computation (all rates per second)
 
-For a node running recipe `R` at `overclock` with parallel `count`:
+For a node running recipe `R` at `overclock` with parallel `count` (a node bound
+to several recipes runs each one and **sums** their I/O and energy):
 
 `overclock` is first **clamped** by the machine's power ceiling (decision #2):
-`overclock ≤ maxEuPerTick / euPerTick` when both are set — a capped machine runs
-its recipe slower, since speed and energy move together. A term `s` carries an
-optional `probability` (absent = 1); a `probability = 0` term is a catalyst
-(referenced, not consumed/produced) and is left absent, never a zero rate:
+`overclock ≤ maxEuPerTick / euPerTick` when both are set — a clamped machine runs
+its recipe slower, since speed and energy move together. This clamp is **silent**
+(it is the machine's real rate at its tier, not an error state). The clamp is
+applied per recipe. A term `s` carries an optional `probability` (absent = 1); a
+`probability = 0` term is a catalyst (referenced, not consumed/produced) and is
+left absent, never a zero rate:
 
 ```
 cyclesPerSec   = overclock / R.timeSeconds
@@ -430,55 +440,40 @@ Each pipe's flow is `min(upstream available, downstream demand, pipeThroughput)`
 A full input buffer pushes overflow upstream; a full output buffer stalls the
 machine.
 
-Aggregation over a system, traced process, or world models an **automatic
-system**: a machine runs only to the extent its inputs are actually delivered by
-connected pipes *and* its outputs are actually taken downstream — "if everything
-is not continuous, it won't run". Each node's **duty cycle** is the smaller of
-those two limits, solved by **two relaxation passes** in `compute_scope`
-(reported as `nodeDuty`):
+Aggregation over a system, traced process, or world is **purely input-driven**:
+every machine runs at the maximum its delivered inputs allow, and **output never
+throttles a machine**. Unconsumed output is **surplus** — assumed routed to
+storage or voided — reported as overflow (a good state), not backpressure. So a
+source whose inputs are available (a quarry on an ample steam line, a boiler fed
+fuel and water) runs at 100% *independently* of how much its consumers take or
+how many siblings share its supply: adding or removing one consumer or sibling
+producer has **no bearing** on the rest. (This replaces the earlier two-pass
+demand-ceiling model, whose shared downstream demand coupled otherwise-independent
+producers — adding a quarry dropped the duty of every other quarry on the line.)
 
-- **Pass A — the demand ceiling** (`_relax_demand`): the duty each node would run
-  at with unlimited inputs, limited only by its output being taken. An output
-  nothing consumes is a **product** and leaves as yield (no backpressure); an
-  output with a downstream consumer backpressures to that consumer's *ceiling*
-  demand — a water pump only runs as often as the boiler would draw its water.
-  `assumeOutputs` (manual extraction) lifts the ceiling to full.
-- **Pass B — the input-limited duty** (`_relax_inputs`): starting from the
-  ceiling, each node throttles to the fraction of its inputs actually delivered.
-  Crucially, a consumer's *demand* on its suppliers stays pinned at the ceiling,
-  so a **starved consumer keeps pulling at full and never drags its supplier to
-  zero** — the failure mode (a whole shared-supply network collapsing to ~0% with
-  a spurious carrier bottleneck) that the earlier single-pass multiplicative
-  relaxation produced. `assumeInputs` (manual insertion) treats any unsupplied
-  input as available, so a node runs on hand-fed feedstock. Placing *just* a
-  converter (nothing wired) is a shortfall, not an overflow of output it can't
-  make.
+Each node's **duty cycle** (reported as `nodeDuty`) is solved by one relaxation
+in `compute_scope` (`_relax_inputs`): start every runnable node at ceiling 1 and
+iterate `duty_i = min(1, availability_i)`, where availability is the fraction of
+its inputs actually delivered. A consumer's *demand* on its suppliers stays
+pinned at the ceiling, so a **starved consumer keeps pulling at full and never
+drags its supplier down**, and a **feedback cycle** (a boiler whose steam powers
+the pump that feeds it water) holds at full because each side supplies the other
+fully — no special cycle detection is needed. `assumeInputs` (manual insertion)
+treats any unsupplied input as available, so an edge machine runs on hand-fed
+feedstock. Placing *just* a converter (nothing wired) is a shortfall, not an
+overflow of output it can't make.
 
-A node held below its ceiling is input-limited; the inputs that can't meet the
-ceiling are its **shortfalls** (and the ranked **bottlenecks**), so a *plentiful*
-carrier (e.g. ample steam) is never blamed when a different input (e.g. ore) is
-the real limit. Storage (buffer) nodes and pipe junctions are transparent
-passthroughs, so an item only a buffer holds is still a product.
-
-**Generation sources on a feedback cycle.** A **generation source** — an energy
-converter (boiler / turbine / generator making a carrier) or an input-less
-producer (a water pump, quarry, or drill yielding a resource from power alone,
-with no material feedstock) — is the supply edge of the system. When such a
-source sits on a *flow cycle* (its own output can return to its input through the
-pipe graph — a boiler whose steam powers a pump that pumps the boiler's water),
-plain mutual demand-backpressure would throttle every node on the loop to zero
-("they should be pumping and consuming, they are doing neither"). The engine
-detects these cycles and treats a source on one as if `assumeOutputs` were set:
-it runs at the rate its *inputs* permit and the surplus leaves as yield, so a
-boiler fed water and fuel makes steam at its rated rate and a powered pump makes
-water at its rated rate. A source in a plain *linear* chain is **not** on a cycle
-and still demand-throttles normally (burning no more fuel than its consumers
-draw).
+A node held below 1 is input-limited; the inputs that can't be fully met are its
+**shortfalls** (and the ranked **bottlenecks**), so a *plentiful* carrier (e.g.
+ample steam) is never blamed when a different input (e.g. ore) is the real limit.
+Storage (buffer) nodes and pipe junctions are transparent passthroughs, so an
+item only a buffer holds is still a product.
 
 The scope reports:
 `netEnergy` (sum of duty-scaled energy terms); **external inputs** = the
 manually-inserted feedstock the running scope consumes; **external outputs** =
-the **actual yield** (products leaving the scope); and the largest input
+the **yield** (everything produced beyond internal demand — a pure product leaves
+whole, an over-supplied intermediate leaves its surplus); and the largest input
 shortfalls as **bottlenecks**. A **storage** node is a transparent passthrough
 (its buffer only absorbs transients), spliced out of the flow graph.
 
@@ -518,7 +513,9 @@ cycles/sec, energy consumption, and energy production together. On pipes it scal
 movement capacity. Optional min/max bounds per definition for UI clamping. No
 non-linear curve. The engine additionally clamps a machine's effective overclock
 to its power ceiling (`euPerTick × overclock ≤ maxEuPerTick`, decision #2) — a
-machine can't run faster than its tier/upgrades can feed it.
+machine can't run faster than its tier/upgrades can feed it. This clamp is
+**silent**: a clamped machine simply runs at its tier-max rate, with no distinct
+"over capacity" status (it is not an error — just the real rate).
 
 ## Resolved decisions
 
@@ -585,14 +582,14 @@ Domain-state palette (the guide doesn't cover these directly):
   excess assumed routed to storage/voided; a *good* state, since the goal is to
   max every machine so nothing starves, which means surplus everywhere); **yellow**
   (`--s-learn`) = running below 50% (throttled/underfed — normal, not an error);
-  **red** (`--s-bad`) = **not running** (stalled: no feed, no power, nothing
-  downstream) **or over capacity** (capped: its overclock is clamped by the
-  power-tier ceiling, so it can't reach the set rate). Precedence: capped/stalled
-  → yellow (<50%) → blue (surplus) → green. Per-**item** balances keep `shortfall`
-  → red on an input (the single-item verdict that drives the dashed starved-edge
-  flag) and `overflow` → blue on an output. An energy-carrier (electricity)
-  surplus is reported as `netEnergy`, not a blue node. Cyan (`--spine`) stays
-  reserved for the selected/live element.
+  **red** (`--s-bad`) = **not running** (stalled: no feed, no power). Precedence:
+  stalled → yellow (<50%) → blue (surplus) → green. (A machine whose overclock
+  exceeds its power-tier ceiling simply runs at that ceiling — the clamp is silent
+  physics, not a status, so there is **no** red "over capacity" band.) Per-**item**
+  balances keep `shortfall` → red on an input (the single-item verdict that drives
+  the dashed starved-edge flag) and `overflow` → blue on an output. An
+  energy-carrier (electricity) surplus is reported as `netEnergy`, not a blue
+  node. Cyan (`--spine`) stays reserved for the selected/live element.
 - **Category colors** (solid / liquid / energy edges and ports) — default
   assignment (adjustable): solid → silver (`--s-teach`), liquid → blue
   (`--s-indep`), energy → gold (`--subedge`). A converter's output fluid is a

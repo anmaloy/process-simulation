@@ -112,9 +112,7 @@ def test_energy_scales_with_overclock_count() -> None:
     md = MachineDef(
         id="d1", energy_source=EnergySource.ELECTRIC, base_energy_consumption=10
     )
-    comp = compute_node(
-        _node(recipe_id="r", overclock=2.0, count=2), md, recipe
-    )
+    comp = compute_node(_node(recipe_id="r", overclock=2.0, count=2), md, recipe)
     assert comp.energy_consume == 40.0  # 10 * 2 * 2
 
 
@@ -145,7 +143,9 @@ def test_electric_consumer_routes_power_when_carrier_set() -> None:
         base_energy_consumption=30,
     )
     recipe = Recipe(id="r", time_seconds=1.0, outputs=[Stack("x", 1)])
-    comp = compute_node(_node(recipe_id="r", machine_def_id="furnace"), md, recipe, items=ITEMS)
+    comp = compute_node(
+        _node(recipe_id="r", machine_def_id="furnace"), md, recipe, items=ITEMS
+    )
     assert comp.inputs["eu"] == 30.0  # routed electricity demand
     assert comp.energy_consume == 30.0
     assert comp.net_energy == -30.0
@@ -254,7 +254,11 @@ def test_fuel_burning_node_converts_fuel() -> None:
 def test_fluid_output_scales_with_overclock() -> None:
     md = _boiler(max_fluid_rate=100)
     comp = compute_node(
-        _node(machine_def_id="boiler", overclock=2.0), md, None, items=ITEMS, fluid_draw=50
+        _node(machine_def_id="boiler", overclock=2.0),
+        md,
+        None,
+        items=ITEMS,
+        fluid_draw=50,
     )
     assert comp.fuel_conversion is not None
     assert comp.fuel_conversion.max_rate == 200  # 100 * overclock 2
@@ -389,3 +393,54 @@ def test_probability_scales_expected_output_and_catalyst_input() -> None:
     # A probability-0 input is a catalyst: referenced but not consumed.
     assert comp.inputs == {"ore": 2.0}
     assert "catalyst" not in comp.inputs
+
+
+# --------------------------------------------------------------------------- #
+# Multiple recipes in one block — the node's I/O and energy are the sum.
+# --------------------------------------------------------------------------- #
+
+
+def test_multiple_recipes_sum_io_and_energy() -> None:
+    # One macerator-style block running two recipes at once (e.g. iron ore and
+    # coal ore): its rates and energy draw are the sum of the two recipes.
+    iron = Recipe(
+        id="iron",
+        time_seconds=2.0,
+        inputs=[Stack("iron_ore", 1)],
+        outputs=[Stack("iron_dust", 2)],
+        eu_per_tick=2,
+    )
+    coal = Recipe(
+        id="coal",
+        time_seconds=4.0,
+        inputs=[Stack("coal_ore", 1)],
+        outputs=[Stack("coal_dust", 1)],
+        eu_per_tick=2,
+    )
+    md = MachineDef(id="mac", energy_source=EnergySource.ELECTRIC)
+    comp = compute_node(_node(recipe_ids=["iron", "coal"]), [iron, coal], md)
+    # iron: 1/2 cyc/s → 2 dust/s in, 1 ore/s; coal: 1/4 cyc/s → 0.25 dust/s, 0.25 ore/s.
+    assert comp.outputs == {"iron_dust": 1.0, "coal_dust": 0.25}
+    assert comp.inputs == {"iron_ore": 0.5, "coal_ore": 0.25}
+    assert comp.cycles_per_sec == 0.75  # 0.5 + 0.25
+    # Energy is summed: each recipe draws 2 EU/t × 20 × its clamped overclock(1).
+    assert comp.energy_consume == 2 * 20 + 2 * 20
+
+
+def test_single_recipe_matches_list_of_one() -> None:
+    r = Recipe(
+        id="r", time_seconds=1.0, inputs=[Stack("a", 1)], outputs=[Stack("b", 1)]
+    )
+    md = MachineDef(id="d1")
+    one = compute_node(_node(recipe_id="r"), r, md)
+    listed = compute_node(_node(recipe_ids=["r"]), [r], md)
+    assert one.outputs == listed.outputs
+    assert one.inputs == listed.inputs
+
+
+def test_recipe_list_property_prefers_recipe_ids() -> None:
+    # recipe_ids wins when set; otherwise fall back to the legacy single recipe_id.
+    assert _node(recipe_id="a").recipe_list == ["a"]
+    assert _node(recipe_ids=["a", "b"]).recipe_list == ["a", "b"]
+    assert _node(recipe_id="a", recipe_ids=["b", "c"]).recipe_list == ["b", "c"]
+    assert _node().recipe_list == []

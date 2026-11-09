@@ -120,21 +120,22 @@ def test_manual_insertion_runs_on_assumed_feedstock() -> None:
 
 def test_powered_process_chain_flow(powered_process: World) -> None:
     report = compute_world(powered_process)
-    # The smelter demand-gates to the slower presser: it makes exactly the
-    # 0.25 ingot/s the presser draws — no pile-up — so it runs at 50% duty.
-    assert _close(report.node_duty["smelter1"], 0.5)
+    # Input-driven: the smelter is never throttled by the slower presser. It runs
+    # flat out (its ore is hand-fed), making 0.5 ingot/s; the presser draws only
+    # 0.25/s, so the other 0.25/s piles up as surplus.
+    assert _close(report.node_duty["smelter1"], 1.0)
     presser = report.balances["presser1"]
     assert _close(presser.inputs["ingot"].supplied, 0.25)
     assert presser.inputs["ingot"].status is Status.OK
-    # All ingot is consumed internally (no leftover); plate is the scope's product.
-    assert "ingot" not in report.external_outputs
+    # The surplus ingot leaves as yield alongside the plate product.
+    assert _close(report.external_outputs["ingot"], 0.25)
     assert _close(report.external_outputs["plate"], 0.25)
-    # Ore (at the smelter's throttled draw) and the generator's coal are feedstock.
-    assert _close(report.external_inputs["ore"], 0.25)
+    # Ore (at the smelter's full draw) and the generator's coal are feedstock.
+    assert _close(report.external_inputs["ore"], 0.5)
     assert _close(report.external_inputs["coal"], 200 / 1000)  # gen burns coal by eu
     assert "ingot" not in report.external_inputs  # demand met internally
-    # Energy: generator makes 200 electricity; smelter draws 30×0.5, presser 60.
-    assert _close(report.net_energy, 125.0)
+    # Energy: generator makes 200 electricity; smelter draws 30, presser 60.
+    assert _close(report.net_energy, 110.0)
     assert report.bottlenecks == []
 
 
@@ -165,9 +166,8 @@ def test_scopes_compose(powered_process: World) -> None:
     gen_report = compute_scope(powered_process, gen)
     world_report = compute_world(powered_process)
 
-    # Chain: smelter demand-gates to the presser (duty 0.5), drawing 30×0.5 EU;
-    # presser draws 60 → −75 (not −90, since the smelter no longer overproduces).
-    assert _close(chain_report.net_energy, -75.0)
+    # Chain: both run flat out (input-driven) — smelter draws 30, presser 60 → −90.
+    assert _close(chain_report.net_energy, -90.0)
     assert _close(gen_report.net_energy, 200.0)
     # World energy = sum of its processes' energy.
     assert _close(
@@ -184,7 +184,7 @@ def test_scope_report_serializes(powered_process: World) -> None:
         "balances",
         "pipeFlows",
     }
-    assert d["netEnergy"] == 125.0
+    assert d["netEnergy"] == 110.0
 
 
 # --------------------------------------------------------------------------- #
@@ -297,14 +297,20 @@ def _chain_world(src_qty: float, buffer: bool = False) -> World:
     out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
     recipes = [
         Recipe(id="mk", time_seconds=1.0, outputs=[Stack("a", src_qty)]),
-        Recipe(id="mid", time_seconds=1.0, inputs=[Stack("a", 1)], outputs=[Stack("b", 1)]),
-        Recipe(id="use", time_seconds=1.0, inputs=[Stack("b", 1)], outputs=[Stack("c", 1)]),
+        Recipe(
+            id="mid", time_seconds=1.0, inputs=[Stack("a", 1)], outputs=[Stack("b", 1)]
+        ),
+        Recipe(
+            id="use", time_seconds=1.0, inputs=[Stack("b", 1)], outputs=[Stack("c", 1)]
+        ),
     ]
     defs = [
         MachineDef(id="dsrc", slots=[out_s]),
         MachineDef(id="dmid", slots=[in_s, out_s]),
         MachineDef(id="dsink", slots=[in_s, out_s]),
-        MachineDef(id="dbuf", storage=StorageSpec(Category.SOLID, 1000), slots=[in_s, out_s]),
+        MachineDef(
+            id="dbuf", storage=StorageSpec(Category.SOLID, 1000), slots=[in_s, out_s]
+        ),
     ]
     nodes = [
         MachineNode(id="src", machine_def_id="dsrc", recipe_id="mk"),
@@ -459,9 +465,15 @@ def _junction_fanout_world() -> World:
             MachineDef(id="U", slots=[in_s], allowed_recipe_ids=["use"]),
         ],
         nodes=[
-            MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
-            MachineNode(id="u1", machine_def_id="U", recipe_id="use", assume_outputs=True),
-            MachineNode(id="u2", machine_def_id="U", recipe_id="use", assume_outputs=True),
+            MachineNode(
+                id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True
+            ),
+            MachineNode(
+                id="u1", machine_def_id="U", recipe_id="use", assume_outputs=True
+            ),
+            MachineNode(
+                id="u2", machine_def_id="U", recipe_id="use", assume_outputs=True
+            ),
         ],
         pipe_nodes=[PipeNode(id="j", category=Category.SOLID)],
         pipes=[
@@ -479,9 +491,11 @@ def test_junction_splices_source_to_many_consumers() -> None:
     assert _close(report.balances["u2"].inputs["w"].supplied, 4.0)
     assert _close(report.node_duty["u1"], 1.0)
     assert _close(report.node_duty["u2"], 1.0)
-    # src throttles to the 8/s actually drawn (its product isn't a feedstock/yield
-    # — it's all consumed internally).
-    assert _close(report.node_duty["src"], 0.8)
+    # Input-driven: src runs flat out (makes 10/s) regardless of the 8/s drawn —
+    # the surplus 2/s leaves as yield, so adding or removing a consumer never
+    # changes src's duty.
+    assert _close(report.node_duty["src"], 1.0)
+    assert _close(report.external_outputs["w"], 2.0)
     # Flow is reported on every segment: the trunk carries the sum, branches 4 each.
     assert _close(report.pipe_flows["p0"].flow, 8.0)
     assert _close(report.pipe_flows["p1"].flow, 4.0)
@@ -505,8 +519,12 @@ def test_junction_is_transparent_vs_direct_wiring() -> None:
             MachineDef(id="U", slots=[in_s], allowed_recipe_ids=["use"]),
         ],
         nodes=[
-            MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
-            MachineNode(id="u", machine_def_id="U", recipe_id="use", assume_outputs=True),
+            MachineNode(
+                id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True
+            ),
+            MachineNode(
+                id="u", machine_def_id="U", recipe_id="use", assume_outputs=True
+            ),
         ],
     )
     direct = World(
@@ -525,10 +543,20 @@ def test_junction_is_transparent_vs_direct_wiring() -> None:
         **base,
         pipe_nodes=[PipeNode(id="j", category=Category.SOLID)],
         pipes=[
-            Pipe(id="a", category=Category.SOLID, movement_capacity=100,
-                 a=PipeEnd("src", PipeEndRole.OUT), b=PipeEnd("j", PipeEndRole.IO)),
-            Pipe(id="b", category=Category.SOLID, movement_capacity=100,
-                 a=PipeEnd("j", PipeEndRole.IO), b=PipeEnd("u", PipeEndRole.IN)),
+            Pipe(
+                id="a",
+                category=Category.SOLID,
+                movement_capacity=100,
+                a=PipeEnd("src", PipeEndRole.OUT),
+                b=PipeEnd("j", PipeEndRole.IO),
+            ),
+            Pipe(
+                id="b",
+                category=Category.SOLID,
+                movement_capacity=100,
+                a=PipeEnd("j", PipeEndRole.IO),
+                b=PipeEnd("u", PipeEndRole.IN),
+            ),
         ],
     )
     rd, rv = compute_world(direct), compute_world(via)
@@ -554,8 +582,8 @@ def test_system_scope(powered_process: World) -> None:
     )
     report = compute_system(powered_process, "sys1")
     assert set(report.node_ids) == {"smelter1", "presser1"}
-    # Smelter demand-gates to the presser (duty 0.5): 30×0.5 + 60 = −75.
-    assert _close(report.net_energy, -75.0)
+    # Both run flat out (input-driven): smelter draws 30, presser 60 → −90.
+    assert _close(report.net_energy, -90.0)
 
 
 def test_system_scope_collapse_invariant(powered_process: World) -> None:
@@ -642,9 +670,8 @@ def test_tag_resource_routes_through_a_pipe() -> None:
     assert _close(report.external_outputs.get("ingot", 0.0), 1.0)  # ingot is the yield
 
 
-
 # --------------------------------------------------------------------------- #
-# Run-band status: duty → OK (≥50%) / THROTTLED (<50%) / STALLED (0) / CAPPED.
+# Run-band status: duty → OK (≥50%) / THROTTLED (<50%) / STALLED (0).
 # --------------------------------------------------------------------------- #
 
 
@@ -692,10 +719,11 @@ def test_status_bands_follow_duty() -> None:
     assert compute_world(_banded_chain(0.0)).balances["mid"].status is Status.STALLED
 
 
-def test_capped_status_when_overclock_clamped() -> None:
+def test_overclock_clamped_to_tier_ceiling_runs_silently() -> None:
     # The recipe wants 4 EU/t but the machine's tier ceiling is 2 EU/t, so the
-    # overclock is clamped: the machine is "over capacity" → CAPPED (red), even
-    # though it is otherwise fully fed and running.
+    # effective overclock is clamped to 0.5 — the machine simply runs at half the
+    # requested rate. That clamp is silent physics: the node has no special "over
+    # capacity" status, it just runs (here with surplus output → OVERFLOW).
     out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
     world = World(
         items=[Item("w", "W", Category.SOLID)],
@@ -719,8 +747,10 @@ def test_capped_status_when_overclock_clamped() -> None:
         ],
     )
     report = compute_world(world)
-    assert report.computations["n"].overclock_capped is True
-    assert report.balances["n"].status is Status.CAPPED
+    # Clamped to half rate: makes 0.5 w/s, not 1.0.
+    assert _close(report.computations["n"].outputs["w"], 0.5)
+    assert _close(report.node_duty["n"], 1.0)
+    assert report.balances["n"].status is Status.OVERFLOW
 
 
 # --------------------------------------------------------------------------- #
@@ -902,8 +932,13 @@ def test_shared_output_splits_between_concrete_and_tag_consumers() -> None:
     in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
 
     def pipe(pid, a, b):
-        return Pipe(id=pid, category=Category.SOLID, movement_capacity=1000,
-                    a=PipeEnd(a, PipeEndRole.OUT), b=PipeEnd(b, PipeEndRole.IN))
+        return Pipe(
+            id=pid,
+            category=Category.SOLID,
+            movement_capacity=1000,
+            a=PipeEnd(a, PipeEndRole.OUT),
+            b=PipeEnd(b, PipeEndRole.IN),
+        )
 
     world = World(
         items=[
@@ -915,8 +950,18 @@ def test_shared_output_splits_between_concrete_and_tag_consumers() -> None:
         recipes=[
             Recipe(id="mk", time_seconds=1.0, outputs=[Stack("dust", 10)]),
             # One consumer names the item directly, the other the tag that holds it.
-            Recipe(id="ua", time_seconds=1.0, inputs=[Stack("dust", 10)], outputs=[Stack("ca", 1)]),
-            Recipe(id="ub", time_seconds=1.0, inputs=[Stack(tag="c:dusts/x", quantity=10)], outputs=[Stack("cb", 1)]),
+            Recipe(
+                id="ua",
+                time_seconds=1.0,
+                inputs=[Stack("dust", 10)],
+                outputs=[Stack("ca", 1)],
+            ),
+            Recipe(
+                id="ub",
+                time_seconds=1.0,
+                inputs=[Stack(tag="c:dusts/x", quantity=10)],
+                outputs=[Stack("cb", 1)],
+            ),
         ],
         machine_defs=[
             MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
@@ -924,9 +969,15 @@ def test_shared_output_splits_between_concrete_and_tag_consumers() -> None:
             MachineDef(id="CB", slots=[in_s, out_s], allowed_recipe_ids=["ub"]),
         ],
         nodes=[
-            MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
-            MachineNode(id="ca", machine_def_id="CA", recipe_id="ua", assume_outputs=True),
-            MachineNode(id="cb", machine_def_id="CB", recipe_id="ub", assume_outputs=True),
+            MachineNode(
+                id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True
+            ),
+            MachineNode(
+                id="ca", machine_def_id="CA", recipe_id="ua", assume_outputs=True
+            ),
+            MachineNode(
+                id="cb", machine_def_id="CB", recipe_id="ub", assume_outputs=True
+            ),
         ],
         pipes=[pipe("pa", "src", "ca"), pipe("pb", "src", "cb")],
     )
@@ -951,18 +1002,34 @@ def test_surplus_is_blue_overflow_and_throttle_takes_precedence() -> None:
             items=[Item("a", "A", Category.SOLID), Item("b", "B", Category.SOLID)],
             recipes=[
                 Recipe(id="mk", time_seconds=1.0, outputs=[Stack("a", q)]),
-                Recipe(id="use", time_seconds=1.0, inputs=[Stack("a", 1)], outputs=[Stack("b", 1)]),
+                Recipe(
+                    id="use",
+                    time_seconds=1.0,
+                    inputs=[Stack("a", 1)],
+                    outputs=[Stack("b", 1)],
+                ),
             ],
             machine_defs=[
                 MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
                 MachineDef(id="M", slots=[in_s, out_s], allowed_recipe_ids=["use"]),
             ],
             nodes=[
-                MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
-                MachineNode(id="sink", machine_def_id="M", recipe_id="use", assume_outputs=True),
+                MachineNode(
+                    id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True
+                ),
+                MachineNode(
+                    id="sink", machine_def_id="M", recipe_id="use", assume_outputs=True
+                ),
             ],
-            pipes=[Pipe(id="p", category=Category.SOLID, movement_capacity=1000,
-                        a=PipeEnd("src", PipeEndRole.OUT), b=PipeEnd("sink", PipeEndRole.IN))],
+            pipes=[
+                Pipe(
+                    id="p",
+                    category=Category.SOLID,
+                    movement_capacity=1000,
+                    a=PipeEnd("src", PipeEndRole.OUT),
+                    b=PipeEnd("sink", PipeEndRole.IN),
+                )
+            ],
         )
 
     good = compute_world(world(1.0))
@@ -974,3 +1041,115 @@ def test_surplus_is_blue_overflow_and_throttle_takes_precedence() -> None:
     assert _close(starved.node_duty["sink"], 0.3)
     # Underfed (<50%) outranks the incidental surplus → THROTTLED, not OVERFLOW.
     assert starved.balances["sink"].status is Status.THROTTLED
+
+
+# --------------------------------------------------------------------------- #
+# Input-driven independence: a source runs at the max its inputs allow, and
+# siblings sharing a supply (or a downstream consumer) never throttle each other.
+# --------------------------------------------------------------------------- #
+
+
+def _shared_steam_sources(n_sources: int) -> World:
+    """A steam boiler (hand-fed) feeding `n_sources` identical steam-powered
+    quarry-like sources through a junction; each source also makes a product."""
+
+    boiler = MachineDef(
+        id="B",
+        energy_source=EnergySource.FUEL,
+        source_item_id="coal",
+        output_item_id="steam",
+        max_fluid_rate=10_000,  # ample steam
+    )
+    quarry = MachineDef(
+        id="Q",
+        energy_source=EnergySource.LIQUID,
+        source_item_id="steam",
+        slots=[SlotGroup(Category.SOLID, Direction.OUT, 10, 64)],
+        allowed_recipe_ids=["dig"],
+    )
+    # Quarry recipe: steam-powered (eu_per_tick), produces ore, no material input.
+    dig = Recipe(id="dig", time_seconds=1.0, outputs=[Stack("ore", 1)], eu_per_tick=4)
+    nodes = [MachineNode(id="boiler", machine_def_id="B", assume_inputs=True)]
+    pipes = []
+    for i in range(n_sources):
+        nid = f"q{i}"
+        nodes.append(MachineNode(id=nid, machine_def_id="Q", recipe_id="dig"))
+        pipes.append(
+            Pipe(
+                id=f"s{i}",
+                category=Category.LIQUID,
+                movement_capacity=10_000,
+                a=PipeEnd("boiler", PipeEndRole.OUT),
+                b=PipeEnd(nid, PipeEndRole.IN),
+            )
+        )
+    return World(
+        items=[
+            Item("coal", "Coal", Category.SOLID, eu=1000),
+            Item("steam", "Steam", Category.LIQUID),
+            Item("ore", "Ore", Category.SOLID),
+        ],
+        recipes=[dig],
+        machine_defs=[boiler, quarry],
+        nodes=nodes,
+        pipes=pipes,
+    )
+
+
+def test_sources_on_shared_supply_are_independent() -> None:
+    # Every source runs at 100% (ample steam), and the per-source duty does not
+    # depend on how many siblings share the steam line — adding or removing one
+    # has no bearing on the rest. This is the quarry-network scenario.
+    for n in (1, 3, 7):
+        report = compute_world(_shared_steam_sources(n))
+        for i in range(n):
+            assert _close(report.node_duty[f"q{i}"], 1.0)
+        assert _close(report.node_duty["boiler"], 1.0)
+
+
+def test_node_runs_multiple_recipes_summed() -> None:
+    # One macerator node bound to two recipes processes both ores at once; its
+    # output is the sum, and it runs at full on ample (assumed) feed.
+    md = MachineDef(
+        id="MAC",
+        energy_source=EnergySource.ELECTRIC,
+        slots=[SlotGroup(Category.SOLID, Direction.OUT, 10, 64)],
+        allowed_recipe_ids=["iron", "coal"],
+    )
+    iron = Recipe(
+        id="iron",
+        time_seconds=1.0,
+        inputs=[Stack("iron_ore", 1)],
+        outputs=[Stack("iron_dust", 2)],
+    )
+    coal = Recipe(
+        id="coal",
+        time_seconds=1.0,
+        inputs=[Stack("coal_ore", 1)],
+        outputs=[Stack("coal_dust", 1)],
+    )
+    world = World(
+        items=[
+            Item("iron_ore", "Iron Ore", Category.SOLID),
+            Item("coal_ore", "Coal Ore", Category.SOLID),
+            Item("iron_dust", "Iron Dust", Category.SOLID),
+            Item("coal_dust", "Coal Dust", Category.SOLID),
+        ],
+        recipes=[iron, coal],
+        machine_defs=[md],
+        nodes=[
+            MachineNode(
+                id="mac",
+                machine_def_id="MAC",
+                recipe_ids=["iron", "coal"],
+                assume_inputs=True,
+            )
+        ],
+    )
+    report = compute_world(world)
+    assert _close(report.node_duty["mac"], 1.0)
+    assert _close(report.external_outputs["iron_dust"], 2.0)
+    assert _close(report.external_outputs["coal_dust"], 1.0)
+    # Both ores are drawn as feedstock (hand-fed).
+    assert _close(report.external_inputs["iron_ore"], 1.0)
+    assert _close(report.external_inputs["coal_ore"], 1.0)

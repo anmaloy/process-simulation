@@ -121,20 +121,22 @@ def test_powered_chain_balances() -> None:
     assert report.balances["c"].status is Status.OVERFLOW
     assert report.bottlenecks == []
 
-    # Turbine and boiler throttle to the 100 EU/s the consumer actually draws:
-    # 100 / 200 = half duty each.
-    assert _close(report.node_duty["t"], 0.5)
-    assert _close(report.node_duty["b"], 0.5)
+    # Input-driven: the turbine and boiler are never throttled by downstream
+    # draw — each runs flat out (the boiler is hand-fed, the turbine has ample
+    # steam), making their full 200 EU/s regardless of the 100 the consumer takes.
+    assert _close(report.node_duty["t"], 1.0)
+    assert _close(report.node_duty["b"], 1.0)
 
-    # Net grid: turbine makes 100 EU/s, consumer draws 100 → balanced at zero.
-    assert _close(report.net_energy, 0.0)
+    # Net grid: turbine makes 200 EU/s, consumer draws 100 → 100 EU/s surplus.
+    assert _close(report.net_energy, 100.0)
 
     # Electricity and steam are carriers, not feedstock/yield; coal + water are
-    # the manually-inserted feedstock, the widget is the product.
+    # the manually-inserted feedstock (now at the full 200 EU/s burn), the widget
+    # is the product.
     assert EU not in report.external_inputs and EU not in report.external_outputs
     assert STEAM not in report.external_outputs
-    assert _close(report.external_inputs[COAL], 100.0 / 1600.0)  # fuel_drain / eu
-    assert _close(report.external_inputs[WATER], 100.0 / 16.0)  # steam / ratio
+    assert _close(report.external_inputs[COAL], 200.0 / 1600.0)  # fuel_drain / eu
+    assert _close(report.external_inputs[WATER], 200.0 / 16.0)  # steam / ratio
     assert _close(report.external_outputs[WIDGET], 1.0)
 
 
@@ -183,9 +185,9 @@ def test_generator_pump_feedback_loop_runs_at_capacity() -> None:
     """A boiler↔pump feedback loop must not mutually throttle itself to zero.
 
     The boiler's steam powers the pump; the pump's water feeds the boiler — a
-    cycle. Under plain demand-backpressure each throttles the other to 0 (both
-    "stalled"). As generation sources on a cycle, their output is a product, so
-    each runs at the rate its own inputs allow and the surplus leaves as yield.
+    cycle. In the input-driven model each starts at full and the other supplies
+    it fully, so the loop holds at capacity (rather than collapsing to zero) and
+    the surplus of each carrier leaves as yield.
     """
 
     pump_water = Recipe(

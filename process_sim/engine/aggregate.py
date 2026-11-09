@@ -353,34 +353,32 @@ _MAX_DUTY_ITERS = 64
 def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeReport:
     """Aggregate steady-state stats over ``node_ids`` (default: the whole world).
 
-    The scope is an **automatic system**: a machine runs only to the extent its
-    inputs are actually delivered by connected pipes *and* its outputs are
-    actually taken downstream — "if everything is not continuous, it won't run".
-    Each node's **duty cycle** is the smaller of those two limits, solved in two
-    relaxation passes:
+    The model is **purely input-driven**: every machine runs at the maximum its
+    delivered inputs allow, and output is never a throttle. Unconsumed output is
+    **surplus** — assumed routed to storage or voided — reported as overflow (a
+    good state), not backpressure. So a source whose inputs are available (a
+    quarry on an ample steam line, a boiler fed fuel and water) runs at 100%
+    independently of how much its consumers take or how many siblings share its
+    supply: adding or removing one has no bearing on the rest.
 
-    - **Pass A — the demand ceiling** (``_relax_demand``): the duty each node
-      would run at with unlimited inputs, limited only by its output being taken.
-      An output nothing consumes is a **product** that leaves as yield (no
-      backpressure); an output with a downstream consumer backpressures to that
-      consumer's *ceiling* demand, so a water pump only runs as often as the
-      boiler would draw water. ``assume_outputs`` (manual extraction) lifts the
-      ceiling to 1.
-    - **Pass B — the input-limited duty** (``_relax_inputs``): starting from the
-      ceiling, each node throttles to the fraction of its inputs actually
-      delivered. Crucially a consumer's *demand* on its suppliers stays pinned at
-      the ceiling, so a starved consumer keeps pulling at full and never drags its
-      supplier to zero. ``assume_inputs`` (manual insertion) treats any unsupplied
-      input as available.
+    Each node's **duty cycle** is solved by :func:`_relax_inputs`: start every
+    runnable node at ceiling 1 and iterate ``duty_i = min(1, availability_i)``,
+    where availability is the fraction of its inputs actually delivered (demand
+    stays pinned at the ceiling so a starved consumer never drags its supplier
+    down, and a feedback cycle such as boiler↔pump holds at 1 because each side
+    supplies the other fully). ``assume_inputs`` (manual insertion) treats any
+    unsupplied input as available, so an edge machine runs on hand-fed feedstock.
+    (``assume_outputs`` has no effect here — output never throttles a machine, so
+    the flag is retained only for backward compatibility with older saves.)
 
-    A node held below its ceiling is input-limited; the inputs that can't meet the
-    ceiling are its shortfalls (and the bottlenecks), so a *plentiful* carrier is
-    never blamed when a different input is the real limit. A source-less FUEL
-    converter (an MI boiler) burns whatever eu-bearing fuel is wired to it,
-    metered by that fuel's ``eu``; with nothing wired it cannot run. Storage
-    (buffer) nodes and pipe junctions are transparent passthroughs.
-    ``external_inputs`` is the outside feedstock (manually-inserted inputs),
-    ``external_outputs`` the actual yield (products leaving the scope).
+    The inputs that can't be fully met are a node's shortfalls (and the
+    bottlenecks), so a *plentiful* carrier is never blamed when a different input
+    is the real limit. A source-less FUEL converter (an MI boiler) burns whatever
+    eu-bearing fuel is wired to it, metered by that fuel's ``eu``; with nothing
+    wired it cannot run. Storage (buffer) nodes and pipe junctions are transparent
+    passthroughs. ``external_inputs`` is the outside feedstock (manually-inserted
+    inputs), ``external_outputs`` the actual yield (products + surplus leaving the
+    scope).
     """
 
     index = _Index(world)
@@ -397,14 +395,17 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     storage_ids: set[str] = set()
     for nid in ids:
         node = index.nodes[nid]
-        recipe = index.recipes.get(node.recipe_id) if node.recipe_id else None
+        # A node may run several recipes at once; its I/O and energy are the sum.
+        recipes = [
+            index.recipes[rid] for rid in node.recipe_list if rid in index.recipes
+        ]
         machine_def = index.defs.get(node.machine_def_id)
         if machine_def is None:
             computations[nid] = NodeComputation(node_id=nid, cycles_per_sec=0.0)
             continue
         if machine_def.storage is not None:
             storage_ids.add(nid)
-        computations[nid] = compute_node(node, machine_def, recipe, items=index.items)
+        computations[nid] = compute_node(node, recipes, machine_def, items=index.items)
 
     # Directed, throughput-capped, junction/storage-spliced edges. Built here (up
     # front) because fuel resolution below needs to know which producers feed each
@@ -462,40 +463,7 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         fuel_eu = index.items[fuel_id].eu or 1.0
         comp.inputs[fuel_id] = comp.inputs.get(fuel_id, 0.0) + conv.fuel_drain / fuel_eu
 
-    # A **generation source** is the supply edge of the system: an energy
-    # converter (a boiler/turbine/generator making a carrier from its source) or
-    # an input-less producer (a water pump, quarry, or drill yielding a resource
-    # from power alone, with no material feedstock). Identified here; whether a
-    # given source's output is treated as a product is decided below, once the
-    # flow graph is known — only sources on a feedback *cycle* are exempted from
-    # demand-backpressure (a lone generator in a linear chain still throttles to
-    # what its consumer draws, so it burns no more fuel than needed).
-    def _is_source(nid: str) -> bool:
-        node = index.nodes[nid]
-        mdef = index.defs.get(node.machine_def_id)
-        if mdef is None:
-            return False
-        if (
-            mdef.energy_source in (EnergySource.FUEL, EnergySource.LIQUID)
-            and mdef.max_fluid_rate is not None
-            and mdef.output_item_id is not None
-        ):
-            return True
-        recipe = index.recipes.get(node.recipe_id) if node.recipe_id else None
-        if recipe is not None and recipe.outputs:
-            has_material_input = any(
-                s.resource_id is not None
-                and (s.probability is None or s.probability != 0.0)
-                and _category_of(index, s.resource_id) is not Category.ENERGY
-                for s in recipe.inputs
-            )
-            if not has_material_input:
-                return True
-        return False
-
-    source_nodes = {nid for nid in ids if _is_source(nid)}
     assume_in = {nid: index.nodes[nid].assume_inputs for nid in ids}
-    assume_out = {nid: index.nodes[nid].assume_outputs for nid in ids}
 
     # A *demand key* is a recipe-input resource id — a concrete item **or** a
     # tag. A *supply key* is a concrete item a node actually produces. A tag
@@ -532,49 +500,6 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
             match_keys.setdefault(s, []).append(d)
     supply_keys = sorted(match_keys)
 
-    # Items a *non-storage* node consumes — membership-aware: a produced supply
-    # key counts as consumed if it satisfies any non-storage demand key (so a
-    # concrete output absorbed by a tag demand backpressures and is not mistaken
-    # for yield). An output nothing here consumes is a product that leaves the
-    # scope as yield (storage is a transparent buffer, so an item only a buffer
-    # holds is still a product).
-    consumed_items: set[str] = set()
-    for nid in ids:
-        if nid in storage_ids:
-            continue
-        for item_id, rate in computations[nid].inputs.items():
-            if rate > _EPS:
-                consumed_items.update(match_sources.get(item_id, ()))
-
-    # A generation source on a feedback cycle — its output can return to its own
-    # input through the pipe graph (a boiler whose steam powers a pump that pumps
-    # the boiler's water) — would collapse to zero duty under mutual
-    # demand-backpressure. Exempt it: its output is treated as a product so it
-    # runs at the rate its inputs permit, surplus leaving as yield. A source in a
-    # plain linear chain is not on a cycle and still throttles to downstream
-    # demand (so it over-produces/over-burns nothing).
-    if source_nodes:
-        adjacency: dict[str, set[str]] = {}
-        for e in edges:
-            adjacency.setdefault(e.source, set()).add(e.sink)
-
-        def _reaches_self(start: str) -> bool:
-            seen: set[str] = set()
-            stack = list(adjacency.get(start, ()))
-            while stack:
-                n = stack.pop()
-                if n == start:
-                    return True
-                if n in seen:
-                    continue
-                seen.add(n)
-                stack.extend(adjacency.get(n, ()))
-            return False
-
-        for nid in source_nodes:
-            if _reaches_self(nid):
-                assume_out[nid] = True
-
     def _route(
         supply_duty: dict[str, float],
         demand_duty: dict[str, float],
@@ -587,12 +512,10 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
 
         Producers supply at ``supply_duty`` (their output scaled by that duty);
         consumers pull at ``demand_duty``. The two vectors are usually the same
-        (the actual steady state), but the relaxation probes with them split: the
-        **demand ceiling** pass drives producers greedily (``supply_duty`` all 1)
-        while consumers pull at the evolving ceiling, and the **input** pass holds
-        consumer demand at that ceiling while producers supply at their current
-        duty — so a starved consumer still *pulls* at full and never spuriously
-        back-throttles its supplier.
+        (the actual steady state), but the input relaxation probes with them
+        split: it holds consumer demand pinned at the ceiling ``dd`` while
+        producers supply at their current (shrinking) duty — so a starved consumer
+        still *pulls* at full and never spuriously back-throttles its supplier.
 
         Resolution is **per produced supply key** (a concrete item — or a tag a
         recipe outputs directly). Every consumer that can take that item, whether
@@ -675,50 +598,26 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
                     items_on_pipe.update(carried)
         return supplied, drained, pipes
 
-    ones = {nid: 1.0 for nid in ids}
-
-    def _relax_demand() -> dict[str, float]:
-        """Pass A — the **demand ceiling**: the duty each node would run at with
-        unlimited inputs, limited only by its output being taken (product chains
-        backpressure; a product or an ``assume_outputs`` node has no ceiling below
-        1). Producers run greedily so a producer is throttled only by *true*
-        downstream demand. ``no_fuel`` converters are pinned to 0. Monotone
-        decreasing from 1, so it converges.
-        """
-
-        dd = {nid: (0.0 if nid in no_fuel else 1.0) for nid in ids}
-        for _ in range(_MAX_DUTY_ITERS):
-            _, drained, _ = _route(ones, dd)
-            converged = True
-            for nid in ids:
-                if nid in no_fuel:
-                    continue
-                comp = computations[nid]
-                lim = 1.0
-                if not assume_out[nid]:
-                    for item_id, nominal in comp.outputs.items():
-                        if item_id not in consumed_items or nominal <= _EPS:
-                            continue  # product: leaves as yield, no backpressure
-                        lim = min(lim, drained[nid].get(item_id, 0.0) / nominal)
-                nd = max(0.0, min(1.0, lim))
-                if abs(nd - dd[nid]) > 1e-9:
-                    converged = False
-                dd[nid] = nd
-            if converged:
-                break
-        return dd
-
     def _relax_inputs(
         dd: dict[str, float],
     ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
-        """Pass B — the **input-limited** duty: start at the demand ceiling and
-        iterate ``duty_i = min(dd_i, availability_i)``, where availability is the
-        flow reaching ``i`` when it pulls at the ceiling and producers supply at
-        their *current* duty. Because demand stays pinned at ``dd`` (not the
-        shrinking duty), a starved consumer keeps pulling at full and never drags
-        its supplier to zero — the old multiplicative relaxation's collapse. The
-        final-iteration ``supplied`` (demand pinned at ``dd``) is returned as each
-        input's *availability* for shortfall attribution.
+        """The **input-limited** duty (the model is purely input-driven).
+
+        Start every node at its ceiling ``dd`` — which is 1 for a runnable node:
+        a machine may always dump unconsumed output to storage / the void, so its
+        output *never* throttles it (surplus is reported as overflow, a good
+        state). Then iterate ``duty_i = min(dd_i, availability_i)``, where
+        availability is the flow reaching ``i`` when it pulls at ``dd`` and
+        producers supply at their *current* duty. Because demand stays pinned at
+        ``dd`` (not the shrinking duty), a starved consumer keeps pulling at full
+        and never drags its supplier down — and because the ceiling carries no
+        downstream-demand term, an over-supplied producer (a quarry, a boiler)
+        runs flat out regardless of how much its consumers take, so adding or
+        removing one consumer or sibling producer has no effect on the rest. A
+        feedback cycle (a boiler whose steam powers the pump that feeds it its
+        water) holds at 1 because each side supplies the other fully. The
+        final-iteration ``supplied`` is returned as each input's *availability*
+        for shortfall attribution.
         """
 
         duty = dict(dd)
@@ -747,7 +646,10 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
                 break
         return duty, avail
 
-    duty_demand = _relax_demand()
+    # Input-driven model: a runnable node's ceiling is 1 (unconsumed output is
+    # surplus, routed to storage / voided — it never throttles the machine). Only
+    # a source-less fuel converter with no fuel wired in cannot run.
+    duty_demand = {nid: (0.0 if nid in no_fuel else 1.0) for nid in ids}
     duty, avail_supplied = _relax_inputs(duty_demand)
     # Actual steady-state flows at the solved duty (supply and demand both at the
     # real running rate) — the numbers reported for pipes, yield, and energy.
@@ -769,23 +671,26 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         for item_id, nominal in comp.outputs.items():
             if _category_of(index, item_id) is Category.ENERGY:
                 continue
+            # Yield is whatever is produced beyond internal demand — a pure
+            # product (nothing consumes it) leaves whole, an over-supplied
+            # intermediate leaves its surplus. Either way surplus is routed to
+            # storage / voided and reported as the scope's yield.
             exported = nominal * d - demanded_internal[nid].get(item_id, 0.0)
-            is_product = assume_out[nid] or item_id not in consumed_items
-            if is_product and exported > _EPS:
+            if exported > _EPS:
                 external_outputs[item_id] = (
                     external_outputs.get(item_id, 0.0) + exported
                 )
 
     # --- Per-node balances + bottlenecks ---------------------------------- #
     # A node's **overall** status is a run band off its duty (what actually needs
-    # attention): CAPPED (over its power-tier ceiling) or STALLED (not running) →
-    # red; THROTTLED (< 50%) → yellow; OVERFLOW (≥ 50% with surplus output assumed
-    # routed to storage/void) → blue (a *good* state — the goal is max throughput,
-    # so surplus everywhere); OK (≥ 50%, output fully consumed) → green. Per-item
-    # inputs keep the SHORTFALL verdict — but only for an input that genuinely
-    # can't meet the demand ceiling (``availability < demand``), so a *plentiful*
-    # carrier is never blamed when a different input is the real limit; those
-    # SHORTFALLs are the bottlenecks and the dashed-edge flags.
+    # attention): STALLED (not running) → red; THROTTLED (< 50%) → yellow;
+    # OVERFLOW (≥ 50% with surplus output assumed routed to storage/void) → blue
+    # (a *good* state — the goal is max throughput, so surplus everywhere); OK
+    # (≥ 50%, output fully consumed) → green. Per-item inputs keep the SHORTFALL
+    # verdict — but only for an input that genuinely can't meet the full demand
+    # (``availability < demand``), so a *plentiful* carrier is never blamed when a
+    # different input is the real limit; those SHORTFALLs are the bottlenecks and
+    # the dashed-edge flags.
     balances: dict[str, NodeBalance] = {}
     bottlenecks: list[Bottleneck] = []
     for nid in ids:
@@ -820,9 +725,7 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
             if ostatus is Status.OVERFLOW:
                 surplus = True
             out_bals[item_id] = OutputBalance(item_id, made, taken, over, ostatus)
-        if comp.overclock_capped:
-            overall = Status.CAPPED  # over capacity: can't reach the set rate
-        elif d <= _EPS:
+        if d <= _EPS:
             overall = Status.STALLED  # not running at all
         elif d < 0.5 - _EPS:
             overall = Status.THROTTLED  # running below 50% (underfed)

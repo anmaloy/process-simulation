@@ -45,8 +45,9 @@ class Status(StrEnum):
       starved, which means surplus everywhere.
     - ``STALLED`` (red)      — not running at all (no feed, no power, or nothing
       downstream).
-    - ``CAPPED`` (red)       — over capacity: its overclock is clamped by the
-      machine's power-tier ceiling, so it can't reach the set rate.
+
+    (A machine whose overclock exceeds its power-tier ceiling simply runs at that
+    ceiling — the clamp is silent physics, its real rate, not a status of its own.)
 
     ``SHORTFALL`` stays the per-item **input** verdict (and drives the starved-edge
     dashed-pipe flag); ``OVERFLOW`` is the per-item **output** verdict (surplus)
@@ -58,7 +59,6 @@ class Status(StrEnum):
     OVERFLOW = "overflow"
     STALLED = "stalled"
     THROTTLED = "throttled"
-    CAPPED = "capped"
 
 
 @dataclass
