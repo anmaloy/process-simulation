@@ -116,7 +116,9 @@ def test_powered_chain_balances() -> None:
     report = compute_world(_world(consumer_eu_per_tick=5.0))
 
     assert _close(report.node_duty["c"], 1.0)  # fully powered
-    assert report.balances["c"].status is Status.OK
+    # The widget it makes has no consumer → surplus (routed to storage/void) →
+    # OVERFLOW (blue), the good "running with surplus" state.
+    assert report.balances["c"].status is Status.OVERFLOW
     assert report.bottlenecks == []
 
     # Turbine and boiler throttle to the 100 EU/s the consumer actually draws:
@@ -140,9 +142,13 @@ def test_underpowered_chain_starves_consumer() -> None:
     # Consumer wants 15 EU/t = 300 EU/s but the turbine maxes at 200 EU/s.
     report = compute_world(_world(consumer_eu_per_tick=15.0))
 
-    # Supplied 200 of 300 wanted → two-thirds duty, flagged as a power shortfall.
+    # Supplied 200 of 300 wanted → two-thirds duty. Running at 67% with surplus
+    # widget reads as OVERFLOW (blue, ≥50% + surplus); the electricity input is
+    # still a genuine shortfall and surfaces as a bottleneck + dashed edge (the
+    # power limit is reported there, not as an alarm color on the node).
     assert _close(report.node_duty["c"], 200.0 / 300.0)
-    assert report.balances["c"].status is Status.SHORTFALL
+    assert report.balances["c"].status is Status.OVERFLOW
+    assert report.balances["c"].inputs[EU].status is Status.SHORTFALL
     assert any(b.node_id == "c" and b.item_id == EU for b in report.bottlenecks)
     # The generators run flat out to supply what they can.
     assert _close(report.node_duty["t"], 1.0)
@@ -205,11 +211,12 @@ def test_generator_pump_feedback_loop_runs_at_capacity() -> None:
     )
     report = compute_world(world)
 
-    # Both run at full capacity rather than collapsing to zero.
+    # Both run at full capacity rather than collapsing to zero, each making far
+    # more of its carrier than the other draws → surplus → OVERFLOW (blue).
     assert _close(report.node_duty["b"], 1.0)
     assert _close(report.node_duty["p"], 1.0)
-    assert report.balances["b"].status is Status.OK
-    assert report.balances["p"].status is Status.OK
+    assert report.balances["b"].status is Status.OVERFLOW
+    assert report.balances["p"].status is Status.OVERFLOW
     assert report.bottlenecks == []
     # Surplus steam and water leave as yield (carriers aside: water is a liquid
     # product, steam the energy carrier is reported but not fed back as a deficit).

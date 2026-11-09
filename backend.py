@@ -26,7 +26,16 @@ from pathlib import Path
 from process_sim.api import Api
 from process_sim.io import ProcessSimIOError, load_project
 
-__all__ = ["Api", "build_api", "default_autosave_path"]
+__all__ = ["Api", "build_api", "default_autosave_path", "default_library_dir"]
+
+
+def _home_dir() -> Path:
+    """The app's data directory: ``PROCESS_SIM_HOME`` or a repo-local folder."""
+
+    import os
+
+    base = os.environ.get("PROCESS_SIM_HOME")
+    return Path(base) if base else Path(__file__).resolve().parent / ".process_sim"
 
 
 def default_autosave_path() -> Path:
@@ -38,21 +47,30 @@ def default_autosave_path() -> Path:
     home (``.process_sim/autosave.psim.json``).
     """
 
-    import os
-
-    base = os.environ.get("PROCESS_SIM_HOME")
-    root = Path(base) if base else Path(__file__).resolve().parent / ".process_sim"
-    return root / "autosave.psim.json"
+    return _home_dir() / "autosave.psim.json"
 
 
-def build_api(project: Path | None = None, autosave_path: Path | None = None) -> Api:
+def default_library_dir() -> Path:
+    """Where imported catalogs (e.g. the MI library) are saved, so they are
+    auto-loaded into every project without re-importing (``.process_sim/libraries``)."""
+
+    return _home_dir() / "libraries"
+
+
+def build_api(
+    project: Path | None = None,
+    autosave_path: Path | None = None,
+    library_dir: Path | None = None,
+) -> Api:
     """Build the :class:`Api`, restoring and persisting the working World.
 
     Load order: an explicit ``project`` file wins; otherwise the autosave file is
     restored if it exists and is readable (a corrupt autosave is ignored so the
     app still launches). When ``autosave_path`` is set the :class:`Api` writes the
     World back to it after every change, so the next launch resumes where it left
-    off.
+    off. ``library_dir`` holds persisted catalogs (an imported MI library) the
+    :class:`Api` merges into the World at startup, so the machine catalog is
+    always available even in a fresh or catalog-less project.
     """
 
     world = None
@@ -63,4 +81,4 @@ def build_api(project: Path | None = None, autosave_path: Path | None = None) ->
             world = load_project(autosave_path)
         except (ProcessSimIOError, OSError):
             world = None  # ignore a corrupt/unreadable autosave
-    return Api(world, autosave_path=autosave_path)
+    return Api(world, autosave_path=autosave_path, library_dir=library_dir)

@@ -79,6 +79,8 @@ __all__ = [
     "PumpMachine",
     "STORAGE_MACHINES",
     "StorageMachine",
+    "SPECIAL_MACHINES",
+    "SpecialMachine",
     "ELECTRICITY_ID",
     "STEAM_ID",
     "MiImport",
@@ -184,6 +186,13 @@ _ENERGY_STACK = 1
 #: Ticks per second. MI energy/fluid machine rates are authored **per tick**; the
 #: engine is canonical **per second**, so a rated EU/t or mB/t becomes ``× 20``.
 _TICKS_PER_SEC = 20.0
+
+#: EU per furnace **burn tick**. A solid fuel's ``burn_time`` (furnace ticks) is
+#: NOT its EU directly: MI values each burn tick at 20 EU, so a fuel's stored
+#: energy is ``burn_time × 20`` (coal's 1600 burn ticks = 32 000 EU). This mirrors
+#: the per-tick → per-second ``× 20`` everywhere else; fluid fuels already carry
+#: ``eu_per_mb`` as EU directly, so only solid burn-times take this factor.
+_EU_PER_BURN_TICK = 20.0
 
 # --------------------------------------------------------------------------- #
 # Energy generation (boilers / turbines / generators).
@@ -487,6 +496,13 @@ MACHINE_VARIANTS: dict[str, tuple[MachineVariant, ...]] = {
             "electric_quarry", "Electric Quarry", EnergySource.ELECTRIC, ELECTRICITY_ID
         ),
     ),
+    # The Coke Oven is a steam-age multiblock (there is no electric variant block
+    # in the jar), so it runs its ``coke_oven`` recipes on **steam**, not the
+    # routed electricity the generic electric def would wrongly draw. Keyed
+    # ``coke_oven`` so its def id stays ``mi.machine.coke_oven``.
+    "coke_oven": (
+        MachineVariant("coke_oven", "Coke Oven", EnergySource.LIQUID, STEAM_ID),
+    ),
     # The smelting furnaces: bronze/steel on steam, electric on electricity, each
     # clamped to its tier and drawing the base smelt rate (smelting recipes carry
     # no eu). Vanilla ``minecraft:smelting`` is mapped to the ``furnace`` type.
@@ -643,6 +659,31 @@ def _storage_machines() -> tuple[StorageMachine, ...]:
 STORAGE_MACHINES: tuple[StorageMachine, ...] = _storage_machines()
 
 
+# --------------------------------------------------------------------------- #
+# Special machines with no recipe data.
+#
+# A few MI machine BLOCKS are not recipe-driven: the Nuclear Reactor runs on fuel
+# rods + a heat/coolant simulation, and the Replicator turns UU-matter into any
+# item — neither ships standard ``*_inputs``/``*_outputs`` recipes, so there is
+# nothing to parse. They are added as recipe-less, placeable defs (item in + out
+# ports, no energy model) so the machine roster is complete; bind/model them by
+# hand if a project needs them. Everything else in the jar that *does* carry
+# recipe or generator data is imported automatically.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class SpecialMachine:
+    key: str
+    name: str
+
+
+SPECIAL_MACHINES: tuple[SpecialMachine, ...] = (
+    SpecialMachine("nuclear_reactor", "Nuclear Reactor"),
+    SpecialMachine("replicator", "Replicator"),
+)
+
+
 @dataclass
 class MiImport:
     """A built MI :class:`Library` plus counts describing what was imported."""
@@ -725,12 +766,14 @@ def _load_fluid_fuels(root: Path) -> dict[str, float]:
 def _load_item_fuels(root: Path) -> tuple[dict[str, float], dict[str, float]]:
     """Solid-fuel stored energy, from NeoForge's ``furnace_fuels`` data map.
 
-    A solid fuel's ``burn_time`` (furnace ticks) is its stored energy in EU — the
-    same scalar MI boilers burn it by (coal's 1600 burn ticks = 1600 EU), so it
-    maps straight onto :attr:`Item.eu`, mirroring how a fluid's ``eu_per_mb``
-    does. A key may name a concrete item or a ``#tag`` (``#c:dusts/coal``), so two
-    maps are returned: ``{item_id: eu}`` applied as items are registered, and
-    ``{tag_id: eu}`` propagated to the tag's members once membership is resolved.
+    A solid fuel's ``burn_time`` (furnace ticks) becomes its stored energy as
+    ``burn_time × 20`` EU (:data:`_EU_PER_BURN_TICK` — MI values each furnace burn
+    tick at 20 EU, so coal's 1600 burn ticks = 32 000 EU), mapped onto
+    :attr:`Item.eu`. (Fluid fuels already carry ``eu_per_mb`` as EU directly, so
+    only these solid burn-times take the ×20.) A key may name a concrete item or a
+    ``#tag`` (``#c:dusts/coal``), so two maps are returned: ``{item_id: eu}``
+    applied as items are registered, and ``{tag_id: eu}`` propagated to the tag's
+    members once membership is resolved.
     """
 
     items: dict[str, float] = {}
@@ -746,7 +789,7 @@ def _load_item_fuels(root: Path) -> tuple[dict[str, float], dict[str, float]]:
                 for key, spec in values.items():
                     if not isinstance(spec, dict) or "burn_time" not in spec:
                         continue
-                    eu = float(spec["burn_time"])
+                    eu = float(spec["burn_time"]) * _EU_PER_BURN_TICK
                     if key.startswith("#"):
                         tags[_resolve_id(key[1:], "c")] = eu
                     else:
@@ -865,6 +908,16 @@ def _fluid_name(full_id: str, lang: dict[str, str]) -> str:
 
 def _machine_name(machine_type: str, lang: dict[str, str], ns: str = _MI_NS) -> str:
     return lang.get(f"block.{ns}.{machine_type}") or _prettify(machine_type)
+
+
+def _electric_name(machine_type: str, lang: dict[str, str], ns: str = _MI_NS) -> str:
+    """Name the generic electric def off the ``electric_<type>`` block when one
+    exists (a tiered machine like the macerator, whose electric variant is
+    "Electric Macerator"), else the plain machine name (assembler, a multiblock)."""
+
+    return lang.get(f"block.{ns}.electric_{machine_type}") or _machine_name(
+        machine_type, lang, ns
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1175,6 +1228,10 @@ def import_mi_library(
     # no carriers needed, so always added.
     storage_defs = [_storage_def(m) for m in STORAGE_MACHINES]
 
+    # Recipe-less special machines (Nuclear Reactor, Replicator) — present for a
+    # complete roster, named from lang, inert until modelled by hand.
+    special_defs = [_special_def(m, lang) for m in SPECIAL_MACHINES]
+
     # Resolve tag membership from the game's tag definitions, so a concrete item
     # can later stand in for a recipe that references a tag (e.g. iron_ore → a
     # recipe keyed on c:ores/iron). Also register any member item not already
@@ -1191,7 +1248,14 @@ def import_mi_library(
         name=name or "Modern Industrialization",
         items=sorted(registry.items.values(), key=lambda i: i.id),
         recipes=recipes + pump_recipes,
-        machine_defs=machine_defs + steam_defs + energy_defs + pump_defs + storage_defs,
+        machine_defs=(
+            machine_defs
+            + steam_defs
+            + energy_defs
+            + pump_defs
+            + storage_defs
+            + special_defs
+        ),
     )
     stats = {
         "filesScanned": files_scanned,
@@ -1205,6 +1269,7 @@ def import_mi_library(
         "energyMachines": len(energy_defs),
         "pumps": len(pump_defs),
         "storage": len(storage_defs),
+        "special": len(special_defs),
         "byType": {t: len(agg["recipe_ids"]) for t, agg in by_type.items()},
     }
     return MiImport(library=library, stats=stats)
@@ -1355,7 +1420,7 @@ def _machine_def(
     spec = MACHINE_CATALOG.get(machine_type, MachineSpec())
     return MachineDef(
         id=f"mi.machine.{machine_type}",
-        name=_machine_name(machine_type, lang, agg.get("ns", _MI_NS)),
+        name=_electric_name(machine_type, lang, agg.get("ns", _MI_NS)),
         energy_source=EnergySource.ELECTRIC,
         source_item_id=ELECTRICITY_ID,
         allowed_recipe_ids=list(agg["recipe_ids"]),
@@ -1535,6 +1600,23 @@ def _storage_def(m: StorageMachine) -> MachineDef:
                 1,
                 _FLUID_STACK if m.category is Category.LIQUID else _SOLID_STACK,
             ),
+        ],
+    )
+
+
+def _special_def(m: SpecialMachine, lang: dict[str, str]) -> MachineDef:
+    """A recipe-less placeable def (item in + out ports) for a special machine.
+
+    Named from lang; no energy source and no ``allowed_recipe_ids`` — MI's Nuclear
+    Reactor and Replicator aren't recipe-driven, so they're inert in the balance
+    until a project models them by hand."""
+
+    return MachineDef(
+        id=f"mi.machine.{m.key}",
+        name=_machine_name(m.key, lang) or m.name,
+        slots=[
+            SlotGroup(Category.SOLID, Direction.IN, 1, _SOLID_STACK),
+            SlotGroup(Category.SOLID, Direction.OUT, 1, _SOLID_STACK),
         ],
     )
 

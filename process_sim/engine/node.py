@@ -63,6 +63,11 @@ class NodeComputation:
     energy_consume: float | None = None
     net_energy: float | None = None
     fuel_conversion: FuelConversion | None = None
+    #: True when the node's requested overclock was clamped down by the machine's
+    #: power-tier ceiling (``eu_per_tick × overclock > max_eu_per_tick``) — the
+    #: machine is "over capacity" and cannot reach the set rate. Drives the CAPPED
+    #: status; absent (False) when it runs at its requested overclock.
+    overclock_capped: bool = False
 
     def to_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -127,11 +132,13 @@ def compute_node(
     # its recipe slower too. A machine with no ceiling (or no per-tick draw to
     # measure against) overclocks freely.
     overclock = node.overclock
+    overclock_capped = False
     cap = machine_def.max_eu_per_tick
     if cap is not None and eu_per_tick is not None and eu_per_tick > 0:
         max_oc = cap / eu_per_tick
         if overclock > max_oc:
             overclock = max_oc
+            overclock_capped = True
     scale = overclock * count
 
     cycles_per_sec = 0.0
@@ -243,4 +250,5 @@ def compute_node(
         energy_consume=energy_consume,
         net_energy=net_energy,
         fuel_conversion=fuel_conversion,
+        overclock_capped=overclock_capped,
     )

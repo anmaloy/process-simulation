@@ -54,14 +54,15 @@ def test_furnace_chest_external_io(furnace_chest: World) -> None:
     assert _close(report.node_duty["furnace1"], 1.0)  # fully supplied
 
 
-def test_furnace_chest_product_is_yield_not_overflow(furnace_chest: World) -> None:
+def test_furnace_chest_product_is_surplus(furnace_chest: World) -> None:
     report = compute_world(furnace_chest)
     furnace = report.balances["furnace1"]
-    # Ingots go to a chest (a transparent buffer): they are a product that leaves
-    # the scope as yield, not an "overflow". The furnace runs fully supplied
-    # (ore manually inserted) with no bottleneck.
-    assert furnace.outputs["ingot"].status is Status.OK
-    assert furnace.status is Status.OK
+    # Ingots go to a chest (a transparent buffer): the furnace's output leaves the
+    # scope as yield (nothing consumes it internally), i.e. surplus → OVERFLOW
+    # (blue, the good "running with surplus" state). It runs fully supplied (ore
+    # manually inserted) with no input shortfall.
+    assert furnace.outputs["ingot"].status is Status.OVERFLOW
+    assert furnace.status is Status.OVERFLOW
     assert furnace.inputs["ore"].status is Status.OK
     assert report.bottlenecks == []
 
@@ -89,11 +90,13 @@ def _lone_boiler(**node_kw) -> World:
 
 
 def test_unconnected_inputs_stall_the_node() -> None:
-    # A boiler with nothing wired to its fuel/water inputs can't run: that is a
-    # shortfall, not an overflow of steam it cannot actually make.
+    # A boiler with nothing wired to its fuel/water inputs can't run at all →
+    # STALLED (red); its unmet inputs are the shortfalls (not an overflow of steam
+    # it cannot actually make).
     report = compute_world(_lone_boiler())
     assert _close(report.node_duty["b"], 0.0)
-    assert report.balances["b"].status is Status.SHORTFALL
+    assert report.balances["b"].status is Status.STALLED
+    assert report.balances["b"].inputs["coal"].status is Status.SHORTFALL
     assert {b.item_id for b in report.bottlenecks} == {"coal", "water"}
     assert report.external_outputs == {}  # produces nothing
 
@@ -103,7 +106,8 @@ def test_manual_insertion_runs_on_assumed_feedstock() -> None:
     # hand and runs: coal + water become feedstock and steam the yield.
     report = compute_world(_lone_boiler(assume_inputs=True))
     assert _close(report.node_duty["b"], 1.0)
-    assert report.balances["b"].status is Status.OK
+    # Steam it makes leaves as yield (nothing consumes it) → surplus → OVERFLOW.
+    assert report.balances["b"].status is Status.OVERFLOW
     assert _close(report.external_inputs["coal"], 100 / 1000)  # eu-metered fuel
     assert _close(report.external_inputs["water"], 100 / 16)  # material ratio 16
     assert _close(report.external_outputs["steam"], 100)
@@ -636,3 +640,337 @@ def test_tag_resource_routes_through_a_pipe() -> None:
     assert _close(report.balances["dst"].inputs["c:dusts/iron"].supplied, 5.0)
     assert _close(report.external_outputs.get("c:dusts/iron", 0.0), 0.0)
     assert _close(report.external_outputs.get("ingot", 0.0), 1.0)  # ingot is the yield
+
+
+
+# --------------------------------------------------------------------------- #
+# Run-band status: duty → OK (≥50%) / THROTTLED (<50%) / STALLED (0) / CAPPED.
+# --------------------------------------------------------------------------- #
+
+
+def _banded_chain(src_qty: float) -> World:
+    """src makes `src_qty` a/s (assume-fed); mid is a pure consumer wanting 1 a/s,
+    so mid duty = src_qty with no surplus of its own (isolating the duty bands)."""
+
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+    return World(
+        items=[Item("a", "A", Category.SOLID)],
+        recipes=[
+            Recipe(id="mk", time_seconds=1.0, outputs=[Stack("a", src_qty)]),
+            # A pure consumer (no output) → never a surplus of its own.
+            Recipe(id="use", time_seconds=1.0, inputs=[Stack("a", 1)]),
+        ],
+        machine_defs=[
+            MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
+            MachineDef(id="M", slots=[in_s], allowed_recipe_ids=["use"]),
+        ],
+        nodes=[
+            MachineNode(
+                id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True
+            ),
+            MachineNode(id="mid", machine_def_id="M", recipe_id="use"),
+        ],
+        pipes=[
+            Pipe(
+                id="p",
+                category=Category.SOLID,
+                movement_capacity=1000,
+                a=PipeEnd("src", PipeEndRole.OUT),
+                b=PipeEnd("mid", PipeEndRole.IN),
+            ),
+        ],
+    )
+
+
+def test_status_bands_follow_duty() -> None:
+    # ≥50% reads OK (green), below 50% THROTTLED (yellow).
+    assert compute_world(_banded_chain(0.7)).balances["mid"].status is Status.OK
+    assert compute_world(_banded_chain(0.5)).balances["mid"].status is Status.OK
+    assert compute_world(_banded_chain(0.3)).balances["mid"].status is Status.THROTTLED
+    # Not running at all → STALLED (red).
+    assert compute_world(_banded_chain(0.0)).balances["mid"].status is Status.STALLED
+
+
+def test_capped_status_when_overclock_clamped() -> None:
+    # The recipe wants 4 EU/t but the machine's tier ceiling is 2 EU/t, so the
+    # overclock is clamped: the machine is "over capacity" → CAPPED (red), even
+    # though it is otherwise fully fed and running.
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    world = World(
+        items=[Item("w", "W", Category.SOLID)],
+        recipes=[
+            Recipe(id="mk", time_seconds=1.0, outputs=[Stack("w", 1)], eu_per_tick=4.0)
+        ],
+        machine_defs=[
+            MachineDef(
+                id="D", slots=[out_s], allowed_recipe_ids=["mk"], max_eu_per_tick=2.0
+            )
+        ],
+        nodes=[
+            MachineNode(
+                id="n",
+                machine_def_id="D",
+                recipe_id="mk",
+                overclock=1.0,
+                assume_inputs=True,
+                assume_outputs=True,
+            )
+        ],
+    )
+    report = compute_world(world)
+    assert report.computations["n"].overclock_capped is True
+    assert report.balances["n"].status is Status.CAPPED
+
+
+# --------------------------------------------------------------------------- #
+# Bottleneck attribution: a plentiful carrier is never blamed for a shortfall
+# that a different, scarce input actually causes.
+# --------------------------------------------------------------------------- #
+
+
+def test_scarce_input_is_blamed_not_the_plentiful_one() -> None:
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    liq_out = SlotGroup(Category.LIQUID, Direction.OUT, 1, 1)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+    liq_in = SlotGroup(Category.LIQUID, Direction.IN, 1, 1)
+    world = World(
+        items=[
+            Item("ore", "Ore", Category.SOLID),
+            Item("steam", "Steam", Category.LIQUID),
+            Item("dust", "Dust", Category.SOLID),
+        ],
+        recipes=[
+            Recipe(id="mine", time_seconds=1.0, outputs=[Stack("ore", 0.1)]),  # scarce
+            Recipe(
+                id="boil", time_seconds=1.0, outputs=[Stack("steam", 1000)]
+            ),  # ample
+            Recipe(
+                id="grind",
+                time_seconds=1.0,
+                inputs=[Stack("ore", 1), Stack("steam", 40)],
+                outputs=[Stack("dust", 1)],
+            ),
+        ],
+        machine_defs=[
+            MachineDef(id="MINE", slots=[out_s], allowed_recipe_ids=["mine"]),
+            MachineDef(id="BOIL", slots=[liq_out], allowed_recipe_ids=["boil"]),
+            MachineDef(
+                id="MAC", slots=[in_s, liq_in, out_s], allowed_recipe_ids=["grind"]
+            ),
+        ],
+        nodes=[
+            MachineNode(
+                id="mine1", machine_def_id="MINE", recipe_id="mine", assume_inputs=True
+            ),
+            MachineNode(
+                id="boil1", machine_def_id="BOIL", recipe_id="boil", assume_inputs=True
+            ),
+            MachineNode(
+                id="mac1", machine_def_id="MAC", recipe_id="grind", assume_outputs=True
+            ),
+        ],
+        pipes=[
+            Pipe(
+                id="po",
+                category=Category.SOLID,
+                movement_capacity=1000,
+                a=PipeEnd("mine1", PipeEndRole.OUT),
+                b=PipeEnd("mac1", PipeEndRole.IN),
+            ),
+            Pipe(
+                id="ps",
+                category=Category.LIQUID,
+                movement_capacity=1000,
+                a=PipeEnd("boil1", PipeEndRole.OUT),
+                b=PipeEnd("mac1", PipeEndRole.IN),
+            ),
+        ],
+    )
+    report = compute_world(world)
+    # Macerator wants 1 ore/s but only 0.1 arrives → 10% duty (THROTTLED), even
+    # though steam is 25× plentiful.
+    assert _close(report.node_duty["mac1"], 0.1)
+    bal = report.balances["mac1"]
+    assert bal.status is Status.THROTTLED
+    # Only ore is the shortfall / bottleneck — steam is OK despite the node running
+    # at 10% (it is not the limiter).
+    assert bal.inputs["ore"].status is Status.SHORTFALL
+    assert bal.inputs["steam"].status is Status.OK
+    assert {b.item_id for b in report.bottlenecks} == {"ore"}
+
+
+# --------------------------------------------------------------------------- #
+# Polymorphic fuel: a source-less FUEL converter burns any wired-in fuel item.
+# --------------------------------------------------------------------------- #
+
+
+def _poly_fuel_world(coal_rate: float, wire_fuel: bool = True) -> World:
+    """A source-less FUEL boiler fed `coal_rate` coal/s (eu=1000) + water; it
+    needs 0.1 coal/s at full (fuel_drain 100 EU ÷ 1000 eu). Steam is the yield."""
+
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+    liq = SlotGroup(Category.LIQUID, Direction.IN, 1, 1)
+    liq_o = SlotGroup(Category.LIQUID, Direction.OUT, 1, 1)
+    nodes = [
+        MachineNode(
+            id="coal1", machine_def_id="CM", recipe_id="mkcoal", assume_inputs=True
+        ),
+        MachineNode(
+            id="water1", machine_def_id="WM", recipe_id="mkwater", assume_inputs=True
+        ),
+        MachineNode(id="boiler", machine_def_id="BOIL"),  # no recipe: a pure converter
+    ]
+    pipes = [
+        Pipe(
+            id="pw",
+            category=Category.LIQUID,
+            movement_capacity=1000,
+            a=PipeEnd("water1", PipeEndRole.OUT),
+            b=PipeEnd("boiler", PipeEndRole.IN),
+        ),
+    ]
+    if wire_fuel:
+        pipes.append(
+            Pipe(
+                id="pc",
+                category=Category.SOLID,
+                movement_capacity=1000,
+                a=PipeEnd("coal1", PipeEndRole.OUT),
+                b=PipeEnd("boiler", PipeEndRole.IN),
+            )
+        )
+    return World(
+        items=[
+            Item("coal", "Coal", Category.SOLID, eu=1000),
+            Item("water", "Water", Category.LIQUID),
+            Item("steam", "Steam", Category.LIQUID),
+        ],
+        recipes=[
+            Recipe(id="mkcoal", time_seconds=1.0, outputs=[Stack("coal", coal_rate)]),
+            Recipe(id="mkwater", time_seconds=1.0, outputs=[Stack("water", 1000)]),
+        ],
+        machine_defs=[
+            MachineDef(id="CM", slots=[out_s], allowed_recipe_ids=["mkcoal"]),
+            MachineDef(id="WM", slots=[liq_o], allowed_recipe_ids=["mkwater"]),
+            MachineDef(
+                id="BOIL",
+                energy_source=EnergySource.FUEL,  # no source_item_id → picks wired fuel
+                input_item_id="water",
+                output_item_id="steam",
+                max_fluid_rate=100,
+                material_ratio=16,
+                slots=[in_s, liq, liq_o],
+            ),
+        ],
+        nodes=nodes,
+        pipes=pipes,
+    )
+
+
+def test_sourceless_fuel_converter_burns_wired_fuel() -> None:
+    # Fuel is scarce: 0.05 coal/s vs 0.1/s needed at full → boiler at 50% duty,
+    # metered by the coal's eu. Steam yield halves with it.
+    report = compute_world(_poly_fuel_world(0.05))
+    assert _close(report.node_duty["boiler"], 0.5)
+    assert _close(report.external_outputs["steam"], 50.0)
+    # The fuel is the bottleneck (metered by eu), not water.
+    assert any(
+        b.node_id == "boiler" and b.item_id == "coal" for b in report.bottlenecks
+    )
+    assert report.balances["boiler"].inputs["coal"].status is Status.SHORTFALL
+    assert report.balances["boiler"].inputs["water"].status is Status.OK
+
+
+def test_sourceless_fuel_converter_stalls_with_no_fuel_wired() -> None:
+    # Water wired but no fuel at all: the boiler cannot run on nothing.
+    report = compute_world(_poly_fuel_world(0.05, wire_fuel=False))
+    assert _close(report.node_duty["boiler"], 0.0)
+    assert report.balances["boiler"].status is Status.STALLED
+    assert report.external_outputs.get("steam", 0.0) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Pipe-split fairness: one output split between a concrete consumer and a tag
+# consumer must divide by the pipe rules (equal → even), not go wholly to one.
+# --------------------------------------------------------------------------- #
+
+
+def test_shared_output_splits_between_concrete_and_tag_consumers() -> None:
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+
+    def pipe(pid, a, b):
+        return Pipe(id=pid, category=Category.SOLID, movement_capacity=1000,
+                    a=PipeEnd(a, PipeEndRole.OUT), b=PipeEnd(b, PipeEndRole.IN))
+
+    world = World(
+        items=[
+            Item("dust", "Dust", Category.SOLID),
+            Item("c:dusts/x", "X Dusts", Category.SOLID, is_tag=True, members=["dust"]),
+            Item("ca", "CA", Category.SOLID),
+            Item("cb", "CB", Category.SOLID),
+        ],
+        recipes=[
+            Recipe(id="mk", time_seconds=1.0, outputs=[Stack("dust", 10)]),
+            # One consumer names the item directly, the other the tag that holds it.
+            Recipe(id="ua", time_seconds=1.0, inputs=[Stack("dust", 10)], outputs=[Stack("ca", 1)]),
+            Recipe(id="ub", time_seconds=1.0, inputs=[Stack(tag="c:dusts/x", quantity=10)], outputs=[Stack("cb", 1)]),
+        ],
+        machine_defs=[
+            MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
+            MachineDef(id="CA", slots=[in_s, out_s], allowed_recipe_ids=["ua"]),
+            MachineDef(id="CB", slots=[in_s, out_s], allowed_recipe_ids=["ub"]),
+        ],
+        nodes=[
+            MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
+            MachineNode(id="ca", machine_def_id="CA", recipe_id="ua", assume_outputs=True),
+            MachineNode(id="cb", machine_def_id="CB", recipe_id="ub", assume_outputs=True),
+        ],
+        pipes=[pipe("pa", "src", "ca"), pipe("pb", "src", "cb")],
+    )
+    report = compute_world(world)
+    # 10 dust/s split evenly: each consumer gets 5 of the 10 it wants → 50% duty.
+    # Neither is starved to 0 by the other claiming the whole output.
+    assert _close(report.balances["ca"].inputs["dust"].supplied, 5.0)
+    assert _close(report.balances["cb"].inputs["c:dusts/x"].supplied, 5.0)
+    assert _close(report.node_duty["ca"], 0.5)
+    assert _close(report.node_duty["cb"], 0.5)
+
+
+def test_surplus_is_blue_overflow_and_throttle_takes_precedence() -> None:
+    # src (assume-fed) makes `q` a/s; sink consumes a and makes b with no consumer
+    # → b is surplus. At high supply the sink runs ≥50% with surplus → OVERFLOW
+    # (blue); starved below 50% the underfed THROTTLED (yellow) wins over surplus.
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+
+    def world(q: float) -> World:
+        return World(
+            items=[Item("a", "A", Category.SOLID), Item("b", "B", Category.SOLID)],
+            recipes=[
+                Recipe(id="mk", time_seconds=1.0, outputs=[Stack("a", q)]),
+                Recipe(id="use", time_seconds=1.0, inputs=[Stack("a", 1)], outputs=[Stack("b", 1)]),
+            ],
+            machine_defs=[
+                MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
+                MachineDef(id="M", slots=[in_s, out_s], allowed_recipe_ids=["use"]),
+            ],
+            nodes=[
+                MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
+                MachineNode(id="sink", machine_def_id="M", recipe_id="use", assume_outputs=True),
+            ],
+            pipes=[Pipe(id="p", category=Category.SOLID, movement_capacity=1000,
+                        a=PipeEnd("src", PipeEndRole.OUT), b=PipeEnd("sink", PipeEndRole.IN))],
+        )
+
+    good = compute_world(world(1.0))
+    assert _close(good.node_duty["sink"], 1.0)
+    assert good.balances["sink"].status is Status.OVERFLOW  # surplus b → blue
+    assert good.balances["sink"].outputs["b"].status is Status.OVERFLOW
+
+    starved = compute_world(world(0.3))
+    assert _close(starved.node_duty["sink"], 0.3)
+    # Underfed (<50%) outranks the incidental surplus → THROTTLED, not OVERFLOW.
+    assert starved.balances["sink"].status is Status.THROTTLED

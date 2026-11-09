@@ -135,9 +135,10 @@ def _world(
 def test_concrete_producer_feeds_tag_consumer() -> None:
     report = compute_world(_world(members=[_INGOT]))
 
-    # The consumer runs fully — its tag demand is met by the concrete ingot.
+    # The consumer runs fully — its tag demand is met by the concrete ingot. Its
+    # gear output has no downstream consumer → surplus → OVERFLOW (blue).
     assert _close(report.node_duty["consumer"], 1.0)
-    assert report.balances["consumer"].status is Status.OK
+    assert report.balances["consumer"].status is Status.OVERFLOW
     assert report.balances["consumer"].inputs[_TAG].status is Status.OK
     assert _close(report.balances["consumer"].inputs[_TAG].supplied, 1.0)
     assert report.bottlenecks == []
@@ -154,7 +155,8 @@ def test_tag_demand_with_no_matching_producer_starves() -> None:
     report = compute_world(_world(members=[_WROUGHT]))
 
     assert _close(report.node_duty["consumer"], 0.0)
-    assert report.balances["consumer"].status is Status.SHORTFALL
+    # Not running at all → STALLED (red); the unmet tag input is the shortfall.
+    assert report.balances["consumer"].status is Status.STALLED
     assert report.balances["consumer"].inputs[_TAG].status is Status.SHORTFALL
     assert any(
         b.node_id == "consumer" and b.item_id == _TAG for b in report.bottlenecks

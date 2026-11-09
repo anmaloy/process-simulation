@@ -30,7 +30,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from backend import build_api, default_autosave_path
+from backend import build_api, default_autosave_path, default_library_dir
 
 BASE = Path(__file__).resolve().parent
 UI = BASE / "ui"
@@ -39,7 +39,7 @@ UI = BASE / "ui"
 # mutations/reads against it.
 _autosave = default_autosave_path()
 _autosave.parent.mkdir(parents=True, exist_ok=True)
-API = build_api(autosave_path=_autosave)
+API = build_api(autosave_path=_autosave, library_dir=default_library_dir())
 API_LOCK = threading.Lock()
 # Only genuine public Api methods are callable over HTTP — no dunders, no
 # internals, nothing added later by accident. Built once at startup.

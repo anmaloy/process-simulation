@@ -356,23 +356,31 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     The scope is an **automatic system**: a machine runs only to the extent its
     inputs are actually delivered by connected pipes *and* its outputs are
     actually taken downstream — "if everything is not continuous, it won't run".
-    Each node's **duty cycle** is the smaller of those two limits, solved by
-    relaxation:
+    Each node's **duty cycle** is the smaller of those two limits, solved in two
+    relaxation passes:
 
-    - **Input-limited** (starved): an input isn't supplied. The node can't run →
-      a shortfall. A node flagged ``assume_inputs`` (manual insertion) treats any
-      unsupplied input as available, so it runs on manually-fed feedstock.
-    - **Demand-limited**: an output isn't fully consumed, so the node throttles
-      (and draws proportionally less input — a water pump only runs as often as
-      the boiler draws water). An output nothing consumes is a **product** and
-      leaves as yield; an output with a downstream consumer backpressures to that
-      demand unless the node is flagged ``assume_outputs`` (manual extraction).
+    - **Pass A — the demand ceiling** (``_relax_demand``): the duty each node
+      would run at with unlimited inputs, limited only by its output being taken.
+      An output nothing consumes is a **product** that leaves as yield (no
+      backpressure); an output with a downstream consumer backpressures to that
+      consumer's *ceiling* demand, so a water pump only runs as often as the
+      boiler would draw water. ``assume_outputs`` (manual extraction) lifts the
+      ceiling to 1.
+    - **Pass B — the input-limited duty** (``_relax_inputs``): starting from the
+      ceiling, each node throttles to the fraction of its inputs actually
+      delivered. Crucially a consumer's *demand* on its suppliers stays pinned at
+      the ceiling, so a starved consumer keeps pulling at full and never drags its
+      supplier to zero. ``assume_inputs`` (manual insertion) treats any unsupplied
+      input as available.
 
-    A second, inputs-unconstrained relaxation gives the duty the scope *wants* to
-    run at; a node held below it is the input-limited (shortfall) case. Storage
-    (buffer) nodes are transparent passthroughs. ``external_inputs`` is the
-    outside feedstock (manually-inserted inputs), ``external_outputs`` the actual
-    yield (products leaving the scope).
+    A node held below its ceiling is input-limited; the inputs that can't meet the
+    ceiling are its shortfalls (and the bottlenecks), so a *plentiful* carrier is
+    never blamed when a different input is the real limit. A source-less FUEL
+    converter (an MI boiler) burns whatever eu-bearing fuel is wired to it,
+    metered by that fuel's ``eu``; with nothing wired it cannot run. Storage
+    (buffer) nodes and pipe junctions are transparent passthroughs.
+    ``external_inputs`` is the outside feedstock (manually-inserted inputs),
+    ``external_outputs`` the actual yield (products leaving the scope).
     """
 
     index = _Index(world)
@@ -397,6 +405,62 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         if machine_def.storage is not None:
             storage_ids.add(nid)
         computations[nid] = compute_node(node, machine_def, recipe, items=index.items)
+
+    # Directed, throughput-capped, junction/storage-spliced edges. Built here (up
+    # front) because fuel resolution below needs to know which producers feed each
+    # converter. Pipe junctions are transparent routing waypoints: included in the
+    # edge graph so a pipe machine→junction→machine isn't dropped for a non-machine
+    # endpoint, then spliced out with the same contraction that dissolves storage.
+    junction_ids = index.pipe_nodes
+    edges = _edges_in_scope(index, id_set | junction_ids)
+    edges = _contract_storage(edges, storage_ids | junction_ids)
+    item_edges_by_cat: dict[Category | None, list[_Edge]] = {}
+    for e in edges:
+        # All segments of a spliced chain share a category (a junction only joins
+        # pipes of its own), so the first pipe's category keys the whole edge.
+        cat = index.pipe_category.get(e.pipe_ids[0])
+        item_edges_by_cat.setdefault(cat, []).append(e)
+
+    # --- Polymorphic fuel for source-less FUEL converters -------------------- #
+    # A FUEL converter that names no ``source_item_id`` (an MI boiler — "the
+    # player picks which fuel to burn") burns whatever fuel is piped into it. Its
+    # ``fuel_drain`` (EU/s at full rate) is met by a wired-in **fuel item** (one
+    # carrying stored ``eu``), consumed at ``fuel_drain / item.eu`` units per
+    # second and scaling with duty like any other input. We pick the fuel actually
+    # feeding the converter (the eu-bearing output of a producer with an edge into
+    # it; the best-supplied one when several are wired — one boiler burns one
+    # fuel). A converter with a fuel draw but no fuel wired in is recorded in
+    # ``no_fuel`` and forced to stall (it cannot run on nothing).
+    producers_into: dict[str, set[str]] = {}
+    for e in edges:
+        producers_into.setdefault(e.sink, set()).add(e.source)
+    no_fuel: set[str] = set()
+    for nid in ids:
+        node = index.nodes[nid]
+        mdef = index.defs.get(node.machine_def_id)
+        if mdef is None or mdef.energy_source is not EnergySource.FUEL:
+            continue
+        if mdef.source_item_id is not None:
+            continue  # a fixed carrier is already routed by compute_node
+        comp = computations[nid]
+        conv = comp.fuel_conversion
+        if conv is None or conv.fuel_drain <= _EPS:
+            continue
+        candidates: dict[str, float] = {}
+        for p in producers_into.get(nid, ()):
+            pc = computations.get(p)
+            if pc is None:
+                continue
+            for iid, rate in pc.outputs.items():
+                it = index.items.get(iid)
+                if it is not None and it.eu:
+                    candidates[iid] = candidates.get(iid, 0.0) + rate
+        if not candidates:
+            no_fuel.add(nid)
+            continue
+        fuel_id = max(candidates, key=lambda k: (candidates[k], k))
+        fuel_eu = index.items[fuel_id].eu or 1.0
+        comp.inputs[fuel_id] = comp.inputs.get(fuel_id, 0.0) + conv.fuel_drain / fuel_eu
 
     # A **generation source** is the supply edge of the system: an energy
     # converter (a boiler/turbine/generator making a carrier from its source) or
@@ -457,6 +521,16 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     match_sources: dict[str, list[str]] = {
         d: [s for s in supply_present if _satisfies(s, d)] for d in demand_keys
     }
+    # The inverse: per produced supply key, every demand key it can satisfy. Flow
+    # is resolved **per supply key** (below), so all consumers of one physical
+    # item — whether they name it directly or via a tag that includes it —
+    # contend for it together and split by the pipe rules, instead of an earlier
+    # key claiming it all. Only supply keys that satisfy some demand are kept.
+    match_keys: dict[str, list[str]] = {}
+    for d, srcs in match_sources.items():
+        for s in srcs:
+            match_keys.setdefault(s, []).append(d)
+    supply_keys = sorted(match_keys)
 
     # Items a *non-storage* node consumes — membership-aware: a produced supply
     # key counts as consumed if it satisfies any non-storage demand key (so a
@@ -471,21 +545,6 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         for item_id, rate in computations[nid].inputs.items():
             if rate > _EPS:
                 consumed_items.update(match_sources.get(item_id, ()))
-
-    # Pipe junctions are transparent routing waypoints: include them in the edge
-    # graph so a pipe machine→junction→machine isn't dropped for having a
-    # non-machine endpoint, then splice them out with the same contraction that
-    # dissolves storage buffers (a junction has no buffer and no throughput of its
-    # own — the caps/priorities stay on the pipes it joins).
-    junction_ids = index.pipe_nodes
-    edges = _edges_in_scope(index, id_set | junction_ids)
-    edges = _contract_storage(edges, storage_ids | junction_ids)
-    item_edges_by_cat: dict[Category | None, list[_Edge]] = {}
-    for e in edges:
-        # All segments of a spliced chain share a category (a junction only joins
-        # pipes of its own), so the first pipe's category keys the whole edge.
-        cat = index.pipe_category.get(e.pipe_ids[0])
-        item_edges_by_cat.setdefault(cat, []).append(e)
 
     # A generation source on a feedback cycle — its output can return to its own
     # input through the pipe graph (a boiler whose steam powers a pump that pumps
@@ -517,142 +576,182 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
                 assume_out[nid] = True
 
     def _route(
-        duty: dict[str, float],
+        supply_duty: dict[str, float],
+        demand_duty: dict[str, float],
     ) -> tuple[
         dict[str, dict[str, float]],
         dict[str, dict[str, float]],
         dict[str, dict[str, object]],
     ]:
-        """Resolve flows at ``duty``; return supplied, drained, pipes.
+        """Resolve flows; return supplied, drained, pipes.
 
-        Resolution is **per demand key** (a recipe input id — concrete or tag).
-        Each key draws from the produced supply keys that satisfy it
-        (:func:`_satisfies`); a source's output is *committed* as it is drained,
-        so one supply can't feed two demand keys twice. ``supplied`` is keyed by
-        the sink's demand key (the tag id for a tag input), ``drained`` by the
-        source's concrete supply key — matching how ``_relax`` and the balances
-        read them back. With no tags in play each key is matched only by its own
-        id, so this reduces exactly to the former per-item resolution.
+        Producers supply at ``supply_duty`` (their output scaled by that duty);
+        consumers pull at ``demand_duty``. The two vectors are usually the same
+        (the actual steady state), but the relaxation probes with them split: the
+        **demand ceiling** pass drives producers greedily (``supply_duty`` all 1)
+        while consumers pull at the evolving ceiling, and the **input** pass holds
+        consumer demand at that ceiling while producers supply at their current
+        duty — so a starved consumer still *pulls* at full and never spuriously
+        back-throttles its supplier.
+
+        Resolution is **per produced supply key** (a concrete item — or a tag a
+        recipe outputs directly). Every consumer that can take that item, whether
+        it names the item or a tag that includes it, contends for it together in
+        one :func:`_resolve_item` call, so a shared output splits across them by
+        the pipe insert/extract rules (equal priority → even) instead of the
+        first-listed demand key claiming it all. A sink's remaining demand for
+        each key is tracked across supply keys (``demand_rem``) so a key satisfied
+        by several items isn't over-filled. ``supplied`` is keyed by the sink's
+        demand key, ``drained`` by the source's supply key.
         """
 
         supplied: dict[str, dict[str, float]] = {nid: {} for nid in ids}
         drained: dict[str, dict[str, float]] = {nid: {} for nid in ids}
-        committed: dict[str, dict[str, float]] = {nid: {} for nid in ids}
-        pipes: dict[str, dict[str, object]] = {}
-        for demand_key in demand_keys:
-            category = _category_of(index, demand_key)
-            per_sink = {
-                nid: computations[nid].inputs.get(demand_key, 0.0) * duty[nid]
-                for nid in ids
+        # Remaining unmet demand per sink per demand key (mutated as supply keys
+        # are resolved in turn), so a tag met partly by one item draws the rest
+        # from another without exceeding the recipe's demand.
+        demand_rem: dict[str, dict[str, float]] = {
+            nid: {
+                d: computations[nid].inputs[d] * demand_duty[nid]
+                for d in computations[nid].inputs
             }
-            if sum(per_sink.values()) <= _EPS:
-                continue
-            # Per source: its uncommitted supply across all keys that satisfy D,
-            # kept as [key, remaining] pairs so an edge's flow can be attributed
-            # back to concrete keys.
+            for nid in ids
+        }
+        pipes: dict[str, dict[str, object]] = {}
+        for supply_key in supply_keys:
+            category = _category_of(index, supply_key)
+            # Each producer's output of this one item (no cross-key commit needed —
+            # a supply key is resolved exactly once).
             per_source: dict[str, float] = {}
-            src_avail: dict[str, list[list[object]]] = {}
             for nid in ids:
-                lst: list[list[object]] = []
-                tot = 0.0
-                for s in match_sources.get(demand_key, ()):
-                    made = computations[nid].outputs.get(s, 0.0) * duty[nid]
-                    avail = made - committed[nid].get(s, 0.0)
-                    if avail > _EPS:
-                        lst.append([s, avail])
-                        tot += avail
-                if tot > _EPS:
-                    per_source[nid] = tot
-                    src_avail[nid] = lst
+                made = computations[nid].outputs.get(supply_key, 0.0) * supply_duty[nid]
+                if made > _EPS:
+                    per_source[nid] = made
             if not per_source:
+                continue
+            keys_here = match_keys.get(supply_key, ())
+            # Each sink's total demand this item can serve (summed over the demand
+            # keys it satisfies, at their current remaining).
+            per_sink = {
+                nid: tot
+                for nid in ids
+                if (tot := sum(demand_rem[nid].get(d, 0.0) for d in keys_here)) > _EPS
+            }
+            if not per_sink:
                 continue
             for edge, flow in _resolve_item(
                 per_source, per_sink, item_edges_by_cat.get(category, [])
             ):
                 if flow <= _EPS:
                     continue
-                supplied[edge.sink][demand_key] = (
-                    supplied[edge.sink].get(demand_key, 0.0) + flow
+                drained[edge.source][supply_key] = (
+                    drained[edge.source].get(supply_key, 0.0) + flow
                 )
-                # Attribute the edge flow to the source's concrete supply keys
-                # (proportional to remaining availability) and commit each, so a
-                # later demand key can't re-spend the same supply.
-                lst = src_avail[edge.source]
-                pool = sum(float(a) for _, a in lst)
-                for pair in lst:
-                    s_key: str = pair[0]  # type: ignore[assignment]
-                    avail = float(pair[1])
-                    share = min(flow * (avail / pool) if pool > _EPS else 0.0, avail)
-                    pair[1] = avail - share
-                    committed[edge.source][s_key] = (
-                        committed[edge.source].get(s_key, 0.0) + share
-                    )
-                    drained[edge.source][s_key] = (
-                        drained[edge.source].get(s_key, 0.0) + share
-                    )
+                # Attribute the edge flow to the sink's satisfied demand keys
+                # (proportional to each key's remaining demand), reducing it.
+                sink = edge.sink
+                rem = [
+                    (d, r)
+                    for d in keys_here
+                    if (r := demand_rem[sink].get(d, 0.0)) > _EPS
+                ]
+                pool = sum(r for _, r in rem)
+                carried: set[str] = set()
+                for d, r in rem:
+                    share = min(flow * (r / pool) if pool > _EPS else 0.0, r)
+                    if share <= 0.0:
+                        continue
+                    demand_rem[sink][d] -= share
+                    supplied[sink][d] = supplied[sink].get(d, 0.0) + share
+                    carried.add(d)
                 # Report the flow on every segment the edge traverses (a direct
                 # pipe, or each pipe in a spliced storage/junction chain).
                 for pid in edge.pipe_ids:
                     acc = pipes.setdefault(
-                        pid, {"flow": 0.0, "sink": edge.sink, "items": set()}
+                        pid, {"flow": 0.0, "sink": sink, "items": set()}
                     )
                     acc["flow"] = float(acc["flow"]) + flow  # type: ignore[arg-type]
                     items_on_pipe: set[str] = acc["items"]  # type: ignore[assignment]
-                    items_on_pipe.add(demand_key)
+                    items_on_pipe.update(carried)
         return supplied, drained, pipes
 
-    def _relax(
-        *, ignore_inputs: bool
-    ) -> tuple[
-        dict[str, float],
-        dict[str, dict[str, float]],
-        dict[str, dict[str, float]],
-        dict[str, dict[str, object]],
-    ]:
-        """Relax duties to the fixed point of ``min(input, demand)`` limits.
+    ones = {nid: 1.0 for nid in ids}
 
-        With ``ignore_inputs`` the input limit is dropped, giving the duty the
-        scope *wants* to run at (demand-only) — the reference for detecting an
-        input-limited (starved) node. Duties only fall, so this converges.
+    def _relax_demand() -> dict[str, float]:
+        """Pass A — the **demand ceiling**: the duty each node would run at with
+        unlimited inputs, limited only by its output being taken (product chains
+        backpressure; a product or an ``assume_outputs`` node has no ceiling below
+        1). Producers run greedily so a producer is throttled only by *true*
+        downstream demand. ``no_fuel`` converters are pinned to 0. Monotone
+        decreasing from 1, so it converges.
         """
 
-        duty = {nid: 1.0 for nid in ids}
-        supplied: dict[str, dict[str, float]] = {nid: {} for nid in ids}
-        drained: dict[str, dict[str, float]] = {nid: {} for nid in ids}
-        pipes: dict[str, dict[str, object]] = {}
+        dd = {nid: (0.0 if nid in no_fuel else 1.0) for nid in ids}
         for _ in range(_MAX_DUTY_ITERS):
-            supplied, drained, pipes = _route(duty)
+            _, drained, _ = _route(ones, dd)
             converged = True
             for nid in ids:
+                if nid in no_fuel:
+                    continue
                 comp = computations[nid]
-                d = duty[nid]
-                frac = 1.0
-                if not ignore_inputs and not assume_in[nid]:
-                    for item_id, nominal in comp.inputs.items():
-                        want = nominal * d
-                        if want > _EPS:
-                            got = supplied[nid].get(item_id, 0.0)
-                            frac = min(frac, got / want)
+                lim = 1.0
                 if not assume_out[nid]:
                     for item_id, nominal in comp.outputs.items():
-                        if item_id not in consumed_items:
+                        if item_id not in consumed_items or nominal <= _EPS:
                             continue  # product: leaves as yield, no backpressure
-                        made = nominal * d
-                        if made > _EPS:
-                            taken = drained[nid].get(item_id, 0.0)
-                            frac = min(frac, taken / made)
-                new_d = d * frac
-                if abs(new_d - d) > 1e-9:
+                        lim = min(lim, drained[nid].get(item_id, 0.0) / nominal)
+                nd = max(0.0, min(1.0, lim))
+                if abs(nd - dd[nid]) > 1e-9:
                     converged = False
-                duty[nid] = new_d
+                dd[nid] = nd
             if converged:
                 break
-        return duty, supplied, drained, pipes
+        return dd
 
-    duty, supplied_internal, demanded_internal, pipe_acc = _relax(ignore_inputs=False)
-    duty_demand, _, _, _ = _relax(ignore_inputs=True)
-    # A node held below the duty demand alone would allow is starved of an input.
-    input_limited = {nid: duty[nid] < duty_demand[nid] - 1e-6 for nid in ids}
+    def _relax_inputs(
+        dd: dict[str, float],
+    ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+        """Pass B — the **input-limited** duty: start at the demand ceiling and
+        iterate ``duty_i = min(dd_i, availability_i)``, where availability is the
+        flow reaching ``i`` when it pulls at the ceiling and producers supply at
+        their *current* duty. Because demand stays pinned at ``dd`` (not the
+        shrinking duty), a starved consumer keeps pulling at full and never drags
+        its supplier to zero — the old multiplicative relaxation's collapse. The
+        final-iteration ``supplied`` (demand pinned at ``dd``) is returned as each
+        input's *availability* for shortfall attribution.
+        """
+
+        duty = dict(dd)
+        avail: dict[str, dict[str, float]] = {nid: {} for nid in ids}
+        for _ in range(_MAX_DUTY_ITERS):
+            avail, _, _ = _route(duty, dd)
+            converged = True
+            for nid in ids:
+                if nid in no_fuel:
+                    if duty[nid] != 0.0:
+                        converged = False
+                    duty[nid] = 0.0
+                    continue
+                comp = computations[nid]
+                lim = dd[nid]
+                if not assume_in[nid]:
+                    for item_id, nominal in comp.inputs.items():
+                        if nominal > _EPS:
+                            got = avail[nid].get(item_id, 0.0)
+                            lim = min(lim, got / nominal)
+                nd = max(0.0, min(dd[nid], lim))
+                if abs(nd - duty[nid]) > 1e-9:
+                    converged = False
+                duty[nid] = nd
+            if converged:
+                break
+        return duty, avail
+
+    duty_demand = _relax_demand()
+    duty, avail_supplied = _relax_inputs(duty_demand)
+    # Actual steady-state flows at the solved duty (supply and demand both at the
+    # real running rate) — the numbers reported for pipes, yield, and energy.
+    supplied_internal, demanded_internal, pipe_acc = _route(duty, duty)
 
     # --- Feedstock (manual insertion) + yield (products) ------------------- #
     external_inputs: dict[str, float] = {}
@@ -678,41 +777,59 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
                 )
 
     # --- Per-node balances + bottlenecks ---------------------------------- #
+    # A node's **overall** status is a run band off its duty (what actually needs
+    # attention): CAPPED (over its power-tier ceiling) or STALLED (not running) →
+    # red; THROTTLED (< 50%) → yellow; OVERFLOW (≥ 50% with surplus output assumed
+    # routed to storage/void) → blue (a *good* state — the goal is max throughput,
+    # so surplus everywhere); OK (≥ 50%, output fully consumed) → green. Per-item
+    # inputs keep the SHORTFALL verdict — but only for an input that genuinely
+    # can't meet the demand ceiling (``availability < demand``), so a *plentiful*
+    # carrier is never blamed when a different input is the real limit; those
+    # SHORTFALLs are the bottlenecks and the dashed-edge flags.
     balances: dict[str, NodeBalance] = {}
     bottlenecks: list[Bottleneck] = []
     for nid in ids:
         comp = computations[nid]
         d = duty[nid]
-        starved = input_limited[nid]
+        dd = duty_demand[nid]
         in_bals: dict[str, InputBalance] = {}
         for item_id, nominal in comp.inputs.items():
-            supplied_amt = supplied_internal[nid].get(item_id, 0.0)
+            demand_amt = nominal * dd
+            avail_amt = avail_supplied[nid].get(item_id, 0.0)
             if assume_in[nid]:
-                supplied_amt = max(supplied_amt, nominal * d)
-            # Demand shown at the level the scope wants to run (demand-limited),
-            # so a node throttled only by downstream demand isn't flagged short.
-            demand_amt = nominal * duty_demand[nid]
-            short = max(0.0, demand_amt - supplied_amt)
-            status = Status.SHORTFALL if (starved and short > _EPS) else Status.OK
-            in_bals[item_id] = InputBalance(
-                item_id, demand_amt, supplied_amt, short, status
-            )
-            # A shortfall of any gated input is a bottleneck — including an energy
-            # carrier (a power shortage), which is kept out of feedstock/yield but
-            # still surfaced here.
-            if starved and short > _EPS:
+                avail_amt = max(avail_amt, demand_amt)
+            short = max(0.0, demand_amt - avail_amt)
+            shown = min(avail_amt, demand_amt)
+            status = Status.SHORTFALL if short > _EPS else Status.OK
+            in_bals[item_id] = InputBalance(item_id, demand_amt, shown, short, status)
+            # Any genuinely short input is a bottleneck — energy carriers included
+            # (a power shortage), which stay out of feedstock/yield but surface here.
+            if short > _EPS:
                 bottlenecks.append(Bottleneck(nid, item_id, short))
         out_bals: dict[str, OutputBalance] = {}
+        surplus = False
         for item_id, nominal in comp.outputs.items():
             made = nominal * d
             taken = demanded_internal[nid].get(item_id, 0.0)
-            out_bals[item_id] = OutputBalance(item_id, made, taken, 0.0, Status.OK)
-        if starved:
-            overall = Status.SHORTFALL
+            over = max(0.0, made - taken)
+            # A material/fluid surplus is "routed to storage/voided" (a good,
+            # expected state); electricity is the grid (reported as netEnergy), so
+            # its surplus never flips a node blue.
+            is_energy = _category_of(index, item_id) is Category.ENERGY
+            ostatus = Status.OVERFLOW if (over > _EPS and not is_energy) else Status.OK
+            if ostatus is Status.OVERFLOW:
+                surplus = True
+            out_bals[item_id] = OutputBalance(item_id, made, taken, over, ostatus)
+        if comp.overclock_capped:
+            overall = Status.CAPPED  # over capacity: can't reach the set rate
         elif d <= _EPS:
-            overall = Status.STALLED
+            overall = Status.STALLED  # not running at all
+        elif d < 0.5 - _EPS:
+            overall = Status.THROTTLED  # running below 50% (underfed)
+        elif surplus:
+            overall = Status.OVERFLOW  # running with surplus → storage/void (good)
         else:
-            overall = Status.OK
+            overall = Status.OK  # running 50–100%, output fully consumed
         balances[nid] = NodeBalance(nid, in_bals, out_bals, overall)
 
     bottlenecks.sort(key=lambda b: b.shortfall, reverse=True)

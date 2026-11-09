@@ -338,8 +338,13 @@ function reindex(){
    ============================================================================ */
 const CATEGORY_COLOR = { solid:"var(--s-teach)", liquid:"var(--s-indep)", energy:"var(--subedge)" };
 const catColor = c => CATEGORY_COLOR[c] || "var(--ink-faint)";
-const STATUS_COLOR = { ok:"var(--s-ref)", shortfall:"var(--s-bad)", overflow:"var(--s-learn)", stalled:"var(--s-not)" };
-const STATUS_FILL  = { ok:"var(--f-ref)", shortfall:"var(--f-bad)", overflow:"var(--f-learn)", stalled:"var(--f-not)" };
+// Node run-band colors (what the canvas shows): green = running 50–100% fully
+// consumed, blue = running ≥50% with surplus (overflow, routed to storage/void —
+// a good state), yellow = running below 50% (throttled, underfed), red = not
+// running (stalled) or over its power ceiling (capped). shortfall stays the
+// per-item input verdict (red; drives the dashed starved edge).
+const STATUS_COLOR = { ok:"var(--s-ref)", overflow:"var(--s-indep)", throttled:"var(--s-learn)", stalled:"var(--s-bad)", capped:"var(--s-bad)", shortfall:"var(--s-bad)" };
+const STATUS_FILL  = { ok:"var(--f-ref)", overflow:"var(--f-indep)", throttled:"var(--f-learn)", stalled:"var(--f-bad)", capped:"var(--f-bad)", shortfall:"var(--f-bad)" };
 const statusColor = s => STATUS_COLOR[s||"stalled"];
 const TPS = 20;
 const toPerTick = v => v/TPS, toPerSecond = v => v*TPS;
@@ -820,7 +825,10 @@ function junctionDom(j){
 }
 function aggregateStatus(rep){
   const st=Object.values(rep.balances||{}).map(b=>b.status);
-  if(st.includes("shortfall")) return "shortfall";
+  // worst-first: red (capped/stalled) → yellow (throttled) → blue (overflow) → green
+  if(st.includes("capped")) return "capped";
+  if(st.includes("stalled")) return "stalled";
+  if(st.includes("throttled")) return "throttled";
   if(st.includes("overflow")) return "overflow";
   if(st.includes("ok")) return "ok";
   return null;
@@ -873,7 +881,8 @@ function legendEl(){
     ["solid","liquid","energy"].map(c=>el("span",{class:"key"},el("span",{class:"legend-dot",style:{background:catColor(c)}}),c))));
   L.append(el("div",{class:"eyebrow quiet",style:{marginTop:"4px"}},"Status"));
   L.append(el("div",{class:"row"},
-    ["ok","shortfall","overflow","stalled"].map(s=>el("span",{class:"key"},el("span",{class:"legend-dot",style:{background:STATUS_COLOR[s]}}),s))));
+    [["ok","50–100%"],["overflow","surplus"],["throttled","<50%"],["stalled","stopped"],["capped","over cap"]].map(([s,lbl])=>
+      el("span",{class:"key",title:s},el("span",{class:"legend-dot",style:{background:STATUS_COLOR[s]}}),lbl))));
   return L;
 }
 function controlsEl(){
@@ -1154,7 +1163,7 @@ function paintOverlay(){
       }
       const d=duty[n.id];
       if(d!=null && d<0.999){
-        meta.append(el("span",{class:"chip mono duty",style:{color:(b&&b.status==="shortfall")?"var(--s-bad)":"var(--ink-dim)"}},Math.round(d*100)+"%"));
+        meta.append(el("span",{class:"chip mono duty",style:{color:statusColor(b&&b.status)}},Math.round(d*100)+"%"));
       }
     }
   }

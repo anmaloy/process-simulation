@@ -62,11 +62,18 @@ class ConflictPolicy(StrEnum):
       reference to it within the library.
     - ``SKIP``: drop the incoming entity; references to it resolve to the World's
       existing entity of the same id.
+    - ``UPDATE``: overwrite the World's existing entity **in place** with the
+      incoming one (same id). Used to *refresh* canonical reference data — a
+      re-import of a mod jar then propagates corrected values (a fixed fuel ``eu``,
+      a changed machine def) to a project without duplicating anything or
+      disturbing its nodes/pipes (those aren't part of a library). It overwrites
+      any manual edits to a reference entity of that id.
     - ``ERROR``: raise on the first collision.
     """
 
     RENAME = "rename"
     SKIP = "skip"
+    UPDATE = "update"
     ERROR = "error"
 
 
@@ -76,12 +83,14 @@ class ImportResult:
 
     ``world`` is the merged World (the input is never mutated). ``id_remap`` maps
     each renamed entity's old id to its new one; ``skipped_ids`` lists ids dropped
-    under :attr:`ConflictPolicy.SKIP`.
+    under :attr:`ConflictPolicy.SKIP`; ``updated_ids`` lists ids overwritten in
+    place under :attr:`ConflictPolicy.UPDATE`.
     """
 
     world: World
     id_remap: dict[str, str] = field(default_factory=dict)
     skipped_ids: set[str] = field(default_factory=set)
+    updated_ids: set[str] = field(default_factory=set)
 
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +170,7 @@ def import_library(
     recipe_remap: dict[str, str] = {}
     def_remap: dict[str, str] = {}
     skipped: set[str] = set()
+    updated: set[str] = set()
 
     def plan(ids: list[str], existing: set[str], remap: dict[str, str]) -> None:
         for old in ids:
@@ -172,6 +182,8 @@ def import_library(
                 )
             if on_conflict is ConflictPolicy.SKIP:
                 skipped.add(old)
+            elif on_conflict is ConflictPolicy.UPDATE:
+                updated.add(old)  # overwrite the World's entity in place (same id)
             else:  # RENAME
                 new = _fresh_id(old, used)
                 used.add(new)
@@ -213,11 +225,19 @@ def import_library(
         ]
         new_defs.append(clone)
 
+    # Under UPDATE a colliding id is overwritten in place: drop the World's old
+    # entity of that id so the refreshed incoming one (appended in new_*) is the
+    # only copy. Non-colliding World entities and the whole node/pipe/system graph
+    # are always kept.
+    kept_items = [i for i in world.items if i.id not in updated]
+    kept_recipes = [r for r in world.recipes if r.id not in updated]
+    kept_defs = [d for d in world.machine_defs if d.id not in updated]
+
     merged = World(
         name=world.name,
-        items=[*world.items, *new_items],
-        recipes=[*world.recipes, *new_recipes],
-        machine_defs=[*world.machine_defs, *new_defs],
+        items=[*kept_items, *new_items],
+        recipes=[*kept_recipes, *new_recipes],
+        machine_defs=[*kept_defs, *new_defs],
         nodes=list(world.nodes),
         pipes=list(world.pipes),
         pipe_nodes=list(world.pipe_nodes),
@@ -227,6 +247,7 @@ def import_library(
         world=merged,
         id_remap={**item_remap, **recipe_remap, **def_remap},
         skipped_ids=skipped,
+        updated_ids=updated,
     )
 
 
