@@ -33,7 +33,10 @@ Python backend — see `anmaloy/edunode_app`):
   `~/.process_sim/autosave.psim.json` after every change (`PROCESS_SIM_HOME`
   overrides the dir), so the app resumes on relaunch. Project files are JSON (the
   whole World). `export_standalone.py` bakes the World into a single view-only
-  HTML (no backend).
+  HTML (no backend). An **imported catalog** (the MI library) is also saved to
+  `~/.process_sim/libraries/*.psim-lib.json` and merged into the World at startup
+  and on project load (`ConflictPolicy.UPDATE`), so the machine catalog is always
+  available — in a fresh World or a catalog-less project — **without re-importing**.
 - **Tests:** pytest for the engine, model, IO, api, and app/server surface. The
   UI is validated by driving `server.py` (the real engine) in a headless browser.
 
@@ -577,14 +580,19 @@ Domain-state palette (the guide doesn't cover these directly):
 
 - **Status colors** — decided. A node's **overall** colour is a *run band* read
   off its duty cycle (what actually needs attention): **green** (`--s-ref`) =
-  running 50–100%; **yellow** (`--s-learn`) = running below 50% (throttled by a
-  slower upstream — normal, not an error); **red** (`--s-bad`) = **not running**
-  (stalled: no feed, no power, nothing downstream) **or over capacity** (capped:
-  its overclock is clamped by the power-tier ceiling, so it can't reach the set
-  rate). Per-**item** balances keep `shortfall` → red / `overflow` → yellow (the
-  single-item verdict that drives the dashed starved-edge flag); a node is never
-  *overall* overflow, since an unconsumed output is a product that leaves as
-  yield. Cyan (`--spine`) stays reserved for the selected/live element.
+  running 50–100% with its output fully consumed; **blue** (`--s-indep`) =
+  running ≥50% **with surplus** (`overflow` — it makes more than is consumed, the
+  excess assumed routed to storage/voided; a *good* state, since the goal is to
+  max every machine so nothing starves, which means surplus everywhere); **yellow**
+  (`--s-learn`) = running below 50% (throttled/underfed — normal, not an error);
+  **red** (`--s-bad`) = **not running** (stalled: no feed, no power, nothing
+  downstream) **or over capacity** (capped: its overclock is clamped by the
+  power-tier ceiling, so it can't reach the set rate). Precedence: capped/stalled
+  → yellow (<50%) → blue (surplus) → green. Per-**item** balances keep `shortfall`
+  → red on an input (the single-item verdict that drives the dashed starved-edge
+  flag) and `overflow` → blue on an output. An energy-carrier (electricity)
+  surplus is reported as `netEnergy`, not a blue node. Cyan (`--spine`) stays
+  reserved for the selected/live element.
 - **Category colors** (solid / liquid / energy edges and ports) — default
   assignment (adjustable): solid → silver (`--s-teach`), liquid → blue
   (`--s-indep`), energy → gold (`--subedge`). A converter's output fluid is a

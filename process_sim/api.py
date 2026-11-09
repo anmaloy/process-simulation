@@ -107,6 +107,13 @@ _KINDS: dict[str, tuple[str, Any]] = {
 _EXPECTED_ERRORS = (ProcessSimIOError, KeyError, TypeError, ValueError)
 
 
+def _slug(name: str | None) -> str:
+    """A filesystem-safe stem for a persisted library (e.g. its name)."""
+
+    base = "".join(c if c.isalnum() else "_" for c in (name or "library")).strip("_")
+    return base.lower() or "library"
+
+
 def _ok(data: Any) -> dict[str, Any]:
     return {"ok": True, "data": data}
 
@@ -124,12 +131,61 @@ class Api:
     """
 
     def __init__(
-        self, world: World | None = None, autosave_path: Path | None = None
+        self,
+        world: World | None = None,
+        autosave_path: Path | None = None,
+        library_dir: Path | None = None,
     ) -> None:
         self._world: World = world if world is not None else World()
         #: When set, the current World is written here after every change, so the
         #: app restores its last state on the next launch (persistence).
         self._autosave_path: Path | None = autosave_path
+        #: A folder of persisted libraries (e.g. an imported MI catalog). Its
+        #: contents are merged into the World at startup and whenever a project is
+        #: loaded, so the machine catalog is always available without re-importing;
+        #: ``import_mi_dir`` writes the imported library here.
+        self._library_dir: Path | None = library_dir
+        # Make the persisted catalog available in the starting World too.
+        self._merge_persisted_libraries()
+
+    # ------------------------------------------------------------------ #
+    # Persistent library catalog (the app folder's saved libraries).
+    # ------------------------------------------------------------------ #
+
+    def _merge_persisted_libraries(self) -> None:
+        """Merge every library saved under ``library_dir`` into the World.
+
+        Keeps an imported catalog (MI machines/recipes/items) available in any
+        project — a fresh World, a loaded project, or a restored autosave — so it
+        never has to be re-imported. Uses ``UPDATE`` so re-running is idempotent
+        and a corrected catalog refreshes stale entities in place. Unreadable
+        files are skipped (a bad catalog must not stop the app launching).
+        """
+
+        if self._library_dir is None or not self._library_dir.is_dir():
+            return
+        for path in sorted(self._library_dir.glob("*.psim-lib.json")):
+            try:
+                lib = load_library(path)
+                self._world = import_library(
+                    self._world, lib, on_conflict=ConflictPolicy.UPDATE
+                ).world
+            except (OSError, *_EXPECTED_ERRORS):
+                continue
+
+    def _save_library(self, library: Any, slug: str) -> None:
+        """Persist ``library`` under ``library_dir`` as ``<slug>.psim-lib.json``.
+
+        Failures are swallowed — a disk hiccup must not break an import that has
+        already merged into the live World."""
+
+        if self._library_dir is None:
+            return
+        try:
+            self._library_dir.mkdir(parents=True, exist_ok=True)
+            save_library(library, self._library_dir / f"{slug}.psim-lib.json")
+        except OSError:
+            pass
 
     def _persist(self) -> None:
         """Write the current World to the autosave path, if one is configured.
@@ -214,6 +270,9 @@ class Api:
             self._world = load_project(Path(path))
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)
+        # A loaded project may predate (or lack) the catalog; merge it so its
+        # machines are placeable without a re-import.
+        self._merge_persisted_libraries()
         self._persist()
         return _ok(self._world.to_dict())
 
@@ -373,6 +432,9 @@ class Api:
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)
         self._world = result.world
+        # Persist the catalog to the app's library folder so it is auto-loaded on
+        # every future launch / project load — no re-import needed.
+        self._save_library(imported.library, _slug(imported.library.name))
         self._persist()
         payload = self._import_payload(result)
         payload["stats"] = imported.stats

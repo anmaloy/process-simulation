@@ -36,17 +36,21 @@ class Status(StrEnum):
     **overall** status is instead a *run band* read off its duty cycle, so the
     canvas signals what actually needs attention (see ``aggregate``):
 
-    - ``OK`` (green)        — running 50–100% of the rate demand allows.
+    - ``OK`` (green)        — running 50–100% with its output fully consumed.
     - ``THROTTLED`` (yellow) — running, but below 50% (an upstream feed is slower;
       normal, not an error).
+    - ``OVERFLOW`` (blue)    — running ≥50% **with surplus**: it produces more than
+      is consumed downstream, and the excess is assumed routed to storage / voided.
+      This is a *good* state — the goal is to max every machine so nothing is
+      starved, which means surplus everywhere.
     - ``STALLED`` (red)      — not running at all (no feed, no power, or nothing
       downstream).
     - ``CAPPED`` (red)       — over capacity: its overclock is clamped by the
       machine's power-tier ceiling, so it can't reach the set rate.
 
-    ``SHORTFALL`` / ``OVERFLOW`` stay the per-item verdicts (and drive the
-    starved-edge dashed-pipe flag); a node is never *overall* ``OVERFLOW`` now,
-    since an unconsumed output is a product that leaves as yield.
+    ``SHORTFALL`` stays the per-item **input** verdict (and drives the starved-edge
+    dashed-pipe flag); ``OVERFLOW`` is the per-item **output** verdict (surplus)
+    and also the node's overall state when it runs with any surplus.
     """
 
     OK = "ok"

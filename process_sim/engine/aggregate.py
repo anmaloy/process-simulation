@@ -779,11 +779,13 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     # --- Per-node balances + bottlenecks ---------------------------------- #
     # A node's **overall** status is a run band off its duty (what actually needs
     # attention): CAPPED (over its power-tier ceiling) or STALLED (not running) →
-    # red; THROTTLED (< 50%) → yellow; OK (≥ 50%) → green. Per-item inputs keep the
-    # SHORTFALL verdict — but only for an input that genuinely can't meet the
-    # demand ceiling (``availability < demand``), so a *plentiful* carrier is never
-    # blamed when a different input is the real limit; those SHORTFALLs are the
-    # bottlenecks and the dashed-edge flags.
+    # red; THROTTLED (< 50%) → yellow; OVERFLOW (≥ 50% with surplus output assumed
+    # routed to storage/void) → blue (a *good* state — the goal is max throughput,
+    # so surplus everywhere); OK (≥ 50%, output fully consumed) → green. Per-item
+    # inputs keep the SHORTFALL verdict — but only for an input that genuinely
+    # can't meet the demand ceiling (``availability < demand``), so a *plentiful*
+    # carrier is never blamed when a different input is the real limit; those
+    # SHORTFALLs are the bottlenecks and the dashed-edge flags.
     balances: dict[str, NodeBalance] = {}
     bottlenecks: list[Bottleneck] = []
     for nid in ids:
@@ -805,18 +807,29 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
             if short > _EPS:
                 bottlenecks.append(Bottleneck(nid, item_id, short))
         out_bals: dict[str, OutputBalance] = {}
+        surplus = False
         for item_id, nominal in comp.outputs.items():
             made = nominal * d
             taken = demanded_internal[nid].get(item_id, 0.0)
-            out_bals[item_id] = OutputBalance(item_id, made, taken, 0.0, Status.OK)
+            over = max(0.0, made - taken)
+            # A material/fluid surplus is "routed to storage/voided" (a good,
+            # expected state); electricity is the grid (reported as netEnergy), so
+            # its surplus never flips a node blue.
+            is_energy = _category_of(index, item_id) is Category.ENERGY
+            ostatus = Status.OVERFLOW if (over > _EPS and not is_energy) else Status.OK
+            if ostatus is Status.OVERFLOW:
+                surplus = True
+            out_bals[item_id] = OutputBalance(item_id, made, taken, over, ostatus)
         if comp.overclock_capped:
             overall = Status.CAPPED  # over capacity: can't reach the set rate
         elif d <= _EPS:
             overall = Status.STALLED  # not running at all
         elif d < 0.5 - _EPS:
-            overall = Status.THROTTLED  # running below 50%
+            overall = Status.THROTTLED  # running below 50% (underfed)
+        elif surplus:
+            overall = Status.OVERFLOW  # running with surplus → storage/void (good)
         else:
-            overall = Status.OK  # running 50–100%
+            overall = Status.OK  # running 50–100%, output fully consumed
         balances[nid] = NodeBalance(nid, in_bals, out_bals, overall)
 
     bottlenecks.sort(key=lambda b: b.shortfall, reverse=True)

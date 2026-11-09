@@ -54,14 +54,15 @@ def test_furnace_chest_external_io(furnace_chest: World) -> None:
     assert _close(report.node_duty["furnace1"], 1.0)  # fully supplied
 
 
-def test_furnace_chest_product_is_yield_not_overflow(furnace_chest: World) -> None:
+def test_furnace_chest_product_is_surplus(furnace_chest: World) -> None:
     report = compute_world(furnace_chest)
     furnace = report.balances["furnace1"]
-    # Ingots go to a chest (a transparent buffer): they are a product that leaves
-    # the scope as yield, not an "overflow". The furnace runs fully supplied
-    # (ore manually inserted) with no bottleneck.
-    assert furnace.outputs["ingot"].status is Status.OK
-    assert furnace.status is Status.OK
+    # Ingots go to a chest (a transparent buffer): the furnace's output leaves the
+    # scope as yield (nothing consumes it internally), i.e. surplus → OVERFLOW
+    # (blue, the good "running with surplus" state). It runs fully supplied (ore
+    # manually inserted) with no input shortfall.
+    assert furnace.outputs["ingot"].status is Status.OVERFLOW
+    assert furnace.status is Status.OVERFLOW
     assert furnace.inputs["ore"].status is Status.OK
     assert report.bottlenecks == []
 
@@ -105,7 +106,8 @@ def test_manual_insertion_runs_on_assumed_feedstock() -> None:
     # hand and runs: coal + water become feedstock and steam the yield.
     report = compute_world(_lone_boiler(assume_inputs=True))
     assert _close(report.node_duty["b"], 1.0)
-    assert report.balances["b"].status is Status.OK
+    # Steam it makes leaves as yield (nothing consumes it) → surplus → OVERFLOW.
+    assert report.balances["b"].status is Status.OVERFLOW
     assert _close(report.external_inputs["coal"], 100 / 1000)  # eu-metered fuel
     assert _close(report.external_inputs["water"], 100 / 16)  # material ratio 16
     assert _close(report.external_outputs["steam"], 100)
@@ -647,32 +649,27 @@ def test_tag_resource_routes_through_a_pipe() -> None:
 
 
 def _banded_chain(src_qty: float) -> World:
-    """src makes `src_qty` a/s (assume-fed); mid wants 1 a/s → mid duty = src_qty."""
+    """src makes `src_qty` a/s (assume-fed); mid is a pure consumer wanting 1 a/s,
+    so mid duty = src_qty with no surplus of its own (isolating the duty bands)."""
 
     out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
     in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
     return World(
-        items=[Item("a", "A", Category.SOLID), Item("b", "B", Category.SOLID)],
+        items=[Item("a", "A", Category.SOLID)],
         recipes=[
             Recipe(id="mk", time_seconds=1.0, outputs=[Stack("a", src_qty)]),
-            Recipe(
-                id="use",
-                time_seconds=1.0,
-                inputs=[Stack("a", 1)],
-                outputs=[Stack("b", 1)],
-            ),
+            # A pure consumer (no output) → never a surplus of its own.
+            Recipe(id="use", time_seconds=1.0, inputs=[Stack("a", 1)]),
         ],
         machine_defs=[
             MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
-            MachineDef(id="M", slots=[in_s, out_s], allowed_recipe_ids=["use"]),
+            MachineDef(id="M", slots=[in_s], allowed_recipe_ids=["use"]),
         ],
         nodes=[
             MachineNode(
                 id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True
             ),
-            MachineNode(
-                id="mid", machine_def_id="M", recipe_id="use", assume_outputs=True
-            ),
+            MachineNode(id="mid", machine_def_id="M", recipe_id="use"),
         ],
         pipes=[
             Pipe(
@@ -940,3 +937,40 @@ def test_shared_output_splits_between_concrete_and_tag_consumers() -> None:
     assert _close(report.balances["cb"].inputs["c:dusts/x"].supplied, 5.0)
     assert _close(report.node_duty["ca"], 0.5)
     assert _close(report.node_duty["cb"], 0.5)
+
+
+def test_surplus_is_blue_overflow_and_throttle_takes_precedence() -> None:
+    # src (assume-fed) makes `q` a/s; sink consumes a and makes b with no consumer
+    # → b is surplus. At high supply the sink runs ≥50% with surplus → OVERFLOW
+    # (blue); starved below 50% the underfed THROTTLED (yellow) wins over surplus.
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+
+    def world(q: float) -> World:
+        return World(
+            items=[Item("a", "A", Category.SOLID), Item("b", "B", Category.SOLID)],
+            recipes=[
+                Recipe(id="mk", time_seconds=1.0, outputs=[Stack("a", q)]),
+                Recipe(id="use", time_seconds=1.0, inputs=[Stack("a", 1)], outputs=[Stack("b", 1)]),
+            ],
+            machine_defs=[
+                MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
+                MachineDef(id="M", slots=[in_s, out_s], allowed_recipe_ids=["use"]),
+            ],
+            nodes=[
+                MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
+                MachineNode(id="sink", machine_def_id="M", recipe_id="use", assume_outputs=True),
+            ],
+            pipes=[Pipe(id="p", category=Category.SOLID, movement_capacity=1000,
+                        a=PipeEnd("src", PipeEndRole.OUT), b=PipeEnd("sink", PipeEndRole.IN))],
+        )
+
+    good = compute_world(world(1.0))
+    assert _close(good.node_duty["sink"], 1.0)
+    assert good.balances["sink"].status is Status.OVERFLOW  # surplus b → blue
+    assert good.balances["sink"].outputs["b"].status is Status.OVERFLOW
+
+    starved = compute_world(world(0.3))
+    assert _close(starved.node_duty["sink"], 0.3)
+    # Underfed (<50%) outranks the incidental surplus → THROTTLED, not OVERFLOW.
+    assert starved.balances["sink"].status is Status.THROTTLED

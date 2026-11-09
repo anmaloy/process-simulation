@@ -24,7 +24,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from backend import build_api, default_autosave_path
+from backend import build_api, default_autosave_path, default_library_dir
 
 __all__ = ["WINDOW_TITLE", "ui_index", "main"]
 
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     index = ui_index()
     autosave = default_autosave_path()
     autosave.parent.mkdir(parents=True, exist_ok=True)
-    api = build_api(args.project, autosave)
+    api = build_api(args.project, autosave, default_library_dir())
 
     # Imported lazily so the module (and its tests) load without a GUI backend.
     import webview
