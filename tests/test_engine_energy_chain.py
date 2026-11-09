@@ -140,9 +140,12 @@ def test_underpowered_chain_starves_consumer() -> None:
     # Consumer wants 15 EU/t = 300 EU/s but the turbine maxes at 200 EU/s.
     report = compute_world(_world(consumer_eu_per_tick=15.0))
 
-    # Supplied 200 of 300 wanted → two-thirds duty, flagged as a power shortfall.
+    # Supplied 200 of 300 wanted → two-thirds duty. Running at 67% reads as OK
+    # (the run band is green ≥ 50%), but the electricity input is a genuine
+    # shortfall and surfaces as a bottleneck (the power limit, not an alarm color).
     assert _close(report.node_duty["c"], 200.0 / 300.0)
-    assert report.balances["c"].status is Status.SHORTFALL
+    assert report.balances["c"].status is Status.OK
+    assert report.balances["c"].inputs[EU].status is Status.SHORTFALL
     assert any(b.node_id == "c" and b.item_id == EU for b in report.bottlenecks)
     # The generators run flat out to supply what they can.
     assert _close(report.node_duty["t"], 1.0)

@@ -154,7 +154,8 @@ def test_tag_demand_with_no_matching_producer_starves() -> None:
     report = compute_world(_world(members=[_WROUGHT]))
 
     assert _close(report.node_duty["consumer"], 0.0)
-    assert report.balances["consumer"].status is Status.SHORTFALL
+    # Not running at all → STALLED (red); the unmet tag input is the shortfall.
+    assert report.balances["consumer"].status is Status.STALLED
     assert report.balances["consumer"].inputs[_TAG].status is Status.SHORTFALL
     assert any(
         b.node_id == "consumer" and b.item_id == _TAG for b in report.bottlenecks

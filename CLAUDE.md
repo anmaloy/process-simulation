@@ -266,6 +266,11 @@ tests/               # pytest for engine/model/io/api/app
   per category and direction, stack sizes, overclock bounds, and optional
   storage. `energySource` ∈ `electric` / `liquid` / `fuel` (absent = passive)
   says how the machine is powered; `sourceItemId` names the carrier it consumes.
+  A `fuel` converter may leave `sourceItemId` **unset** (an MI boiler — "the
+  player picks which fuel to burn"): the engine then meters its `fuelDrain` (EU/s)
+  against whatever eu-bearing **fuel item** is wired into it, consuming
+  `fuelDrain / item.eu` units per second; with no fuel wired it cannot run (it
+  stalls). One converter burns one fuel (the best-supplied wired candidate).
   A **consumer** sets `baseEnergyConsumption` (EU/s drawn to run its recipe). A
   **converter** sets `outputItemId` + `maxFluidRate` and optional
   `efficiency` (`w`, waste fraction) — it spends its source's energy to turn an
@@ -413,21 +418,31 @@ Aggregation over a system, traced process, or world models an **automatic
 system**: a machine runs only to the extent its inputs are actually delivered by
 connected pipes *and* its outputs are actually taken downstream — "if everything
 is not continuous, it won't run". Each node's **duty cycle** is the smaller of
-those two limits, solved by relaxation in `compute_scope` (reported as
-`nodeDuty`):
+those two limits, solved by **two relaxation passes** in `compute_scope`
+(reported as `nodeDuty`):
 
-- **Input-limited (starved):** an input isn't supplied → the node can't run → a
-  **shortfall** (red), reported as a bottleneck. A node flagged `assumeInputs`
-  (manual insertion) treats any unsupplied input as available, so it runs on
-  hand-fed feedstock. Placing *just* a converter (nothing wired) is a shortfall,
-  not an overflow of output it can't make.
-- **Demand-limited:** an output isn't fully consumed, so the node throttles and
-  draws proportionally less input — a water pump only runs as often as the boiler
-  draws water, so its material isn't drawn 100% of the time. An output nothing
-  consumes is a **product** and leaves as yield; an output with a downstream
-  consumer backpressures to that demand unless the node is flagged
-  `assumeOutputs` (manual extraction). Storage (buffer) nodes are transparent, so
-  an item only a buffer holds is still a product.
+- **Pass A — the demand ceiling** (`_relax_demand`): the duty each node would run
+  at with unlimited inputs, limited only by its output being taken. An output
+  nothing consumes is a **product** and leaves as yield (no backpressure); an
+  output with a downstream consumer backpressures to that consumer's *ceiling*
+  demand — a water pump only runs as often as the boiler would draw its water.
+  `assumeOutputs` (manual extraction) lifts the ceiling to full.
+- **Pass B — the input-limited duty** (`_relax_inputs`): starting from the
+  ceiling, each node throttles to the fraction of its inputs actually delivered.
+  Crucially, a consumer's *demand* on its suppliers stays pinned at the ceiling,
+  so a **starved consumer keeps pulling at full and never drags its supplier to
+  zero** — the failure mode (a whole shared-supply network collapsing to ~0% with
+  a spurious carrier bottleneck) that the earlier single-pass multiplicative
+  relaxation produced. `assumeInputs` (manual insertion) treats any unsupplied
+  input as available, so a node runs on hand-fed feedstock. Placing *just* a
+  converter (nothing wired) is a shortfall, not an overflow of output it can't
+  make.
+
+A node held below its ceiling is input-limited; the inputs that can't meet the
+ceiling are its **shortfalls** (and the ranked **bottlenecks**), so a *plentiful*
+carrier (e.g. ample steam) is never blamed when a different input (e.g. ore) is
+the real limit. Storage (buffer) nodes and pipe junctions are transparent
+passthroughs, so an item only a buffer holds is still a product.
 
 **Generation sources on a feedback cycle.** A **generation source** — an energy
 converter (boiler / turbine / generator making a carrier) or an input-less
@@ -444,8 +459,7 @@ water at its rated rate. A source in a plain *linear* chain is **not** on a cycl
 and still demand-throttles normally (burning no more fuel than its consumers
 draw).
 
-A node held below the duty that demand alone would allow (computed by a second,
-inputs-unconstrained relaxation) is the input-limited case. The scope reports:
+The scope reports:
 `netEnergy` (sum of duty-scaled energy terms); **external inputs** = the
 manually-inserted feedstock the running scope consumes; **external outputs** =
 the **actual yield** (products leaving the scope); and the largest input
@@ -548,10 +562,16 @@ to the selected/live element only.
 
 Domain-state palette (the guide doesn't cover these directly):
 
-- **Status colors** — decided: OK → green (`--s-ref`), shortfall → red
-  (`--s-bad`, a red added to the palette for this app), overflow → yellow
-  (`--s-learn`), stalled / unpowered → grey (`--s-not`). Cyan (`--spine`) stays
-  reserved for the selected/live element.
+- **Status colors** — decided. A node's **overall** colour is a *run band* read
+  off its duty cycle (what actually needs attention): **green** (`--s-ref`) =
+  running 50–100%; **yellow** (`--s-learn`) = running below 50% (throttled by a
+  slower upstream — normal, not an error); **red** (`--s-bad`) = **not running**
+  (stalled: no feed, no power, nothing downstream) **or over capacity** (capped:
+  its overclock is clamped by the power-tier ceiling, so it can't reach the set
+  rate). Per-**item** balances keep `shortfall` → red / `overflow` → yellow (the
+  single-item verdict that drives the dashed starved-edge flag); a node is never
+  *overall* overflow, since an unconsumed output is a product that leaves as
+  yield. Cyan (`--spine`) stays reserved for the selected/live element.
 - **Category colors** (solid / liquid / energy edges and ports) — default
   assignment (adjustable): solid → silver (`--s-teach`), liquid → blue
   (`--s-indep`), energy → gold (`--subedge`). A converter's output fluid is a

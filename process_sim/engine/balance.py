@@ -29,12 +29,32 @@ _EPS = 1e-9
 
 
 class Status(StrEnum):
-    """Domain state of a node or one of its item balances."""
+    """Domain state of a node or one of its item balances.
+
+    Two layers use this enum. **Per-item** input/output balances use ``OK`` /
+    ``SHORTFALL`` / ``OVERFLOW`` — a single item's demand-vs-supply. A node's
+    **overall** status is instead a *run band* read off its duty cycle, so the
+    canvas signals what actually needs attention (see ``aggregate``):
+
+    - ``OK`` (green)        — running 50–100% of the rate demand allows.
+    - ``THROTTLED`` (yellow) — running, but below 50% (an upstream feed is slower;
+      normal, not an error).
+    - ``STALLED`` (red)      — not running at all (no feed, no power, or nothing
+      downstream).
+    - ``CAPPED`` (red)       — over capacity: its overclock is clamped by the
+      machine's power-tier ceiling, so it can't reach the set rate.
+
+    ``SHORTFALL`` / ``OVERFLOW`` stay the per-item verdicts (and drive the
+    starved-edge dashed-pipe flag); a node is never *overall* ``OVERFLOW`` now,
+    since an unconsumed output is a product that leaves as yield.
+    """
 
     OK = "ok"
     SHORTFALL = "shortfall"
     OVERFLOW = "overflow"
     STALLED = "stalled"
+    THROTTLED = "throttled"
+    CAPPED = "capped"
 
 
 @dataclass
