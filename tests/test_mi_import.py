@@ -254,6 +254,9 @@ def test_machine_defs_group_with_electric_source_and_derived_slots(mi_root):
         "mi.machine.mixer.steel",
         "mi.machine.assembler",
         "mi.machine.chemical_reactor",
+        # Recipe-less special blocks are always added for a complete roster.
+        "mi.machine.nuclear_reactor",
+        "mi.machine.replicator",
     }
     asm = defs["mi.machine.assembler"]
     assert asm.energy_source.value == "electric"
@@ -485,6 +488,9 @@ def test_api_import_mi_dir_merges_and_reports_stats(mi_root):
         "mi.machine.mixer",
         "mi.machine.mixer.bronze",
         "mi.machine.mixer.steel",
+        # Recipe-less special blocks are always added for a complete roster.
+        "mi.machine.nuclear_reactor",
+        "mi.machine.replicator",
     }
     assert data["stats"]["energyMachines"] == len(
         [d for d in defs if d.startswith("mi.energy.")]
@@ -519,8 +525,9 @@ def test_sample_mi_project_loads_and_balances():
 
 def test_api_import_mi_dir_is_idempotent(mi_root):
     """Re-importing the same jar must not duplicate — MI ids are stable, so the
-    default policy is ``skip``, not ``rename``. (Guards the autosave-doubling bug:
-    the import persists across launches, so a second import should add nothing.)"""
+    default policy ``update`` refreshes entities in place (no renaming, no new
+    rows). (Guards the autosave-doubling bug: the import persists across launches,
+    so a second import adds nothing and simply re-applies the same data.)"""
 
     api = Api()
     opts = {"machineTypes": ["macerator", "mixer"]}
@@ -532,7 +539,28 @@ def test_api_import_mi_dir_is_idempotent(mi_root):
 
     assert after == counts  # nothing added the second time
     assert second["idRemap"] == {}  # nothing renamed
-    assert second["skippedIds"]  # everything recognised as already present
+    assert second["updatedIds"]  # existing entities refreshed in place
+    assert not second["skippedIds"]  # update refreshes rather than skipping
+
+
+def test_api_import_mi_dir_refreshes_corrected_reference_data(mi_root):
+    """A re-import updates a reference entity in place, so a correction reaches a
+    project already built on the old data (the fuel-eu fix is the motivating
+    case). Simulate a stale value, then confirm the re-import overwrites it."""
+
+    api = Api()
+    api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})
+    # Simulate a project that holds an out-of-date reference value.
+    world = api.get_world()["data"]
+    target = next(i for i in world["items"] if i.get("eu") is not None)
+    tid, good = target["id"], target["eu"]
+    target["eu"] = 1.0
+    api.set_world(world)
+    assert next(i for i in api.get_world()["data"]["items"] if i["id"] == tid)["eu"] == 1.0
+    # Re-importing refreshes it back to the jar's (corrected) value, in place.
+    res = api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})["data"]
+    assert tid in res["updatedIds"]
+    assert next(i for i in res["world"]["items"] if i["id"] == tid)["eu"] == good
 
 
 def test_api_import_mi_dir_bad_path_is_error_envelope(tmp_path):
@@ -581,8 +609,8 @@ def test_solid_fuel_eu_from_furnace_fuels(tmp_path):
         {"values": [f"{NS}:coal_dust"]},
     )
     lib = import_mi_library(tmp_path).library
-    assert _item(lib, f"{NS}:coke").eu == 6400  # concrete furnace-fuel key
-    assert _item(lib, f"{NS}:coal_dust").eu == 1600  # via the #c:dusts/coal tag
+    assert _item(lib, f"{NS}:coke").eu == 6400 * 20  # burn_time × 20 EU/tick
+    assert _item(lib, f"{NS}:coal_dust").eu == 1600 * 20  # via #c:dusts/coal tag
     assert _item(lib, f"{NS}:coke_block").eu is None  # not a listed fuel
 
 

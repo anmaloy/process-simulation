@@ -521,6 +521,16 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     match_sources: dict[str, list[str]] = {
         d: [s for s in supply_present if _satisfies(s, d)] for d in demand_keys
     }
+    # The inverse: per produced supply key, every demand key it can satisfy. Flow
+    # is resolved **per supply key** (below), so all consumers of one physical
+    # item — whether they name it directly or via a tag that includes it —
+    # contend for it together and split by the pipe rules, instead of an earlier
+    # key claiming it all. Only supply keys that satisfy some demand are kept.
+    match_keys: dict[str, list[str]] = {}
+    for d, srcs in match_sources.items():
+        for s in srcs:
+            match_keys.setdefault(s, []).append(d)
+    supply_keys = sorted(match_keys)
 
     # Items a *non-storage* node consumes — membership-aware: a produced supply
     # key counts as consumed if it satisfies any non-storage demand key (so a
@@ -584,77 +594,85 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         duty — so a starved consumer still *pulls* at full and never spuriously
         back-throttles its supplier.
 
-        Resolution is **per demand key** (a recipe input id — concrete or tag).
-        Each key draws from the produced supply keys that satisfy it
-        (:func:`_satisfies`); a source's output is *committed* as it is drained,
-        so one supply can't feed two demand keys twice. ``supplied`` is keyed by
-        the sink's demand key, ``drained`` by the source's concrete supply key.
+        Resolution is **per produced supply key** (a concrete item — or a tag a
+        recipe outputs directly). Every consumer that can take that item, whether
+        it names the item or a tag that includes it, contends for it together in
+        one :func:`_resolve_item` call, so a shared output splits across them by
+        the pipe insert/extract rules (equal priority → even) instead of the
+        first-listed demand key claiming it all. A sink's remaining demand for
+        each key is tracked across supply keys (``demand_rem``) so a key satisfied
+        by several items isn't over-filled. ``supplied`` is keyed by the sink's
+        demand key, ``drained`` by the source's supply key.
         """
 
         supplied: dict[str, dict[str, float]] = {nid: {} for nid in ids}
         drained: dict[str, dict[str, float]] = {nid: {} for nid in ids}
-        committed: dict[str, dict[str, float]] = {nid: {} for nid in ids}
-        pipes: dict[str, dict[str, object]] = {}
-        for demand_key in demand_keys:
-            category = _category_of(index, demand_key)
-            per_sink = {
-                nid: computations[nid].inputs.get(demand_key, 0.0) * demand_duty[nid]
-                for nid in ids
+        # Remaining unmet demand per sink per demand key (mutated as supply keys
+        # are resolved in turn), so a tag met partly by one item draws the rest
+        # from another without exceeding the recipe's demand.
+        demand_rem: dict[str, dict[str, float]] = {
+            nid: {
+                d: computations[nid].inputs[d] * demand_duty[nid]
+                for d in computations[nid].inputs
             }
-            if sum(per_sink.values()) <= _EPS:
-                continue
-            # Per source: its uncommitted supply across all keys that satisfy D,
-            # kept as [key, remaining] pairs so an edge's flow can be attributed
-            # back to concrete keys.
+            for nid in ids
+        }
+        pipes: dict[str, dict[str, object]] = {}
+        for supply_key in supply_keys:
+            category = _category_of(index, supply_key)
+            # Each producer's output of this one item (no cross-key commit needed —
+            # a supply key is resolved exactly once).
             per_source: dict[str, float] = {}
-            src_avail: dict[str, list[list[object]]] = {}
             for nid in ids:
-                lst: list[list[object]] = []
-                tot = 0.0
-                for s in match_sources.get(demand_key, ()):
-                    made = computations[nid].outputs.get(s, 0.0) * supply_duty[nid]
-                    avail = made - committed[nid].get(s, 0.0)
-                    if avail > _EPS:
-                        lst.append([s, avail])
-                        tot += avail
-                if tot > _EPS:
-                    per_source[nid] = tot
-                    src_avail[nid] = lst
+                made = computations[nid].outputs.get(supply_key, 0.0) * supply_duty[nid]
+                if made > _EPS:
+                    per_source[nid] = made
             if not per_source:
+                continue
+            keys_here = match_keys.get(supply_key, ())
+            # Each sink's total demand this item can serve (summed over the demand
+            # keys it satisfies, at their current remaining).
+            per_sink = {
+                nid: tot
+                for nid in ids
+                if (tot := sum(demand_rem[nid].get(d, 0.0) for d in keys_here)) > _EPS
+            }
+            if not per_sink:
                 continue
             for edge, flow in _resolve_item(
                 per_source, per_sink, item_edges_by_cat.get(category, [])
             ):
                 if flow <= _EPS:
                     continue
-                supplied[edge.sink][demand_key] = (
-                    supplied[edge.sink].get(demand_key, 0.0) + flow
+                drained[edge.source][supply_key] = (
+                    drained[edge.source].get(supply_key, 0.0) + flow
                 )
-                # Attribute the edge flow to the source's concrete supply keys
-                # (proportional to remaining availability) and commit each, so a
-                # later demand key can't re-spend the same supply.
-                lst = src_avail[edge.source]
-                pool = sum(float(a) for _, a in lst)
-                for pair in lst:
-                    s_key: str = pair[0]  # type: ignore[assignment]
-                    avail = float(pair[1])
-                    share = min(flow * (avail / pool) if pool > _EPS else 0.0, avail)
-                    pair[1] = avail - share
-                    committed[edge.source][s_key] = (
-                        committed[edge.source].get(s_key, 0.0) + share
-                    )
-                    drained[edge.source][s_key] = (
-                        drained[edge.source].get(s_key, 0.0) + share
-                    )
+                # Attribute the edge flow to the sink's satisfied demand keys
+                # (proportional to each key's remaining demand), reducing it.
+                sink = edge.sink
+                rem = [
+                    (d, r)
+                    for d in keys_here
+                    if (r := demand_rem[sink].get(d, 0.0)) > _EPS
+                ]
+                pool = sum(r for _, r in rem)
+                carried: set[str] = set()
+                for d, r in rem:
+                    share = min(flow * (r / pool) if pool > _EPS else 0.0, r)
+                    if share <= 0.0:
+                        continue
+                    demand_rem[sink][d] -= share
+                    supplied[sink][d] = supplied[sink].get(d, 0.0) + share
+                    carried.add(d)
                 # Report the flow on every segment the edge traverses (a direct
                 # pipe, or each pipe in a spliced storage/junction chain).
                 for pid in edge.pipe_ids:
                     acc = pipes.setdefault(
-                        pid, {"flow": 0.0, "sink": edge.sink, "items": set()}
+                        pid, {"flow": 0.0, "sink": sink, "items": set()}
                     )
                     acc["flow"] = float(acc["flow"]) + flow  # type: ignore[arg-type]
                     items_on_pipe: set[str] = acc["items"]  # type: ignore[assignment]
-                    items_on_pipe.add(demand_key)
+                    items_on_pipe.update(carried)
         return supplied, drained, pipes
 
     ones = {nid: 1.0 for nid in ids}

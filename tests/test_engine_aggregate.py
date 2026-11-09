@@ -892,3 +892,51 @@ def test_sourceless_fuel_converter_stalls_with_no_fuel_wired() -> None:
     assert _close(report.node_duty["boiler"], 0.0)
     assert report.balances["boiler"].status is Status.STALLED
     assert report.external_outputs.get("steam", 0.0) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Pipe-split fairness: one output split between a concrete consumer and a tag
+# consumer must divide by the pipe rules (equal → even), not go wholly to one.
+# --------------------------------------------------------------------------- #
+
+
+def test_shared_output_splits_between_concrete_and_tag_consumers() -> None:
+    out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
+    in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
+
+    def pipe(pid, a, b):
+        return Pipe(id=pid, category=Category.SOLID, movement_capacity=1000,
+                    a=PipeEnd(a, PipeEndRole.OUT), b=PipeEnd(b, PipeEndRole.IN))
+
+    world = World(
+        items=[
+            Item("dust", "Dust", Category.SOLID),
+            Item("c:dusts/x", "X Dusts", Category.SOLID, is_tag=True, members=["dust"]),
+            Item("ca", "CA", Category.SOLID),
+            Item("cb", "CB", Category.SOLID),
+        ],
+        recipes=[
+            Recipe(id="mk", time_seconds=1.0, outputs=[Stack("dust", 10)]),
+            # One consumer names the item directly, the other the tag that holds it.
+            Recipe(id="ua", time_seconds=1.0, inputs=[Stack("dust", 10)], outputs=[Stack("ca", 1)]),
+            Recipe(id="ub", time_seconds=1.0, inputs=[Stack(tag="c:dusts/x", quantity=10)], outputs=[Stack("cb", 1)]),
+        ],
+        machine_defs=[
+            MachineDef(id="S", slots=[out_s], allowed_recipe_ids=["mk"]),
+            MachineDef(id="CA", slots=[in_s, out_s], allowed_recipe_ids=["ua"]),
+            MachineDef(id="CB", slots=[in_s, out_s], allowed_recipe_ids=["ub"]),
+        ],
+        nodes=[
+            MachineNode(id="src", machine_def_id="S", recipe_id="mk", assume_inputs=True),
+            MachineNode(id="ca", machine_def_id="CA", recipe_id="ua", assume_outputs=True),
+            MachineNode(id="cb", machine_def_id="CB", recipe_id="ub", assume_outputs=True),
+        ],
+        pipes=[pipe("pa", "src", "ca"), pipe("pb", "src", "cb")],
+    )
+    report = compute_world(world)
+    # 10 dust/s split evenly: each consumer gets 5 of the 10 it wants → 50% duty.
+    # Neither is starved to 0 by the other claiming the whole output.
+    assert _close(report.balances["ca"].inputs["dust"].supplied, 5.0)
+    assert _close(report.balances["cb"].inputs["c:dusts/x"].supplied, 5.0)
+    assert _close(report.node_duty["ca"], 0.5)
+    assert _close(report.node_duty["cb"], 0.5)

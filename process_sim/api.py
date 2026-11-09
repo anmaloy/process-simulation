@@ -41,9 +41,9 @@ shapes are mirrored by the P5 TS client and recorded in ``CLAUDE.md``). Each
 - ``save_library(path, options)`` → ``{"path": str}``
 - ``load_library(path)`` → Library envelope
 - ``import_library(library, on_conflict="rename")``
-  → ``{"world", "idRemap", "skippedIds"}``
+  → ``{"world", "idRemap", "skippedIds", "updatedIds"}``
 - ``import_library_file(path, on_conflict="rename")``
-  → ``{"world", "idRemap", "skippedIds"}``
+  → ``{"world", "idRemap", "skippedIds", "updatedIds"}``
 
 ``edit`` ops: ``{"op": "upsert", "kind": <kind>, "entity": {...}}`` replaces the
 entity of that id in place (or appends it); ``{"op": "remove", "kind": <kind>,
@@ -361,13 +361,14 @@ class Api:
             result = import_library(
                 self._world,
                 imported.library,
-                # MI recipes are canonical reference data keyed by stable ids
+                # MI entities are canonical reference data keyed by stable ids
                 # (e.g. ``modern_industrialization:iron_dust``), so re-importing
-                # the same jar must be idempotent: ``skip`` leaves an id the World
-                # already holds untouched rather than cloning it under a fresh id.
-                # (The autosave already persists an import across launches, so a
-                # re-import should only ever *add* genuinely new recipes.)
-                on_conflict=ConflictPolicy(options.get("onConflict", "skip")),
+                # the same jar **refreshes** them in place (``update``): no
+                # duplication, and corrected values (a fixed fuel ``eu``, a
+                # changed machine def) reach a project already built on the old
+                # data without touching its nodes/pipes. New recipes are added as
+                # before. (The autosave persists the merged World across launches.)
+                on_conflict=ConflictPolicy(options.get("onConflict", "update")),
             )
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)
@@ -383,4 +384,5 @@ class Api:
             "world": result.world.to_dict(),
             "idRemap": dict(result.id_remap),
             "skippedIds": sorted(result.skipped_ids),
+            "updatedIds": sorted(result.updated_ids),
         }

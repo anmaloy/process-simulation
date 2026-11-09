@@ -96,9 +96,9 @@ model's camelCase wire format.
 | `export_library(options)` | `{name?, itemIds?, recipeIds?, machineDefIds?}` | Library envelope |
 | `save_library(path, options)` | path string, options dict | `{"path": str}` |
 | `load_library(path)` | path string | Library envelope |
-| `import_library(library, on_conflict="rename")` | Library envelope, policy | `{world, idRemap, skippedIds}` |
-| `import_library_file(path, on_conflict="rename")` | path string, policy | `{world, idRemap, skippedIds}` |
-| `import_mi_dir(path, options)` | path string, `{machineTypes?, name?, onConflict?}` | `{world, idRemap, skippedIds, stats}` |
+| `import_library(library, on_conflict="rename")` | Library envelope, policy | `{world, idRemap, skippedIds, updatedIds}` |
+| `import_library_file(path, on_conflict="rename")` | path string, policy | `{world, idRemap, skippedIds, updatedIds}` |
+| `import_mi_dir(path, options)` | path string, `{machineTypes?, name?, onConflict?}` | `{world, idRemap, skippedIds, updatedIds, stats}` |
 
 - **`edit`** is `{"op": "upsert", "kind": <kind>, "entity": {...}}` (replaces the
   entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
@@ -111,10 +111,13 @@ model's camelCase wire format.
   per-node balances, net energy, ranked bottlenecks, and `pipeFlows` — per-pipe
   resolved flow + a starved-edge `shortfall` flag, added for the P8 overlay).
 - **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
-  `error`. **`import_mi_dir` overrides this default to `skip`** — MI recipes are
-  canonical reference data keyed by stable ids, and an import already persists via
-  the autosave, so re-importing the same jar must be idempotent (add only
-  genuinely new recipes) rather than cloning every entity under a fresh id.
+  `update`, `error`. `update` overwrites the World's entity of a colliding id **in
+  place** (reported in `updatedIds`). **`import_mi_dir` overrides the default to
+  `update`** — MI entities are canonical reference data keyed by stable ids, so
+  re-importing the same jar must be idempotent (no duplication, nothing renamed)
+  **and refresh** the data in place, so a corrected value (a fixed fuel `eu`, a
+  changed machine def) reaches a project already built on the old data without
+  disturbing its nodes/pipes. New recipes are still added.
 - **`import_mi_dir`** reads an **extracted Modern Industrialization jar
   directory** (`io/mi_import.py`) and merges its machine recipes into the current
   World via `import_library`. By **default it discovers and imports every
@@ -127,19 +130,25 @@ model's camelCase wire format.
   `ingredient`/`result` shape, bare/namespaced ids, `tag` refs → `isTag` items,
   `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
   per-tick on the recipe), merges every mod's `lang` for display names, reads item
-  fuel `eu` from NeoForge's `furnace_fuels` burn-time and fluid `eu` from
-  `fluid_fuels`, and groups recipes by `type` into electric-consumer machine defs
+  fuel `eu` from NeoForge's `furnace_fuels` burn-time **× 20** (MI values a
+  furnace burn-tick at 20 EU, so coal's 1600 burn ticks = 32 000 EU) and fluid
+  `eu` from `fluid_fuels` (already per-mB, no ×20), and groups recipes by `type`
+  into electric-consumer machine defs
   with a data-derived slot layout and the `MACHINE_CATALOG`'s tier ceiling
   (`voltageTier` + `maxEuPerTick`; single-block electric machines are LV =
   32 EU/t, from the jar's `CableTier` / `MachineTier`; multiblocks import
-  unclamped). A recipe type run by distinct **named blocks** (`MACHINE_VARIANTS`
-  — the steam/electric **quarry**, steam/electric **blast furnace**, and
-  bronze/steel/electric **furnace**, which the recipe data can't tell apart)
-  yields those variant defs (each on its own carrier and tier) instead of one
-  generic def. The furnaces run vanilla `minecraft:smelting` recipes — the one
-  vanilla type mapped to a machine (`_VANILLA_MACHINE_TYPES`, type `furnace`); a
-  smelting recipe carries no `eu`, so the furnace def supplies a base draw and
-  `cookingtime` is its duration. For the machines that also have
+  unclamped). The generic electric def is named off the jar's `electric_<type>`
+  block where one exists (so the macerator's electric def reads *Electric
+  Macerator*, not a bare *Macerator*). A recipe type run by distinct **named
+  blocks** (`MACHINE_VARIANTS` — the steam/electric **quarry**, steam/electric
+  **blast furnace**, bronze/steel/electric **furnace**, and the steam-age
+  **Coke Oven** (a multiblock with no electric variant, so it runs on steam, not
+  the electricity the generic def would wrongly draw), which the recipe data
+  can't tell apart) yields those variant defs (each on its own carrier and tier)
+  instead of one generic def. The furnaces run vanilla `minecraft:smelting`
+  recipes — the one vanilla type mapped to a machine (`_VANILLA_MACHINE_TYPES`,
+  type `furnace`); a smelting recipe carries no `eu`, so the furnace def supplies
+  a base draw and `cookingtime` is its duration. For the machines that also have
   **steam tiers** (`STEAM_MACHINE_TIERS` — bronze/steel for macerator, mixer,
   compressor, cutting machine; steel-only for packer, unpacker, wiremill) it adds
   a bronze/steel def beside the electric one, running the same recipes but powered
@@ -154,12 +163,16 @@ model's camelCase wire format.
   energy machines **and** pumps (they share the carriers). It always adds the
   **storage** defs (`STORAGE_MACHINES` — material tanks/barrels, the single-block
   Configurable Tank/Chest, and the Large Tank multiblock, with the jar's
-  capacities as editable buffer annotations). It resolves tag membership (each
+  capacities as editable buffer annotations), and the **recipe-less special
+  machines** (`SPECIAL_MACHINES` — Nuclear Reactor, Replicator: MI blocks whose
+  mechanics aren't recipe-driven, so they import as inert placeable defs for a
+  complete roster). It resolves tag membership (each
   tag item's `members`, registering missing member items), filling the vanilla
   `c:` material tags (`c:ores/iron` & co.) the jar references but NeoForge — not
   the mod — defines, from the vanilla naming convention. `stats` reports the
   counts (files scanned, recipes imported/skipped, items, tags, member items
-  added, defs, `steamMachines`, `energyMachines`, `pumps`, `storage`, per-type).
+  added, defs, `steamMachines`, `energyMachines`, `pumps`, `storage`, `special`,
+  per-type).
 
 A changed shape here is a deliberate, documented contract bump — the UI's
 `callApi` wrappers in `ui/index.html` mirror this table.
