@@ -135,10 +135,11 @@ def _world(
 def test_concrete_producer_feeds_tag_consumer() -> None:
     report = compute_world(_world(members=[_INGOT]))
 
-    # The consumer runs fully — its tag demand is met by the concrete ingot. Its
-    # gear output has no downstream consumer → surplus → OVERFLOW (blue).
+    # The consumer runs fully — its tag demand is met by the concrete ingot → OK.
+    # Its gear output has no downstream consumer → surplus, shown on the output.
     assert _close(report.node_duty["consumer"], 1.0)
-    assert report.balances["consumer"].status is Status.OVERFLOW
+    assert report.balances["consumer"].status is Status.OK
+    assert report.balances["consumer"].outputs["mi:iron_gear"].status is Status.OVERFLOW
     assert report.balances["consumer"].inputs[_TAG].status is Status.OK
     assert _close(report.balances["consumer"].inputs[_TAG].supplied, 1.0)
     assert report.bottlenecks == []
