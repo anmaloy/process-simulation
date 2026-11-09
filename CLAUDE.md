@@ -451,31 +451,66 @@ producer has **no bearing** on the rest. (This replaces the earlier two-pass
 demand-ceiling model, whose shared downstream demand coupled otherwise-independent
 producers — adding a quarry dropped the duty of every other quarry on the line.)
 
-Each node's **duty cycle** (reported as `nodeDuty`) is solved by one relaxation
-in `compute_scope` (`_relax_inputs`): start every runnable node at ceiling 1 and
+Each node's **duty cycle** (reported as `nodeDuty`) is solved by a relaxation in
+`compute_scope` (`_relax_inputs`): start every runnable node at ceiling 1 and
 iterate `duty_i = min(1, availability_i)`, where availability is the fraction of
-its inputs actually delivered. A consumer's *demand* on its suppliers stays
-pinned at the ceiling, so a **starved consumer keeps pulling at full and never
-drags its supplier down**, and a **feedback cycle** (a boiler whose steam powers
-the pump that feeds it water) holds at full because each side supplies the other
-fully — no special cycle detection is needed. `assumeInputs` (manual insertion)
-treats any unsupplied input as available, so an edge machine runs on hand-fed
-feedstock. Placing *just* a converter (nothing wired) is a shortfall, not an
-overflow of output it can't make.
+its inputs actually delivered. The delicate part is measuring that availability
+without coupling unrelated supply chains, and it is solved by a **per-node
+probe**: to find how much of each input node *i* can obtain, route once with *i*
+bidding its full rate for every input while every other node bids at its current
+duty. Because only *i* bids full, a plentiful shared carrier is never
+over-subscribed by nodes throttled on something else (so it is never mistaken for
+scarce — this is why an ore-limited macerator no longer fakes a steam shortage on
+the trunk); because *i* bids full and not its own shrinking duty, it always
+re-probes its true max-min share and climbs when a sibling frees capacity (no
+ratchet collapse), and two equally scarce inputs are each measured at full so
+neither is masked. A **feedback cycle** (a boiler whose steam powers the pump that
+feeds it water) holds at full because each side supplies the other fully — no
+special cycle detection is needed. `assumeInputs` (manual insertion) treats any
+unsupplied input as available, so an edge machine runs on hand-fed feedstock.
+Placing *just* a converter (nothing wired) is a shortfall, not an overflow of
+output it can't make.
 
-A node held below 1 is input-limited; the inputs that can't be fully met are its
-**shortfalls** (and the ranked **bottlenecks**), so a *plentiful* carrier (e.g.
-ample steam) is never blamed when a different input (e.g. ore) is the real limit.
-Storage (buffer) nodes and pipe junctions are transparent passthroughs, so an
+The flow resolution behind the probe (`_resolve_item`) resolves each carrier over
+**residual rounds**, not one pass: a single application of the even
+insert/extract split strands feasible capacity when several sources feed many
+sinks (three boilers on one steam trunk used to deliver a machine only half of
+what the trunk could supply, faking a shortfall), so it re-runs on the residual
+supply/demand until no more can be delivered — a sink reads as starved only when
+the network genuinely cannot feed it.
+
+A node held below 1 is input-limited; the inputs it **cannot obtain in full** at
+its solved operating point are its **shortfalls** (and the ranked
+**bottlenecks**), read straight off the probe. So a *plentiful, reachable* carrier
+(ample steam) is never blamed when a different input (ore) is the real limit —
+**and** an input that is globally plentiful but simply not routed to this node
+(e.g. water wired only to the boilers, never piped to a mixer that needs it) *is*
+correctly flagged, because the probe measures what actually reaches the node, not
+just global scarcity. Storage (buffer) nodes and pipe junctions are transparent
+passthroughs, so an
 item only a buffer holds is still a product.
 
+**Each scope is a standalone slice**, not a filtered view of the world. An input
+is **feedstock** (assumed hand-fed, never a throttle, reported under external
+inputs) when it has no producer *inside the scope* but **is produced elsewhere in
+the world** — the scope boundary has merely cut its supply chain. This is what
+makes a `node` or `system` view a genuine slice: the ore a single macerator eats
+is feedstock in that macerator's own node view (a quarry makes it elsewhere), so
+the node runs at full and reports its own consumption and full yield — output
+"used later" by a machine *outside* the scope has left the scope and is yield
+here, exactly as a pure product is. An input that **nothing in the whole world
+produces** is not feedstock: it stays an unmet demand and the node stalls (unless
+`assumeInputs`), so the world scope is unchanged — there, no producer in scope
+means no producer anywhere.
+
 The scope reports:
-`netEnergy` (sum of duty-scaled energy terms); **external inputs** = the
-manually-inserted feedstock the running scope consumes; **external outputs** =
-the **yield** (everything produced beyond internal demand — a pure product leaves
-whole, an over-supplied intermediate leaves its surplus); and the largest input
-shortfalls as **bottlenecks**. A **storage** node is a transparent passthrough
-(its buffer only absorbs transients), spliced out of the flow graph.
+`netEnergy` (sum of duty-scaled energy terms); **external inputs** = the feedstock
+the running scope consumes across its boundary; **external outputs** = the
+**yield** (everything produced that is not consumed inside this scope — a pure
+product leaves whole, an over-supplied intermediate leaves its surplus, and an
+intermediate consumed only by a node outside the scope leaves whole); and the
+largest input shortfalls as **bottlenecks**. A **storage** node is a transparent
+passthrough (its buffer only absorbs transients), spliced out of the flow graph.
 
 ## Pipe priority — read this before touching flow resolution
 
@@ -575,21 +610,23 @@ to the selected/live element only.
 
 Domain-state palette (the guide doesn't cover these directly):
 
-- **Status colors** — decided. A node's **overall** colour is a *run band* read
-  off its duty cycle (what actually needs attention): **green** (`--s-ref`) =
-  running 50–100% with its output fully consumed; **blue** (`--s-indep`) =
-  running ≥50% **with surplus** (`overflow` — it makes more than is consumed, the
-  excess assumed routed to storage/voided; a *good* state, since the goal is to
-  max every machine so nothing starves, which means surplus everywhere); **yellow**
-  (`--s-learn`) = running below 50% (throttled/underfed — normal, not an error);
-  **red** (`--s-bad`) = **not running** (stalled: no feed, no power). Precedence:
-  stalled → yellow (<50%) → blue (surplus) → green. (A machine whose overclock
-  exceeds its power-tier ceiling simply runs at that ceiling — the clamp is silent
-  physics, not a status, so there is **no** red "over capacity" band.) Per-**item**
-  balances keep `shortfall` → red on an input (the single-item verdict that drives
-  the dashed starved-edge flag) and `overflow` → blue on an output. An
-  energy-carrier (electricity) surplus is reported as `netEnergy`, not a blue
-  node. Cyan (`--spine`) stays reserved for the selected/live element.
+- **Status colors** — decided. A node's **overall** colour is a *run band* that is
+  a **plain function of its duty cycle** — the one thing that needs attention, and
+  nothing else: **green** (`--s-ref`) = running at full rate (`ok`); **yellow**
+  (`--s-learn`) = `throttled` (running, but held below full by an input that can't
+  keep up — normal, not an error); **red** (`--s-bad`) = `stalled` (not running at
+  all: no feed, no power). There is **no** separate "surplus/overflow" run band:
+  surplus output is normal and expected in the input-driven model (the goal is to
+  max every machine, which means surplus almost everywhere), so it is reported as
+  **yield**, never as a node colour — labelling a healthy machine "overflow" was
+  noise. (A machine whose overclock exceeds its power-tier ceiling simply runs at
+  that ceiling — the clamp is silent physics, not a status.) Per-**item** balances
+  still carry the finer verdicts: an input is `shortfall` → red only when it is the
+  genuine limiter the node can't obtain in full (this drives the dashed
+  starved-edge flag); an output with surplus is `overflow` → blue. Those are shown
+  in detail, not as the node's band. An energy-carrier (electricity) surplus is
+  reported as `netEnergy`. Cyan (`--spine`) stays reserved for the selected/live
+  element.
 - **Category colors** (solid / liquid / energy edges and ports) — default
   assignment (adjustable): solid → silver (`--s-teach`), liquid → blue
   (`--s-indep`), energy → gold (`--subedge`). A converter's output fluid is a

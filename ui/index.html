@@ -338,11 +338,13 @@ function reindex(){
    ============================================================================ */
 const CATEGORY_COLOR = { solid:"var(--s-teach)", liquid:"var(--s-indep)", energy:"var(--subedge)" };
 const catColor = c => CATEGORY_COLOR[c] || "var(--ink-faint)";
-// Node run-band colors (what the canvas shows): green = running 50–100% fully
-// consumed, blue = running ≥50% with surplus (overflow, routed to storage/void —
-// a good state), yellow = running below 50% (throttled, underfed), red = not
-// running (stalled). shortfall stays the per-item input verdict (red; drives the
-// dashed starved edge).
+// Node run-band colors (what the canvas shows), a plain function of duty: green =
+// running at full rate, yellow = THROTTLED (running but held below full by an
+// input that can't keep up), red = STALLED (not running at all). Surplus output
+// is normal in the input-driven model and is reported as yield, not a node color.
+// shortfall/overflow remain per-item verdicts (an input that is the genuine
+// limiter is shortfall → red, and drives the dashed starved edge; a surplus
+// output is overflow → blue), shown in detail, not as the node's band.
 const STATUS_COLOR = { ok:"var(--s-ref)", overflow:"var(--s-indep)", throttled:"var(--s-learn)", stalled:"var(--s-bad)", shortfall:"var(--s-bad)" };
 const STATUS_FILL  = { ok:"var(--f-ref)", overflow:"var(--f-indep)", throttled:"var(--f-learn)", stalled:"var(--f-bad)", shortfall:"var(--f-bad)" };
 const statusColor = s => STATUS_COLOR[s||"stalled"];
@@ -895,9 +897,24 @@ function legendEl(){
     ["solid","liquid","energy"].map(c=>el("span",{class:"key"},el("span",{class:"legend-dot",style:{background:catColor(c)}}),c))));
   L.append(el("div",{class:"eyebrow quiet",style:{marginTop:"4px"}},"Status"));
   L.append(el("div",{class:"row"},
-    [["ok","50–100%"],["overflow","surplus"],["throttled","<50%"],["stalled","stopped"]].map(([s,lbl])=>
+    [["ok","running full"],["throttled","throttled"],["stalled","stopped"]].map(([s,lbl])=>
       el("span",{class:"key",title:s},el("span",{class:"legend-dot",style:{background:STATUS_COLOR[s]}}),lbl))));
+  L.append(el("div",{class:"eyebrow quiet",style:{marginTop:"4px"}},"Pipes"));
+  L.append(el("div",{class:"row"},
+    el("span",{class:"key",title:"flow delivered; thicker = more"}, pipeSample(false), "flowing"),
+    el("span",{class:"key",title:"downstream machine is short of an item this pipe carries"}, pipeSample(true), "starved")));
   return L;
+}
+// A short line sample for the legend: solid = flowing, dashed = starved edge.
+function pipeSample(dashed){
+  const S="http://www.w3.org/2000/svg";
+  const svg=document.createElementNS(S,"svg");
+  svg.setAttribute("width","20"); svg.setAttribute("height","8"); svg.style.verticalAlign="middle";
+  const ln=document.createElementNS(S,"line");
+  ln.setAttribute("x1","1"); ln.setAttribute("y1","4"); ln.setAttribute("x2","19"); ln.setAttribute("y2","4");
+  ln.setAttribute("stroke","var(--ink-dim)"); ln.setAttribute("stroke-width","2");
+  if(dashed) ln.setAttribute("stroke-dasharray","4 3");
+  svg.append(ln); return svg;
 }
 function controlsEl(){
   return el("div",{class:"controls"},

@@ -58,11 +58,12 @@ def test_furnace_chest_product_is_surplus(furnace_chest: World) -> None:
     report = compute_world(furnace_chest)
     furnace = report.balances["furnace1"]
     # Ingots go to a chest (a transparent buffer): the furnace's output leaves the
-    # scope as yield (nothing consumes it internally), i.e. surplus → OVERFLOW
-    # (blue, the good "running with surplus" state). It runs fully supplied (ore
-    # manually inserted) with no input shortfall.
+    # scope as yield (nothing consumes it internally) — surplus, which shows on the
+    # output balance. The furnace itself runs fully supplied (ore manually
+    # inserted) with no input shortfall, so its node status is OK (surplus is not a
+    # node colour of its own).
     assert furnace.outputs["ingot"].status is Status.OVERFLOW
-    assert furnace.status is Status.OVERFLOW
+    assert furnace.status is Status.OK
     assert furnace.inputs["ore"].status is Status.OK
     assert report.bottlenecks == []
 
@@ -106,8 +107,10 @@ def test_manual_insertion_runs_on_assumed_feedstock() -> None:
     # hand and runs: coal + water become feedstock and steam the yield.
     report = compute_world(_lone_boiler(assume_inputs=True))
     assert _close(report.node_duty["b"], 1.0)
-    # Steam it makes leaves as yield (nothing consumes it) → surplus → OVERFLOW.
-    assert report.balances["b"].status is Status.OVERFLOW
+    # Runs at full on hand-fed feedstock → OK; the steam it makes leaves as yield
+    # (surplus), which shows on the output balance, not as the node's status.
+    assert report.balances["b"].status is Status.OK
+    assert report.balances["b"].outputs["steam"].status is Status.OVERFLOW
     assert _close(report.external_inputs["coal"], 100 / 1000)  # eu-metered fuel
     assert _close(report.external_inputs["water"], 100 / 16)  # material ratio 16
     assert _close(report.external_outputs["steam"], 100)
@@ -711,9 +714,13 @@ def _banded_chain(src_qty: float) -> World:
 
 
 def test_status_bands_follow_duty() -> None:
-    # ≥50% reads OK (green), below 50% THROTTLED (yellow).
-    assert compute_world(_banded_chain(0.7)).balances["mid"].status is Status.OK
-    assert compute_world(_banded_chain(0.5)).balances["mid"].status is Status.OK
+    # Running at full reads OK (green); anything below full is THROTTLED (yellow —
+    # an input can't keep up); not running at all is STALLED (red). The band is a
+    # plain function of duty: surplus output is no longer a node colour of its own
+    # (it is reported as yield), so there is no "overflow" run band.
+    assert compute_world(_banded_chain(1.0)).balances["mid"].status is Status.OK
+    assert compute_world(_banded_chain(0.7)).balances["mid"].status is Status.THROTTLED
+    assert compute_world(_banded_chain(0.5)).balances["mid"].status is Status.THROTTLED
     assert compute_world(_banded_chain(0.3)).balances["mid"].status is Status.THROTTLED
     # Not running at all → STALLED (red).
     assert compute_world(_banded_chain(0.0)).balances["mid"].status is Status.STALLED
@@ -750,7 +757,10 @@ def test_overclock_clamped_to_tier_ceiling_runs_silently() -> None:
     # Clamped to half rate: makes 0.5 w/s, not 1.0.
     assert _close(report.computations["n"].outputs["w"], 0.5)
     assert _close(report.node_duty["n"], 1.0)
-    assert report.balances["n"].status is Status.OVERFLOW
+    # It runs at full (its clamped rate) with no input shortfall → OK (the clamp
+    # is silent physics, and surplus output is no longer a node status).
+    assert report.balances["n"].status is Status.OK
+    assert report.balances["n"].outputs["w"].status is Status.OVERFLOW
 
 
 # --------------------------------------------------------------------------- #
@@ -990,10 +1000,11 @@ def test_shared_output_splits_between_concrete_and_tag_consumers() -> None:
     assert _close(report.node_duty["cb"], 0.5)
 
 
-def test_surplus_is_blue_overflow_and_throttle_takes_precedence() -> None:
+def test_surplus_output_is_not_a_node_status_band() -> None:
     # src (assume-fed) makes `q` a/s; sink consumes a and makes b with no consumer
-    # → b is surplus. At high supply the sink runs ≥50% with surplus → OVERFLOW
-    # (blue); starved below 50% the underfed THROTTLED (yellow) wins over surplus.
+    # → b is surplus. Surplus is normal in an input-driven model: it colours the
+    # node OK when it runs at full and THROTTLED when an input holds it below full,
+    # never a distinct "overflow" band. The surplus still shows on the *output*.
     out_s = SlotGroup(Category.SOLID, Direction.OUT, 1, 64)
     in_s = SlotGroup(Category.SOLID, Direction.IN, 1, 64)
 
@@ -1034,12 +1045,14 @@ def test_surplus_is_blue_overflow_and_throttle_takes_precedence() -> None:
 
     good = compute_world(world(1.0))
     assert _close(good.node_duty["sink"], 1.0)
-    assert good.balances["sink"].status is Status.OVERFLOW  # surplus b → blue
+    # Running at full → OK, even though its output b is surplus (which shows on
+    # the output balance, not as the node's colour).
+    assert good.balances["sink"].status is Status.OK
     assert good.balances["sink"].outputs["b"].status is Status.OVERFLOW
 
     starved = compute_world(world(0.3))
     assert _close(starved.node_duty["sink"], 0.3)
-    # Underfed (<50%) outranks the incidental surplus → THROTTLED, not OVERFLOW.
+    # Held below full by its input → THROTTLED.
     assert starved.balances["sink"].status is Status.THROTTLED
 
 
