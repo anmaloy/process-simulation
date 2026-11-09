@@ -170,14 +170,15 @@ def test_concrete_satisfies_one_of_several_tag_members() -> None:
     assert report.bottlenecks == []
 
 
-def test_tag_consumer_backpressures_producer() -> None:
-    # Producer can make 2/s (overclock 2) but the tag consumer only draws 1/s:
-    # the producer throttles to half duty and its ingot is not counted as yield.
+def test_tag_producer_surplus_is_yield() -> None:
+    # Producer makes 2/s (overclock 2) but the tag consumer only draws 1/s. In the
+    # input-driven model the producer is never throttled by downstream demand: it
+    # runs flat out and the unconsumed 1/s of ingot leaves as surplus yield.
     report = compute_world(_world(members=[_INGOT], producer_overclock=2.0))
 
     assert _close(report.node_duty["consumer"], 1.0)
-    assert _close(report.node_duty["producer"], 0.5)
-    assert _INGOT not in report.external_outputs
+    assert _close(report.node_duty["producer"], 1.0)
+    assert _close(report.external_outputs[_INGOT], 1.0)
 
 
 def test_plain_concrete_chain_unchanged() -> None:
