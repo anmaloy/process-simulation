@@ -1,98 +1,109 @@
 # Process Simulation — Production Chain Planner
 
 A desktop app for designing and balancing production systems as node graphs.
-Users define items, machines, recipes, and pipes, wire them into chains, and the
-app reports supply vs. demand — shortfall, overflow, energy balance — for a
-single machine, a connected process, a grouped system, or the whole world.
+Define items, machines, recipes, and pipes; wire them into chains; the app reports
+supply vs. demand — shortfall, overflow, energy balance — for a single machine, a
+connected process, a grouped system, or the whole world.
 
-This file is the working reference for the project. The full functional spec was
-provided separately and is not committed to the repo, so the parts that matter
-for day-to-day work (the model, the formulas, the priority rules) are summarized
-below. When the spec and this file disagree, treat the spec as authoritative and
-update this file.
+This file is the working reference. A fuller functional spec was provided
+separately and is not committed; the parts that matter day-to-day (model,
+formulas, priority rules) are below. **If the spec and this file ever disagree,
+the spec wins — update this file to match.**
 
 ## Stack
 
-Mirrors edunode's architecture (a simple, buildless client-side app over a thin
-Python backend — see `anmaloy/edunode_app`):
+A buildless client-side UI over a thin Python backend.
 
-- **Backend:** Python 3.11+. The rate-balance engine, data model, and file IO are
-  pure Python with no UI dependency, under `process_sim/`.
+- **Backend:** Python 3.11+. Rate-balance engine, data model, and file IO are
+  pure Python, no UI dependency, under `process_sim/`.
 - **UI:** one hand-written `ui/index.html` — vanilla JS, a hand-rolled SVG/HTML
-  canvas (pan/zoom/drag), inspectors, and the balance overlay. **No build step,
-  no npm, no framework, no `node_modules`.** Edit the file and refresh.
-- **Backend surface:** `backend.Api` (re-exported from `process_sim.api`) holds
-  the working World and marshals JSON <-> model. The same instance is bound two
-  ways, and the UI's `callApi` auto-detects which transport is live and unwraps
-  the `{ok,data}` result envelope:
-  - `app.py` — the **pywebview desktop app**; the UI calls
+  canvas (pan/zoom/drag), inspectors, balance overlay. **No build step, no npm,
+  no framework, no `node_modules`.** Edit the file and refresh.
+- **Bridge:** `backend.Api` (re-exported from `process_sim.api`) holds the working
+  World and marshals JSON ↔ model. One instance is bound two ways; the UI's
+  `callApi` auto-detects the live transport and unwraps the `{ok,data}` envelope:
+  - `app.py` — the **pywebview desktop app**; UI calls
     `window.pywebview.api.<method>(...)`.
   - `server.py` — a **stdlib HTTP server** (`POST /api/<method>`, body
-    `{"args": [...]}`) for any browser on the network. Run exactly one process.
-- **Persistence:** the working World auto-saves to
-  `~/.process_sim/autosave.psim.json` after every change (`PROCESS_SIM_HOME`
-  overrides the dir), so the app resumes on relaunch. Project files are JSON (the
-  whole World). `export_standalone.py` bakes the World into a single view-only
-  HTML (no backend). An **imported catalog** (the MI library) is also saved to
-  `~/.process_sim/libraries/*.psim-lib.json` and merged into the World at startup
-  and on project load (`ConflictPolicy.UPDATE`), so the machine catalog is always
-  available — in a fresh World or a catalog-less project — **without re-importing**.
-- **Tests:** pytest for the engine, model, IO, api, and app/server surface. The
-  UI is validated by driving `server.py` (the real engine) in a headless browser.
+    `{"args":[...]}`) for any browser on the LAN. Run exactly one process.
+- **Persistence:** the working World autosaves to
+  `~/.process_sim/autosave.psim.json` (`PROCESS_SIM_HOME` overrides the dir).
+  Autosave is **on a timer / explicit save, not per-edit** (see Performance).
+  Project files are JSON (the whole World). An **imported catalog** is also saved
+  to `~/.process_sim/libraries/*.psim-lib.json` and merged into the World at
+  startup and on project load (`ConflictPolicy.UPDATE`), so the machine catalog is
+  always available without re-importing. `export_standalone.py` bakes the World
+  into a single view-only HTML.
+- **Tests:** pytest for engine, model, IO, api, and app/server. The UI is
+  validated by driving `server.py` (the real engine) in a headless browser.
 
-The styling target is edunode's CSS (`STYLE_GUIDE.md` `:root` tokens, pasted
-verbatim); fonts ship as local `woff2` under `ui/fonts/` (offline-first).
+Styling target: `STYLE_GUIDE.md` (`:root` tokens, pasted verbatim). Fonts ship as
+local `woff2` under `ui/fonts/` (offline-first). The architecture mirrors a simple
+buildless client-side app over a thin Python backend.
 
 ## Project state
 
 The headless core (`process_sim/`: `engine/` rate-balance, `model/` dataclasses,
-`io/` project/library/MI-import, `api.py` the JSON bridge) is complete and fully
-pytest-covered — it computes every scope's balance, round-trips projects, and
-imports Modern Industrialization recipe data. This core was carried over intact;
-only its *surface* changed.
+`io/` project/library/MI-import, `api.py` the JSON bridge) is complete and
+pytest-covered. The UI is the single buildless `ui/index.html`: node-graph canvas
+(place/move/delete machines, wire/delete pipes, pipe junctions, pan/zoom/fit),
+per-kind inspectors with sparse-field discipline (item / recipe / machineDef /
+node / pipe / pipeNode / system), the input/output recipe finder, the balance
+overlay (status bar + chip + duty %, flow-weighted/dashed edges, floating readout
+with a world/process/node/system scope switcher and ranked bottlenecks), the
+collapsible/searchable library rail, systems (shift-select → Group,
+collapse/expand), undo (Ctrl+Z), recipe import, project save/load, and the
+**Run** / **Save** controls.
 
-The UI was **rewritten from a React/Vite/TypeScript + React Flow app into the
-single buildless `ui/index.html`** to match edunode and remove the
-build-toolchain pain and a React Flow viewport bug. It has full feature parity:
-the node-graph canvas (place/move/delete machines, wire/delete pipes,
-place pipe junctions to route a trunk to many consumers, pan/zoom/fit), per-kind
-inspectors with sparse-field discipline (item / recipe /
-machineDef / node / pipe / pipeNode / system), the input/output-driven recipe finder, the
-balance overlay (status bar + chip + duty %, flow-weighted/dashed edges, floating
-readout with a world/process/node/system scope switcher and ranked bottlenecks),
-the collapsible/searchable library rail, systems (shift-select -> Group,
-collapse/expand), undo (Ctrl+Z), MI import, and project save/load. Every
-structural gesture and field edit goes through `apply_edit` and is followed by a
-`recompute`; the returned World reseeds the canvas.
+Energy is the carrier-tiers model (routed fuel → steam → electricity, per-recipe
+hybrid energy, MI power tiers clamping overclock, per-node duty cycles, transparent
+storage buffers, membership-aware tag flow). The "Domain model", "Carrier tiers",
+"Computation", and "Resolved decisions" sections below are authoritative.
 
-Energy is the carrier-tiers model (routed fuel -> steam -> electricity, per-recipe
-hybrid energy, MI power tiers clamping overclock, per-node duty cycles,
-transparent storage buffers, membership-aware tag flow resolution). The "Domain
-model", "Carrier tiers", "Computation" and "Resolved decisions" sections below
-are the authoritative detail and are unchanged by the UI rewrite.
+## Performance & persistence model
 
-### API surface (frozen contract)
+The model is steady-state, so a change to the graph does not re-solve the balance
+on its own. Two deliberate decoupling points keep big worlds (hundreds of
+machines) responsive:
 
-`api.py` exposes a single `Api` class (re-exported as `backend.Api`); one
-long-lived instance is bound by the desktop app (pywebview — the UI calls
-`window.pywebview.api.<method>(...)`) and by the server (`server.py` — `POST
-/api/<method>` with body `{"args": [...]}`). Arguments arrive as plain JSON and
-return values serialize straight back. The class is **marshaling only** — it
-converts JSON↔model and delegates to `engine/` and `io/`; it holds no rate math,
-flow resolution, or file-format logic. The one state it keeps is *the current
-World*; edits mutate it, reads and recomputes run against it.
+- **Recompute is on demand.** An edit updates the World and re-renders the canvas,
+  but does **not** recompute the balance — the UI marks the overlay stale and the
+  user presses **Run** to re-solve. (Switching scope or selecting a node in a
+  focused scope still recomputes, since that is a deliberate "show me this".)
+- **Autosave is on a timer, not per-edit.** `apply_edit` / `set_world` mark the
+  World dirty; the write happens on a 10-minute timer, on an explicit **Save**
+  (`save_autosave`), best-effort on page unload, and authoritatively when the
+  desktop window closes / the server stops. Imports and `load_project` persist
+  immediately (infrequent, major). `save_autosave` is a no-op on a clean World.
 
-**Result envelope.** Every method returns `{"ok": true, "data": <payload>}` on
-success or `{"ok": false, "error": {"type": "<ErrorName>", "message": "<str>"}}`
-on an expected failure (malformed file, unreadable payload, bad request shape,
-unknown entity kind, id collision under the `error` policy). Payloads are the
-model's camelCase wire format.
+Engine optimization (`engine/aggregate.py`): the per-node duty **probe** routes
+only the supply keys that can satisfy the probed node's own inputs (not every
+supply key in the scope), and single-edge carriers take a `min(supply, demand,
+throughput)` fast path. This turns a long chain from O(N²) to roughly O(N) per
+solve. A single carrier shared by many sinks (one power/steam trunk → N machines)
+is still O(N²) but with a small constant — fine on demand for hundreds of nodes.
+
+## API surface (stable contract)
+
+`api.py` exposes one `Api` class (re-exported as `backend.Api`); one long-lived
+instance is bound by the desktop app and the server. Arguments arrive as plain
+JSON and return values serialize straight back. The class is **marshaling only** —
+it converts JSON ↔ model and delegates to `engine/` and `io/`; it holds no rate
+math, flow resolution, or file-format logic. Its one piece of state is the current
+World; edits mutate it, reads/recomputes run against it.
+
+**Result envelope.** Every method returns `{"ok":true,"data":<payload>}` on
+success or `{"ok":false,"error":{"type":"<ErrorName>","message":"<str>"}}` on an
+expected failure (malformed file, unreadable payload, bad request shape, unknown
+entity kind, id collision under the `error` policy). Payloads use the model's
+camelCase wire format.
 
 | method | arguments | `data` payload |
 |---|---|---|
 | `get_world()` | — | World |
 | `set_world(world)` | World dict | World (normalized) |
 | `apply_edit(edit)` | `{op, kind, entity\|id}` | World after the edit |
+| `save_autosave()` | — | `{saved, dirty, path}` |
 | `load_project(path)` | path string | World |
 | `save_project(path)` | path string | `{"path": str}` |
 | `recompute(request)` | `{scope, nodeId?\|systemId?}` | ScopeReport |
@@ -101,90 +112,85 @@ model's camelCase wire format.
 | `load_library(path)` | path string | Library envelope |
 | `import_library(library, on_conflict="rename")` | Library envelope, policy | `{world, idRemap, skippedIds, updatedIds}` |
 | `import_library_file(path, on_conflict="rename")` | path string, policy | `{world, idRemap, skippedIds, updatedIds}` |
-| `import_mi_dir(path, options)` | path string, `{machineTypes?, name?, onConflict?}` | `{world, idRemap, skippedIds, updatedIds, stats}` |
+| `import_recipe_files(paths, options)` | list of paths, `{machineTypes?, name?, onConflict?}` | `{world, …, stats}` |
+| `import_mi_dir(path, options)` | path string, `{machineTypes?, name?, onConflict?}` | `{world, …, stats}` |
 
-- **`edit`** is `{"op": "upsert", "kind": <kind>, "entity": {...}}` (replaces the
-  entity of that id in place, else appends) or `{"op": "remove", "kind": <kind>,
-  "id": <id>}`. `kind` ∈ `item`, `recipe`, `machineDef`, `node`, `pipe`,
-  `pipeNode`, `system`. Editing recomputes nothing by itself — the UI follows an
-  edit with a `recompute` call. A `node` entity carries `recipeIds` (a list — a
-  node runs every recipe in it, summed) with legacy single `recipeId` still read
-  from older saves.
-- **`recompute` scopes**: `world` (default), `node` (`nodeId` — a single
-  machine), `process` (`nodeId` — its connected component via `trace_process`),
-  `system` (`systemId`). The payload is `ScopeReport.to_dict()` (external I/O,
-  per-node balances, net energy, ranked bottlenecks, and `pipeFlows` — per-pipe
-  resolved flow + a starved-edge `shortfall` flag, added for the P8 overlay).
-- **`on_conflict`** is a `ConflictPolicy` value: `rename` (default), `skip`,
-  `update`, `error`. `update` overwrites the World's entity of a colliding id **in
-  place** (reported in `updatedIds`). **`import_mi_dir` overrides the default to
-  `update`** — MI entities are canonical reference data keyed by stable ids, so
-  re-importing the same jar must be idempotent (no duplication, nothing renamed)
-  **and refresh** the data in place, so a corrected value (a fixed fuel `eu`, a
-  changed machine def) reaches a project already built on the old data without
-  disturbing its nodes/pipes. New recipes are still added.
-- **`import_mi_dir`** reads an **extracted Modern Industrialization jar
-  directory** (`io/mi_import.py`) and merges its machine recipes into the current
-  World via `import_library`. By **default it discovers and imports every
-  powered-machine recipe type it finds** — any namespaced type (not `minecraft:`,
-  not a bare vanilla type) whose recipes carry a machine shape — so a *different
-  mod* with the same recipe structure imports with no code change; the type set
-  is no longer a hand-maintained allowlist (`DEFAULT_MACHINE_TYPES` is kept only
-  as a ready-made subset). Pass `machineTypes` (bare type names) to narrow it. The
-  parser normalizes MI's shapes (object-or-list I/O, the forge hammer's
-  `ingredient`/`result` shape, bare/namespaced ids, `tag` refs → `isTag` items,
-  `probability`, default `amount` 1), converts units (ticks→seconds, `eu` kept
-  per-tick on the recipe), merges every mod's `lang` for display names, reads item
-  fuel `eu` from NeoForge's `furnace_fuels` burn-time **× 20** (MI values a
-  furnace burn-tick at 20 EU, so coal's 1600 burn ticks = 32 000 EU) and fluid
-  `eu` from `fluid_fuels` (already per-mB, no ×20), and groups recipes by `type`
-  into electric-consumer machine defs
-  with a data-derived slot layout and the `MACHINE_CATALOG`'s tier ceiling
-  (`voltageTier` + `maxEuPerTick`; single-block electric machines are LV =
-  32 EU/t, from the jar's `CableTier` / `MachineTier`; multiblocks import
-  unclamped). The generic electric def is named off the jar's `electric_<type>`
-  block where one exists (so the macerator's electric def reads *Electric
-  Macerator*, not a bare *Macerator*). A recipe type run by distinct **named
-  blocks** (`MACHINE_VARIANTS` — the steam/electric **quarry**, steam/electric
-  **blast furnace**, bronze/steel/electric **furnace**, and the steam-age
-  **Coke Oven** (a multiblock with no electric variant, so it runs on steam, not
-  the electricity the generic def would wrongly draw), which the recipe data
-  can't tell apart) yields those variant defs (each on its own carrier and tier)
-  instead of one generic def. The furnaces run vanilla `minecraft:smelting`
-  recipes — the one vanilla type mapped to a machine (`_VANILLA_MACHINE_TYPES`,
-  type `furnace`); a smelting recipe carries no `eu`, so the furnace def supplies
-  a base draw and `cookingtime` is its duration. For the machines that also have
-  **steam tiers** (`STEAM_MACHINE_TIERS` — bronze/steel for macerator, mixer,
-  compressor, cutting machine; steel-only for packer, unpacker, wiremill) it adds
-  a bronze/steel def beside the electric one, running the same recipes but powered
-  by steam (`energySource: liquid`, `sourceItemId` steam) and clamped to the
-  tier's `MachineTier` EU/t ceiling (bronze 2, steel 4). It also adds the
-  non-recipe **energy-generation** converter defs (`ENERGY_MACHINES`: boilers,
-  steam/plasma turbines, diesel generators) and the routed-electricity carrier,
-  and sets imported consumers to draw it; the **water pumps** (`PUMP_MACHINES` —
-  bronze/steel on steam, electric on electricity, each a water source running a
-  fixed-1-EU/t "pump water" recipe at bronze 200 / steel 400 / electric
-  3200 mB/s, the full-placement max); pass `include_energy: false` to skip the
-  energy machines **and** pumps (they share the carriers). It always adds the
-  **storage** defs (`STORAGE_MACHINES` — material tanks/barrels, the single-block
-  Configurable Tank/Chest, and the Large Tank multiblock, with the jar's
-  capacities as editable buffer annotations), and the **recipe-less special
-  machines** (`SPECIAL_MACHINES` — Nuclear Reactor, Replicator: MI blocks whose
-  mechanics aren't recipe-driven, so they import as inert placeable defs for a
-  complete roster). It resolves tag membership (each
-  tag item's `members`, registering missing member items), filling the vanilla
-  `c:` material tags (`c:ores/iron` & co.) the jar references but NeoForge — not
-  the mod — defines, from the vanilla naming convention. `stats` reports the
-  counts (files scanned, recipes imported/skipped, items, tags, member items
-  added, defs, `steamMachines`, `energyMachines`, `pumps`, `storage`, `special`,
-  per-type).
+- **`edit`** is `{"op":"upsert","kind":<kind>,"entity":{...}}` (replaces the entity
+  of that id in place, else appends) or `{"op":"remove","kind":<kind>,"id":<id>}`.
+  `kind` ∈ `item`, `recipe`, `machineDef`, `node`, `pipe`, `pipeNode`, `system`.
+  Editing recomputes nothing and saves nothing by itself — it marks the World
+  dirty; the UI runs the sim and saves on demand. A `node` entity carries
+  `recipeIds` (a list — a node runs every recipe in it, summed); a legacy single
+  `recipeId` is still read from older saves.
+- **`recompute` scopes:** `world` (default), `node` (`nodeId` — a single machine),
+  `process` (`nodeId` — its connected component via `trace_process`), `system`
+  (`systemId`). Payload is `ScopeReport.to_dict()` (external I/O, per-node
+  balances, net energy, ranked bottlenecks, and `pipeFlows` — per-pipe resolved
+  flow + a starved-edge `shortfall` flag).
+- **`on_conflict`** is a `ConflictPolicy`: `rename` (default), `skip`, `update`,
+  `error`. `update` overwrites the World's entity of a colliding id **in place**
+  (reported in `updatedIds`). Both importers default to `update` — MI entities are
+  canonical reference data keyed by stable ids, so re-importing is idempotent (no
+  duplication, nothing renamed) **and refreshes** values in place without
+  disturbing nodes/pipes; new recipes are still added.
+
+### Importing recipes
+
+Two entry points share one parser and one persistence path (the imported catalog
+is both saved to the library folder and baked into the autosaved World, so it
+auto-loads on later launches with **no re-import**):
+
+- **`import_mi_dir`** reads an **extracted Modern Industrialization jar directory**
+  (`io/mi_import.py`). By default it discovers and imports **every** powered-machine
+  recipe type it finds — any namespaced type (not `minecraft:`, not a bare vanilla
+  type) whose recipes carry a machine shape — so a different mod with the same
+  recipe structure imports with no code change (`DEFAULT_MACHINE_TYPES` is kept
+  only as a ready-made subset). Pass `machineTypes` (bare names) to narrow it.
+- **`import_recipe_files`** is the **generic** importer: `paths` is any mix of
+  files and directories (a whole jar, a recipe folder, or a hand-picked set of
+  individual MI-format recipe `.json` files from any mod). Directories are scanned
+  recursively; support data (lang names, fuel maps, tag definitions) is loaded
+  best-effort from the common ancestor when it is a jar root and simply absent
+  otherwise. Recipe ids are stable (relative to the common base), so re-importing
+  the same files updates in place.
+
+The parser normalizes MI's shapes (object-or-list I/O, the forge hammer's
+`ingredient`/`result` shape, bare/namespaced ids, `tag` refs → `isTag` items,
+`probability`, default `amount` 1), converts units (ticks → seconds, `eu` kept
+per-tick on the recipe), merges every mod's `lang` for display names, reads item
+fuel `eu` from NeoForge's `furnace_fuels` burn-time × 20 (coal's 1600 burn ticks =
+32 000 EU) and fluid `eu` from `fluid_fuels` (already per-mB), and groups recipes
+by `type` into electric-consumer machine defs with a data-derived slot layout and
+the `MACHINE_CATALOG`'s tier ceiling (`voltageTier` + `maxEuPerTick`; single-block
+electric machines are LV = 32 EU/t; multiblocks import unclamped). The generic
+electric def is named off the jar's `electric_<type>` block where one exists. A
+recipe type run by distinct **named blocks** (`MACHINE_VARIANTS` — steam/electric
+quarry, steam/electric blast furnace, bronze/steel/electric furnace, and the
+steam-only Coke Oven) yields those variant defs (each on its own carrier and tier)
+instead of one generic def. Furnaces run vanilla `minecraft:smelting` recipes (the
+one vanilla type mapped to a machine, `_VANILLA_MACHINE_TYPES`); a smelting recipe
+carries no `eu`, so the furnace def supplies a base draw and `cookingtime` is its
+duration. For machines with **steam tiers** (`STEAM_MACHINE_TIERS`) it adds a
+bronze/steel def beside the electric one, powered by steam (`energySource: liquid`,
+`sourceItemId` steam) and clamped to the tier ceiling (bronze 2, steel 4 EU/t). It
+also adds the non-recipe **energy-generation** converter defs (`ENERGY_MACHINES`:
+boilers, steam/plasma turbines, diesel generators) and the routed-electricity
+carrier, setting imported consumers to draw it; the **water pumps**
+(`PUMP_MACHINES` — bronze/steel on steam, electric on electricity, each a water
+source at bronze 200 / steel 400 / electric 3200 mB/s). Pass `include_energy:false`
+to skip the energy machines **and** pumps (they share the carriers). It always adds
+the **storage** defs (`STORAGE_MACHINES`, with jar capacities as editable buffer
+annotations) and the recipe-less **special** machines (`SPECIAL_MACHINES` — Nuclear
+Reactor, Replicator: inert placeable defs). It resolves tag membership (registering
+missing member items) and fills the vanilla `c:` material tags the jar references
+but NeoForge defines. `stats` reports counts (files scanned, recipes
+imported/skipped, items, tags, member items added, defs, steam/energy/pump/storage/
+special, per-type).
 
 A changed shape here is a deliberate, documented contract bump — the UI's
-`callApi` wrappers in `ui/index.html` mirror this table.
+`callApi` wrappers mirror this table.
 
 ### Commands
-
-Run the desktop app (needs a system web engine for pywebview):
 
 ```bash
 pip install pywebview            # the only runtime dependency
@@ -192,18 +198,12 @@ python app.py                    # open the desktop window
 python app.py path/to/project.psim.json   # open with a project loaded
 ```
 
-Run as a server instead (standard library only — reach it from any browser/device):
-
 ```bash
 python server.py                 # http://localhost:8000
 python server.py 9000            # custom port
 ```
 
-Edit the UI: change `ui/index.html` and refresh the browser (or relaunch the
-desktop window). There is no build, no `node_modules`, nothing to reinstall for a
-change.
-
-Tests / lint (from the repo root):
+Edit the UI: change `ui/index.html` and refresh. No build, nothing to reinstall.
 
 ```bash
 pip install pytest ruff
@@ -211,140 +211,106 @@ pytest                           # engine, model, io, api, app/server
 ruff check . && ruff format --check .
 ```
 
-`pyproject.toml` sets `pythonpath = ["."]` and `testpaths = ["tests"]`, so
-`pytest` from the root finds the `process_sim` package and the tests with no
-extra flags. Bake a backend-less, view-only copy with
-`python export_standalone.py` (-> `dist/process_sim.html`).
-
-Layout:
+`pyproject.toml` sets `pythonpath = ["."]` and `testpaths = ["tests"]`. Bake a
+view-only copy with `python export_standalone.py` (→ `dist/process_sim.html`).
 
 ```
 app.py               # pywebview desktop entry (binds backend.Api)
-server.py            # stdlib HTTP server (POST /api/<method>) for browsers
-backend.py           # Api home (re-exports process_sim.api) + build_api factory
-export_standalone.py # bake the World into one view-only HTML file
+server.py            # stdlib HTTP server (POST /api/<method>)
+backend.py           # Api home + build_api factory
+export_standalone.py # bake the World into one view-only HTML
 process_sim/
   engine/            # rate-balance computation, pure Python
   model/             # dataclasses: Item, Recipe, MachineDef, MachineNode, Pipe, System, World
-  io/                # load/save projects, library + Modern Industrialization import
-  api.py             # the JSON API surface — thin; marshals World to/from JSON
-ui/
-  index.html         # the entire UI: vanilla JS, hand-rolled canvas, inspectors, overlay
-  fonts/             # local woff2 (IBM Plex Mono, Space Grotesk) — offline
+  io/                # load/save projects, library + MI import
+  api.py             # the JSON API surface — thin
+ui/index.html        # the entire UI
+ui/fonts/            # local woff2 (offline)
 examples/            # a sample project
-tests/               # pytest for engine/model/io/api/app
+tests/               # pytest
 ```
-
 
 ## Architecture rules
 
-- **The engine does not import the UI or pywebview.** All rate/balance
-  computation lives in `process_sim/engine/` and `process_sim/model/` and runs
-  headless. The UI reaches it only through `backend.Api` (over the pywebview
-  bridge or `POST /api/<method>`), which serializes World state to/from JSON.
-  Keep `api.py` thin — it marshals data, it does not hold logic. This keeps the
-  hard part testable without a webview.
-- **No build step.** The UI is a single hand-written `ui/index.html` (vanilla JS
-  + CSS). Do not reintroduce npm, a bundler, a framework, or a `node_modules` —
-  the whole point of the edunode-style rewrite was to delete them. Edit the file
-  and refresh.
-- **Offline-first.** The app makes no network calls at runtime. Keep all assets
-  (fonts under `ui/fonts/`, scripts, styles) local; nothing loads from a CDN.
-- **Recompute on change.** The model is steady-state, not a tick-by-tick
-  simulation. Every machine and pipe runs continuously at its effective rate;
-  on any edit, recompute balances. There is no event loop over discrete items.
-- **Sparse, optional fields.** Most properties on items, recipes, machines, and
-  pipes are optional. Unset means *absent*, not zero. Editors and inspectors show
-  only the fields an entity actually uses — a consumer machine shows no
-  energy-production field, an `in`-only pipe end shows no extract priority.
-  Computation skips absent fields rather than substituting zero where that would
-  mislead.
+- **The engine does not import the UI or pywebview.** All rate/balance computation
+  lives in `process_sim/engine/` and `process_sim/model/` and runs headless. The
+  UI reaches it only through `backend.Api`. Keep `api.py` thin — it marshals, it
+  does not hold logic.
+- **No build step.** The UI is one hand-written `ui/index.html`. Do not reintroduce
+  npm, a bundler, a framework, or `node_modules`.
+- **Offline-first.** No network calls at runtime. All assets are local.
+- **Recompute is steady-state and on demand** (see Performance). Every machine and
+  pipe runs continuously at its effective rate; there is no event loop over
+  discrete items.
+- **Sparse, optional fields.** Most properties are optional. Unset means *absent*,
+  not zero. Inspectors show only the fields an entity uses. Computation skips
+  absent fields rather than substituting zero.
 
 ## Domain model
 
-- **Item** — a tracked resource. Category is `solid`, `liquid`, or `energy`.
-  Energy (unit EU) is a normal item so it can appear in recipes and balances.
-  An item may optionally carry a stored-energy value `eu` — its fuel content in
-  EU. A fuel with `eu = 1000` consumed at 2 EU/s lasts 500 s. Optional and
-  selectable at item construction: items without `eu` are not fuels.
+- **Item** — a tracked resource. Category is `solid`, `liquid`, or `energy`. Energy
+  (unit EU) is a normal item so it can appear in recipes and balances. An item may
+  carry a stored-energy value `eu` (its fuel content); a fuel with `eu = 1000`
+  consumed at 2 EU/s lasts 500 s. Items without `eu` are not fuels.
 - **Stack** — a `{resource, quantity}` pair, per recipe cycle unless noted. The
   resource is a concrete `itemId` **or** a `tag` (a group reference like
-  `c:gears/iron` = "any item in this set"; a tag is a first-class fungible
-  resource backed by an `Item` with `isTag: true` whose `members` list the
-  concrete items it includes). A stack may carry an optional
-  `probability` (expected consume/produce chance; absent = always, `0` = a
-  referenced-but-unconsumed catalyst).
+  `c:gears/iron` backed by an `Item` with `isTag:true` whose `members` list the
+  concrete items). A stack may carry an optional `probability` (expected chance;
+  absent = always, `0` = a referenced-but-unconsumed catalyst).
 - **Recipe** — input stacks → output stacks over a production time. Energy is
-  **hybrid** (see decision #2): a recipe may carry its own `euPerTick` (the
-  EU/tick its machine draws while making it) which overrides the machine's
-  `baseEnergyConsumption` default; a recipe without it falls back to the machine
-  draw. An optional `machineType` names the machine kind that runs it (MI's
-  recipe `type`, e.g. `macerator`).
-- **MachineDef** — a template: an **energy source**, allowed recipes, slot layout
-  per category and direction, stack sizes, overclock bounds, and optional
-  storage. `energySource` ∈ `electric` / `liquid` / `fuel` (absent = passive)
-  says how the machine is powered; `sourceItemId` names the carrier it consumes.
-  A `fuel` converter may leave `sourceItemId` **unset** (an MI boiler — "the
-  player picks which fuel to burn"): the engine then meters its `fuelDrain` (EU/s)
-  against whatever eu-bearing **fuel item** is wired into it, consuming
-  `fuelDrain / item.eu` units per second; with no fuel wired it cannot run (it
-  stalls). One converter burns one fuel (the best-supplied wired candidate).
-  A **consumer** sets `baseEnergyConsumption` (EU/s drawn to run its recipe). A
-  **converter** sets `outputItemId` + `maxFluidRate` and optional
-  `efficiency` (`w`, waste fraction) — it spends its source's energy to turn an
-  optional `inputItemId` **material** into that output carrier (a boiler burns
-  fuel to heat water → steam; a turbine spends steam → electricity with no
-  separate material). The material is consumed at `materialRatio` output units
-  per material unit (optional, default `1` = 1:1); a boiler making 16 steam per
-  water sets it to `16`. A **storage** def sets `storage`
-  (`{category, capacity}`) and is a transparent buffer. Nothing here names a
-  specific fluid — the carriers are just items (content).
-- **MachineNode** — a placed machine bound to **one or more recipes**, an
-  overclock multiplier, and a parallel count. `recipeIds` is the canonical recipe
-  list (a node may run several recipes at once — e.g. one large macerator fed
-  iron ore *and* coal ore — and its I/O and energy are the **sum** of every bound
-  recipe); the legacy single `recipeId` is still read from older saves, and
-  `recipe_list` returns whichever is set. The optional **boundary** flag
-  `assumeInputs` (manual insertion — treat any input not supplied by a pipe as
-  available) lets an edge machine run on hand-fed feedstock. (`assumeOutputs`
-  remains in the model for back-compat but no longer affects the balance — output
-  never throttles a machine in the input-driven model; see "Computation".)
-  Default off.
+  **hybrid**: a recipe may carry its own `euPerTick` (overrides the machine's
+  `baseEnergyConsumption` default); without it, it falls back to the machine draw.
+  Optional `machineType` names the machine kind that runs it (MI's recipe `type`).
+- **MachineDef** — a template: `energySource` ∈ `electric` / `liquid` / `fuel`
+  (absent = passive) says how it is powered; `sourceItemId` names the carrier it
+  consumes. A `fuel` converter may leave `sourceItemId` **unset** (an MI boiler —
+  the player picks the fuel): the engine meters its `fuelDrain` (EU/s) against
+  whatever eu-bearing **fuel item** is wired in, consuming `fuelDrain / item.eu`
+  units per second; with no fuel wired it stalls (one converter burns one fuel —
+  the best-supplied wired candidate). A **consumer** sets `baseEnergyConsumption`
+  (EU/s). A **converter** sets `outputItemId` + `maxFluidRate` and optional
+  `efficiency` (`w`, waste fraction): it spends its source's energy to turn an
+  optional `inputItemId` **material** into the output carrier (boiler burns fuel to
+  heat water → steam; turbine spends steam → electricity). The material is consumed
+  at `materialRatio` output units per material unit (default `1`). A **storage** def
+  sets `storage` (`{category, capacity}`) and is a transparent buffer. Carriers are
+  just items (content); nothing here names a specific fluid.
+- **MachineNode** — a placed machine bound to **one or more recipes**, an overclock
+  multiplier, and a parallel count. `recipeIds` is canonical (a node's I/O and
+  energy are the **sum** of every bound recipe); legacy single `recipeId` is still
+  read, and `recipe_list` returns whichever is set. The boundary flag `assumeInputs`
+  (manual insertion — treat any unsupplied input as available) lets an edge machine
+  run on hand-fed feedstock. (`assumeOutputs` remains for back-compat but no longer
+  affects the balance — output never throttles a machine.) Default off.
 - **Pipe** — the graph edge. Carries one category between two machine ports; has
-  storage capacity, movement capacity, an overclock multiplier, and per-end
-  roles and priorities. **Liquid pipes carry an unlimited rate** — only solids
-  and electricity are throughput-capped by `movementCapacity`.
-- **PipeNode** — a pipe *junction*: a small routing dot (one `category`, `x`/`y`)
-  with no recipe/def/slots/energy. It exists only to diverge or merge pipes of
-  one category — a steam or power or belt trunk fans out to many consumers
-  without wiring each back to the source. In the balance it is a **transparent
-  passthrough**, spliced out of the flow graph by the same contraction that
-  dissolves storage buffers (`X → junction → Y` resolves as a direct `X → Y`
-  throttled by the tighter pipe; connectivity for `trace_process` routes through
-  it). It carries no throughput or priority of its own — those stay on the pipes.
-  A pipe end at a junction uses role `io`. The resolved flow is reported on every
-  segment of a spliced chain, so a trunk feeding a junction shows the sum its
-  branches carry.
+  storage capacity, movement capacity, an overclock multiplier, and per-end roles
+  and priorities. **Liquid pipes carry an unlimited rate** — only solids and
+  electricity are throughput-capped by `movementCapacity`.
+- **PipeNode** — a pipe *junction*: a routing dot (one `category`, `x`/`y`) with no
+  recipe/def/slots/energy. It diverges or merges pipes of one category (a trunk
+  fans out to many consumers). In the balance it is a **transparent passthrough**,
+  spliced out of the flow graph by the same contraction that dissolves storage
+  buffers (`X → junction → Y` resolves as a direct `X → Y` throttled by the tighter
+  pipe; `trace_process` routes through it). A pipe end at a junction uses role `io`.
+  Resolved flow is reported on every segment of a spliced chain.
 - **System** — a user-defined group of nodes treated as one unit, with exposed
   ports and aggregated stats. Collapsible, nestable, connectable.
-- **World** — all items, recipes, machine defs, nodes, pipes, pipe nodes, and
-  systems.
+- **World** — all items, recipes, machine defs, nodes, pipes, pipe nodes, systems.
 
-A slot is one buffer location holding one stack; `slots × stackSize` per category
-and direction sets how much a machine can hold.
+A slot holds one stack; `slots × stackSize` per category and direction sets how
+much a machine can hold.
 
 ## Computation (all rates per second)
 
-For a node running recipe `R` at `overclock` with parallel `count` (a node bound
-to several recipes runs each one and **sums** their I/O and energy):
+For a node running recipe `R` at `overclock` with parallel `count` (a node bound to
+several recipes runs each and **sums** I/O and energy):
 
-`overclock` is first **clamped** by the machine's power ceiling (decision #2):
-`overclock ≤ maxEuPerTick / euPerTick` when both are set — a clamped machine runs
-its recipe slower, since speed and energy move together. This clamp is **silent**
-(it is the machine's real rate at its tier, not an error state). The clamp is
-applied per recipe. A term `s` carries an optional `probability` (absent = 1); a
-`probability = 0` term is a catalyst (referenced, not consumed/produced) and is
-left absent, never a zero rate:
+`overclock` is first **clamped** by the power ceiling: `overclock ≤ maxEuPerTick /
+euPerTick` when both are set — a clamped machine runs its recipe slower (speed and
+energy move together). The clamp is **silent** (the machine's real rate at its
+tier, not an error) and is applied per recipe. A term `s` carries an optional
+`probability` (absent = 1); `probability = 0` is a catalyst (left absent, never a
+zero rate):
 
 ```
 cyclesPerSec   = overclock / R.timeSeconds
@@ -352,18 +318,16 @@ outputRate(s)  = s.quantity * p(s) * cyclesPerSec * count   # p(s)=probability||
 inputDemand(s) = s.quantity * p(s) * cyclesPerSec * count
 ```
 
-Energy per node — the draw is **hybrid** (decision #2): a recipe's own
-`euPerTick` overrides the machine's `baseEnergyConsumption` default. `euPerTick`
-is per **tick**, so the engine multiplies by 20 for its per-second canonical
-draw; `baseEnergyConsumption` is already per-second. A converter earns a
-`produce` term by making an energy-category output. Both the draw and the output
-are **routed carriers** (items), and the scalar energy terms are *derived* from
-those energy-category flows. An absent term stays absent (not zero):
+Energy per node — the draw is **hybrid**: a recipe's `euPerTick` overrides the
+machine's `baseEnergyConsumption`. `euPerTick` is per **tick** (×20 for the
+per-second draw); `baseEnergyConsumption` is already per-second. Both draw and
+output are **routed carriers** (items); the scalar energy terms are derived from
+those energy-category flows. An absent term stays absent:
 
 ```
 euPerTick = R.euPerTick  (else baseEnergyConsumption / 20)   # per-tick draw
 consume   = euPerTick * 20 * overclock * count               # routed as carrier
-produce   = (converter energy-carrier output)                # see "Carrier tiers"
+produce   = (converter energy-carrier output)                # see Carrier tiers
 netEnergy = produce - consume     # derived from energy-category carriers
 ```
 
@@ -372,37 +336,15 @@ netEnergy = produce - consume     # derived from energy-category carriers
 Energy flows as a chain of carriers: a **fuel** item (stored `eu`) is burned by a
 boiler into **steam** (a liquid); a turbine consumes steam and produces
 **electricity** (the `energy` category). **All three carriers route as items**
-through pipes, subject to movement capacity and priority — so electricity has a
-transfer limit from its electric connections (default 5120 EU/s = 256 EU/t ×
-20 t/s), exactly like steam or a solid. A machine's `energySource` picks the
-carrier it consumes; `sourceItemId` names it. An electric machine with no carrier
-chosen falls back to a scalar mains draw (no transfer limit). Electricity is kept
-out of the material feedstock/yield lists (it is the grid, reported as
-`netEnergy`), but a power shortage still shows as a throttled duty + a bottleneck.
+through pipes, subject to movement capacity and priority — electricity has a
+transfer limit from its electric connections (default 5120 EU/s = 256 EU/t × 20).
+`energySource` picks the carrier consumed; `sourceItemId` names it. An electric
+machine with no carrier chosen falls back to a scalar mains draw (no transfer
+limit). Electricity is kept out of the material feedstock/yield lists (reported as
+`netEnergy`), but a power shortage still shows as throttled duty + a bottleneck.
 
-The fuel→output conversion math is unchanged (see `engine/energy.py`): with max
-rate `R`, draw `D`, waste `w`, the converter consumes its source for *energy* (a
-fuel by its `eu`, else a liquid 1:1) and, when `inputItemId` is set, consumes
-that **material** at `materialRatio` output units per material unit (default 1 =
-1:1), emitting the output carrier as a routed item. Default content models the
-Modern Industrialization boiler, whose `materialRatio` is 16 (1 mB water → 16 mB
-steam, validated against the mod source: `SteamHeaterComponent` /
-`MIServerConfig.steamPerWater`); steam itself is 1 mB = 1 EU, so a machine at
-1 EU/t draws 1 mB/t = 20 mB/s of steam.
-
-**Units.** The engine is canonical **per second**. A tick is 1/20 s, so the UI
-edits/shows energy and converter output rates **per tick** (EU/t, mB/t), while
-recipe amounts and material flows read **per second** — the two bases are a ×20
-conversion applied only at the UI boundary (`overlay/units.ts`), so the engine
-and its tests stay per-second.
-
-Pipes are **pure transfer vehicles** — for solids and electricity,
-`movementCapacity × overclock` caps sustained flow; **liquid pipes are
-uncapped** (unlimited rate). Pipe storage is ignored in the steady-state
-balance.
-
-With max rate `R`, fluid actually drawn `D` (capped at `R`), fuel energy `E`, and
-efficiency `η` (rates per second; the tick form scales identically):
+The fuel→output math (`engine/energy.py`): with max rate `R`, fluid drawn `D`
+(capped at `R`), fuel energy `E`, efficiency `η`:
 
 ```
 fluidOut     = D                   # output-fluid units
@@ -411,9 +353,9 @@ burnTime     = E · η / D           # how long one fuel unit lasts
 usableOutput = E · η               # total output from one fuel unit
 ```
 
-Most machines are lossless: `η = 1`, so `fuelDrain = D` and conversion is exactly
-1:1. A machine may set an **efficiency** parameter — a waste fraction `w` applied
-to the heat it generates but does not deliver when the fluid isn't fully drawn:
+Most machines are lossless (`η = 1`, exact 1:1). An **efficiency** `w` (waste
+fraction) applies to heat generated but not delivered when the fluid isn't fully
+drawn:
 
 ```
 η         = D / (D + w·(R − D))
@@ -421,13 +363,21 @@ fuelDrain = D + w·(R − D)          # = w·R + (1−w)·D, well-defined at D =
 wasted    = w·(R − D)
 ```
 
-Default `w = 0` (no waste, η = 1). A lossy converter — the default-content
-**Large Steam Boiler** sets `w = 0.8`, `R = 256` — burns `w·R` fuel even at zero
-draw (idles hot) and loses `w` of any unused surplus, so η reaches 1 only at full
-load (`D = R`).
+Default `w = 0`. The default-content **Large Steam Boiler** sets `w = 0.8`,
+`R = 256` — it burns `w·R` fuel even at zero draw (idles hot) and loses `w` of any
+surplus, so η reaches 1 only at full load. Default content models the MI boiler,
+whose `materialRatio` is 16 (1 mB water → 16 mB steam, validated against
+`SteamHeaterComponent` / `MIServerConfig.steamPerWater`); steam is 1 mB = 1 EU, so
+a machine at 1 EU/t draws 1 mB/t = 20 mB/s of steam.
 
-Pipe throughput: `movementCapacity * overclock` caps sustained flow. Storage
-capacity only buffers transients.
+**Units.** The engine is canonical **per second** (a tick is 1/20 s). The UI
+edits/shows energy and converter output rates **per tick** (EU/t, mB/t) while
+recipe amounts and material flows read **per second** — a ×20 conversion applied
+only at the UI boundary, so the engine and its tests stay per-second.
+
+Pipes are **pure transfer vehicles**: for solids and electricity,
+`movementCapacity × overclock` caps sustained flow; **liquid pipes are uncapped**.
+Pipe storage is ignored in the steady-state balance (it only buffers transients).
 
 Per-item balance at a node:
 
@@ -437,93 +387,69 @@ output: overflow  = max(0, outputRate  - demanded)
 ```
 
 Each pipe's flow is `min(upstream available, downstream demand, pipeThroughput)`.
-A full input buffer pushes overflow upstream; a full output buffer stalls the
-machine.
 
-Aggregation over a system, traced process, or world is **purely input-driven**:
-every machine runs at the maximum its delivered inputs allow, and **output never
-throttles a machine**. Unconsumed output is **surplus** — assumed routed to
-storage or voided — reported as overflow (a good state), not backpressure. So a
-source whose inputs are available (a quarry on an ample steam line, a boiler fed
-fuel and water) runs at 100% *independently* of how much its consumers take or
-how many siblings share its supply: adding or removing one consumer or sibling
-producer has **no bearing** on the rest. (This replaces the earlier two-pass
-demand-ceiling model, whose shared downstream demand coupled otherwise-independent
-producers — adding a quarry dropped the duty of every other quarry on the line.)
+Aggregation over a system, process, or world is **purely input-driven**: every
+machine runs at the maximum its delivered inputs allow, and **output never throttles
+a machine**. Unconsumed output is **surplus** — assumed routed to storage or voided
+— reported as overflow (a good state), not backpressure. So a source whose inputs
+are available runs at 100% *independently* of how much its consumers take or how
+many siblings share its supply.
 
-Each node's **duty cycle** (reported as `nodeDuty`) is solved by a relaxation in
-`compute_scope` (`_relax_inputs`): start every runnable node at ceiling 1 and
-iterate `duty_i = min(1, availability_i)`, where availability is the fraction of
-its inputs actually delivered. The delicate part is measuring that availability
-without coupling unrelated supply chains, and it is solved by a **per-node
-probe**: to find how much of each input node *i* can obtain, route once with *i*
-bidding its full rate for every input while every other node bids at its current
-duty. Because only *i* bids full, a plentiful shared carrier is never
-over-subscribed by nodes throttled on something else (so it is never mistaken for
-scarce — this is why an ore-limited macerator no longer fakes a steam shortage on
-the trunk); because *i* bids full and not its own shrinking duty, it always
-re-probes its true max-min share and climbs when a sibling frees capacity (no
-ratchet collapse), and two equally scarce inputs are each measured at full so
-neither is masked. A **feedback cycle** (a boiler whose steam powers the pump that
-feeds it water) holds at full because each side supplies the other fully — no
-special cycle detection is needed. `assumeInputs` (manual insertion) treats any
-unsupplied input as available, so an edge machine runs on hand-fed feedstock.
-Placing *just* a converter (nothing wired) is a shortfall, not an overflow of
-output it can't make.
+Each node's **duty cycle** (`nodeDuty`) is solved by a relaxation in `compute_scope`
+(`_relax_inputs`): start every runnable node at ceiling 1 and iterate `duty_i =
+min(1, availability_i)`, where availability is the fraction of its inputs actually
+delivered. Availability is measured by a **per-node probe**: to find how much of
+each input node *i* can obtain, route once with *i* bidding its full rate for every
+input while every other node bids at its current duty. Because only *i* bids full, a
+plentiful shared carrier is never over-subscribed by nodes throttled elsewhere (so
+it is never mistaken for scarce); because *i* bids full and not its shrinking duty,
+it re-probes its true max-min share and climbs when a sibling frees capacity (no
+ratchet collapse); two equally scarce inputs are each measured at full, so neither
+is masked. A **feedback cycle** (a boiler whose steam powers the pump that feeds it
+water) holds at full because each side supplies the other. Iterated to a fixed
+point. (For performance, the probe routes only the supply keys that satisfy *i*'s
+own inputs — the result for *i* is exact since other keys never reach it.)
+`assumeInputs` treats any unsupplied input as available. Placing *just* a converter
+(nothing wired) is a shortfall, not an overflow of output it can't make.
 
 The flow resolution behind the probe (`_resolve_item`) resolves each carrier over
-**residual rounds**, not one pass: a single application of the even
-insert/extract split strands feasible capacity when several sources feed many
-sinks (three boilers on one steam trunk used to deliver a machine only half of
-what the trunk could supply, faking a shortfall), so it re-runs on the residual
-supply/demand until no more can be delivered — a sink reads as starved only when
-the network genuinely cannot feed it.
+**residual rounds**, not one pass: a single even insert/extract split strands
+feasible capacity when several sources feed many sinks, so it re-runs on the
+residual supply/demand until no more can be delivered — a sink reads as starved only
+when the network genuinely cannot feed it. (A single-edge carrier short-circuits to
+`min(supply, demand, throughput)`.)
 
-A node held below 1 is input-limited; the inputs it **cannot obtain in full** at
-its solved operating point are its **shortfalls** (and the ranked
-**bottlenecks**), read straight off the probe. So a *plentiful, reachable* carrier
-(ample steam) is never blamed when a different input (ore) is the real limit —
-**and** an input that is globally plentiful but simply not routed to this node
-(e.g. water wired only to the boilers, never piped to a mixer that needs it) *is*
-correctly flagged, because the probe measures what actually reaches the node, not
-just global scarcity. Storage (buffer) nodes and pipe junctions are transparent
-passthroughs, so an
-item only a buffer holds is still a product.
+A node held below 1 is input-limited; the inputs it **cannot obtain in full** at its
+operating point are its **shortfalls** (and the ranked **bottlenecks**), read off
+the probe. A plentiful, reachable carrier is never blamed when a different input is
+the real limit; an input that is globally plentiful but simply not routed to this
+node *is* flagged, because the probe measures what actually reaches the node.
+Storage (buffer) nodes and pipe junctions are transparent passthroughs.
 
-**Each scope is a standalone slice**, not a filtered view of the world. An input
-is **feedstock** (assumed hand-fed, never a throttle, reported under external
-inputs) when it has no producer *inside the scope* but **is produced elsewhere in
-the world** — the scope boundary has merely cut its supply chain. This is what
-makes a `node` or `system` view a genuine slice: the ore a single macerator eats
-is feedstock in that macerator's own node view (a quarry makes it elsewhere), so
-the node runs at full and reports its own consumption and full yield — output
-"used later" by a machine *outside* the scope has left the scope and is yield
-here, exactly as a pure product is. An input that **nothing in the whole world
-produces** is not feedstock: it stays an unmet demand and the node stalls (unless
-`assumeInputs`), so the world scope is unchanged — there, no producer in scope
-means no producer anywhere.
+**Each scope is a standalone slice**, not a filtered view. An input is **feedstock**
+(assumed hand-fed, never a throttle, reported under external inputs) when it has no
+producer *inside the scope* but **is produced elsewhere in the world** — the scope
+boundary has merely cut its supply chain. This makes a `node` or `system` view a
+genuine slice. An input that **nothing in the whole world produces** is not
+feedstock: it stays unmet and the node stalls (unless `assumeInputs`), so the world
+scope is unchanged (no producer in scope = no producer anywhere).
 
-The scope reports:
-`netEnergy` (sum of duty-scaled energy terms); **external inputs** = the feedstock
-the running scope consumes across its boundary; **external outputs** = the
-**yield** (everything produced that is not consumed inside this scope — a pure
-product leaves whole, an over-supplied intermediate leaves its surplus, and an
-intermediate consumed only by a node outside the scope leaves whole); and the
-largest input shortfalls as **bottlenecks**. A **storage** node is a transparent
-passthrough (its buffer only absorbs transients), spliced out of the flow graph.
+The scope reports: `netEnergy` (sum of duty-scaled energy terms); **external
+inputs** = feedstock the running scope consumes across its boundary; **external
+outputs** = the **yield** (everything produced that is not consumed inside this
+scope); and the largest input shortfalls as **bottlenecks**.
 
 ## Pipe priority — read this before touching flow resolution
 
-Each pipe end has an **insert priority** and an **extract priority**, each a
-signed scalar from −128 to 127, default 0, set independently. The resolution is
-**asymmetric**, and that asymmetry is intentional:
+Each pipe end has an **insert priority** and an **extract priority**, each a signed
+scalar −128…127, default 0, set independently. The resolution is **asymmetric**, and
+that asymmetry is intentional:
 
-- **Insert contention** (one source feeding several destinations): fill in order
-  of **descending** insert priority — higher fills first. Equal priority splits
-  evenly, round-robin in batches sized by pipe speed (movement capacity).
-- **Extract contention** (several sources feeding one destination): drain in order
-  of **ascending** extract priority — lower drains first. Equal priority splits
-  evenly.
+- **Insert contention** (one source → several destinations): fill in **descending**
+  insert priority — higher fills first. Equal priority splits evenly, round-robin in
+  batches sized by pipe speed (movement capacity).
+- **Extract contention** (several sources → one destination): drain in **ascending**
+  extract priority — lower drains first. Equal priority splits evenly.
 - **Self-loop guard**: an `io` end that extracts from and inserts into the same
   buffer will not re-insert what it pulled when its insert priority is below its
   extract priority.
@@ -533,8 +459,8 @@ Cases that must hold:
 1. Furnace into two chests, main insert 10, overflow insert 0 → main fills first,
    spills to overflow only when full.
 2. One stream into three machines all at insert 0 → even round-robin.
-3. One `io` pipe filtering a barrel, extract 5 insert 0 → won't re-insert (insert
-   < extract).
+3. One `io` pipe filtering a barrel, extract 5 insert 0 → won't re-insert
+   (insert < extract).
 4. Two sources into one machine, A extract 0, B extract 10 → A drains fully before
    B is touched.
 5. A chest at insert 127, everything else ≤ 0 → always filled first.
@@ -546,94 +472,63 @@ Insert favors higher, extract favors lower. Don't "simplify" this into one rule.
 A single scalar multiplier, default 1, applied linearly. On machines it scales
 cycles/sec, energy consumption, and energy production together. On pipes it scales
 movement capacity. Optional min/max bounds per definition for UI clamping. No
-non-linear curve. The engine additionally clamps a machine's effective overclock
-to its power ceiling (`euPerTick × overclock ≤ maxEuPerTick`, decision #2) — a
-machine can't run faster than its tier/upgrades can feed it. This clamp is
-**silent**: a clamped machine simply runs at its tier-max rate, with no distinct
-"over capacity" status (it is not an error — just the real rate).
+non-linear curve. The engine additionally clamps a machine's effective overclock to
+its power ceiling (`euPerTick × overclock ≤ maxEuPerTick`) — a machine can't run
+faster than its tier/upgrades can feed it. This clamp is **silent** (the real rate,
+not an error state).
 
 ## Resolved decisions
 
-All of the original open questions are decided. Build to these.
+Build to these.
 
 1. **Pipe priority asymmetry is final** — insert favors higher, extract favors
-   lower, exactly as specified above and in the five cases. Not up for revision.
-2. **Energy is hybrid (recipe overrides machine)** — revised to match Modern
-   Industrialization, which puts `eu`/`duration` on each recipe. A recipe's
-   `euPerTick` is the EU/tick its machine draws while making it and **overrides**
-   the machine's `baseEnergyConsumption`; a recipe without it falls back to the
-   machine draw, so pre-existing machine-energy projects keep working. A
-   machine's `energySource` (electric / liquid / fuel) still picks the carrier
-   consumed, and a machine carries a MI-style power ceiling (`voltageTier` +
-   `maxEuPerTick`) that clamps overclock so `euPerTick × overclock ≤
-   maxEuPerTick`.
-3. **All carriers are routed items (electricity included)** — fuel items store
-   `eu`; a boiler burns fuel into steam, a turbine turns steam into electricity.
-   Fuel, steam, **and** electricity flow through pipes under the normal
-   movement-capacity and priority rules, so electricity is transfer-limited by
-   its electric connections (default 5120 EU/s). `netEnergy` is derived from the
-   energy-category carriers and electricity is excluded from the feedstock/yield
-   lists. Pipes are pure transfer vehicles — pipe storage is ignored. The
-   specific carriers are content (default content uses steam). See "Carrier
-   tiers".
+   lower, exactly as the five cases specify. Not up for revision.
+2. **Energy is hybrid (recipe overrides machine)** — a recipe's `euPerTick`
+   overrides the machine's `baseEnergyConsumption`; a recipe without it falls back
+   to the machine draw, so machine-energy projects keep working. `energySource`
+   picks the carrier; a MI-style power ceiling (`voltageTier` + `maxEuPerTick`)
+   clamps overclock.
+3. **All carriers are routed items (electricity included)** — fuel items store `eu`;
+   a boiler burns fuel into steam, a turbine turns steam into electricity. All three
+   flow through pipes under the normal movement-capacity and priority rules, so
+   electricity is transfer-limited (default 5120 EU/s). `netEnergy` is derived from
+   the energy-category carriers; electricity is excluded from feedstock/yield lists.
+   Pipe storage is ignored.
 4. **Round-robin batch size follows pipe speed** — the equal-priority split is
-   batched by the pipe's movement capacity (already a pipe parameter), not a
-   separate fixed constant.
-5. **Display units auto-scale per category** — store canonical units internally;
-   the UI auto-scales values for readability.
+   batched by the pipe's movement capacity, not a separate fixed constant.
+5. **Display units auto-scale per category** — store canonical units internally; the
+   UI auto-scales for readability.
 
 ## Visual style
 
-The look is defined in `STYLE_GUIDE.md` (edunode's "Instrument Panel on Dark
-Glass"): a deep slate field, one signal-cyan accent for the active path, phosphor
-status colors, mono type for every id/label/metric, and a display sans for
-everything else. Read that file before doing UI work and use its `:root` tokens as
-the only palette — don't introduce new hues.
+The look is defined in `STYLE_GUIDE.md` ("Instrument Panel on Dark Glass"): a deep
+slate field, one signal-cyan accent for the active path, phosphor status colors,
+mono type for every id/label/metric, a display sans for everything else. Read that
+file before UI work and use its `:root` tokens as the only palette. Two context
+adjustments: bundle fonts locally (no Google Fonts `@import`), and verify
+`backdrop-filter` / font smoothing across platform webviews (fall back to a solid
+translucent `--panel` where weak).
 
-Because the app is a web UI in a system webview, the guide applies almost
-directly — paste the `:root` tokens, reuse the component recipes as CSS/className
-styling, and the glass/glow/shadow effects (`backdrop-filter`, `box-shadow`,
-`drop-shadow`) all work. Two adjustments for our context:
+Canvas nodes are `div`s, edges are SVG paths (color by category, thickness by flow,
+dashed for shortfall). Apply the cyan glow to the selected/live element only.
 
-- **Bundle fonts locally.** Don't use the Google Fonts `@import`; the app is
-  offline-first. Ship IBM Plex Mono and Space Grotesk as local `woff2` files and
-  `@font-face` them.
-- **Check across webviews.** Rendering differs between platform webviews
-  (Chromium/WebView2 on Windows, WebKit on macOS and Linux). Verify
-  `backdrop-filter` and font smoothing on each target; where `backdrop-filter` is
-  weak, fall back to a solid translucent `--panel` fill.
+Domain-state palette (the guide doesn't cover these):
 
-Canvas: nodes, ports (React Flow handles), and pipes (edges) are React Flow
-elements styled with the same tokens — node bodies are `div`s, edges are SVG paths
-(color by category, thickness by flow, dashed for shortfall). Apply the cyan glow
-to the selected/live element only.
-
-Domain-state palette (the guide doesn't cover these directly):
-
-- **Status colors** — decided. A node's **overall** colour is a *run band* that is
-  a **plain function of its duty cycle** — the one thing that needs attention, and
-  nothing else: **green** (`--s-ref`) = running at full rate (`ok`); **yellow**
-  (`--s-learn`) = `throttled` (running, but held below full by an input that can't
-  keep up — normal, not an error); **red** (`--s-bad`) = `stalled` (not running at
-  all: no feed, no power). There is **no** separate "surplus/overflow" run band:
-  surplus output is normal and expected in the input-driven model (the goal is to
-  max every machine, which means surplus almost everywhere), so it is reported as
-  **yield**, never as a node colour — labelling a healthy machine "overflow" was
-  noise. (A machine whose overclock exceeds its power-tier ceiling simply runs at
-  that ceiling — the clamp is silent physics, not a status.) Per-**item** balances
-  still carry the finer verdicts: an input is `shortfall` → red only when it is the
-  genuine limiter the node can't obtain in full (this drives the dashed
-  starved-edge flag); an output with surplus is `overflow` → blue. Those are shown
-  in detail, not as the node's band. An energy-carrier (electricity) surplus is
-  reported as `netEnergy`. Cyan (`--spine`) stays reserved for the selected/live
-  element.
-- **Category colors** (solid / liquid / energy edges and ports) — default
-  assignment (adjustable): solid → silver (`--s-teach`), liquid → blue
-  (`--s-indep`), energy → gold (`--subedge`). A converter's output fluid is a
-  liquid, so it rides the liquid color. Cyan stays reserved; red/green/yellow
-  stay reserved for status.
+- **Status colors** — a node's **overall** colour is a *run band* that is a plain
+  function of its duty cycle: **green** (`--s-ref`) = running at full rate (`ok`);
+  **yellow** (`--s-learn`) = `throttled` (running, held below full by an input that
+  can't keep up — normal, not an error); **red** (`--s-bad`) = `stalled` (not
+  running). There is **no** separate surplus/overflow run band — surplus output is
+  normal in the input-driven model and reported as **yield**. Per-**item** balances
+  still carry finer verdicts: an input is `shortfall` → red only when it is the
+  genuine limiter (drives the dashed starved edge); an output with surplus is
+  `overflow` → blue. Energy-carrier surplus is `netEnergy`. Cyan (`--spine`) stays
+  reserved for the selected/live element.
+- **Category colors** (default, adjustable): solid → silver (`--s-teach`), liquid →
+  blue (`--s-indep`), energy → gold (`--subedge`). A converter's output fluid rides
+  the liquid color. Cyan, and red/green/yellow, stay reserved.
 
 ## Out of scope for v1
 
-Tick-by-tick simulation with real backpressure, probabilistic recipe outputs
-(use expected rates), and any multiplayer or cloud sync.
+Tick-by-tick simulation with real backpressure, probabilistic recipe outputs (use
+expected rates), and any multiplayer or cloud sync.

@@ -83,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         background_color=WINDOW_BACKGROUND,
     )
     webview.start()
+    # The window has closed. Autosave is timer/explicit (not per-edit), and the
+    # in-page beforeunload hook is unreliable when a native window is torn down, so
+    # flush any unsaved working state here as the authoritative close-time save.
+    api.save_autosave()
     return 0
 
 

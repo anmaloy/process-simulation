@@ -54,6 +54,12 @@ input,select{font-family:inherit}
 .tool-btn{background:var(--panel-2);border:1px solid var(--line-2);color:var(--ink-dim);border-radius:8px;padding:6px 10px;font-size:12px}
 .tool-btn:hover:not(:disabled){border-color:var(--spine);color:var(--ink)}
 .tool-btn:disabled{opacity:.4;cursor:default}
+.run-btn{color:var(--ink);border-color:var(--line-2)}
+.run-btn.stale{border-color:var(--s-learn);color:var(--s-learn);box-shadow:0 0 0 1px var(--s-learn) inset}
+.rail-status{display:flex;flex-direction:column;gap:3px;margin:4px 0 2px;min-height:14px}
+.stale-flag{font-family:var(--mono);font-size:10px;color:var(--s-learn);letter-spacing:.02em}
+.save-state{font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:.04em;text-transform:uppercase}
+.save-state.dirty{color:var(--s-indep)}
 
 .rail-section{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
 .rail-section-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
@@ -491,7 +497,19 @@ let BUSY = false;
 function snapshot(){ HISTORY.push(structuredClone(WORLD)); if(HISTORY.length>100) HISTORY.shift(); updateUndo(); }
 function updateUndo(){ const b=$("#undoBtn"); if(b) b.disabled = HISTORY.length===0; }
 
-async function applyEdits(edits, {record=true}={}){
+// The world is steady-state, not a tick loop: an edit changes the graph but the
+// balance is only (re)solved when the user runs the simulation. So edits apply +
+// re-render but DON'T recompute — recomputing the whole connected structure on
+// every drag/field-edit is what made big worlds unusable. markStale() flags that
+// the shown overlay/readout no longer reflect the world until Run is pressed.
+let STALE = false;
+function markStale(){ STALE = true; markDirty(); updateRunState(); }
+function updateRunState(){
+  const r=$("#runBtn"); if(r) r.classList.toggle("stale", STALE);
+  const s=$("#staleDot"); if(s) s.style.display = STALE ? "" : "none";
+}
+
+async function applyEdits(edits, {record=true, balance=true}={}){
   if(!edits.length) return;
   if(record) snapshot();
   try{
@@ -500,14 +518,16 @@ async function applyEdits(edits, {record=true}={}){
     if(next){ WORLD=next; reindex(); }
   }catch(err){ toast(err.message,true); }
   renderAll();
-  await recompute();
+  // Balance-affecting edits (topology, recipes, fields) flag the sim stale; pure
+  // moves (dragging a node) only need saving, not a re-run.
+  if(balance) markStale(); else markDirty();
 }
 async function replaceWorld(next, {record=true}={}){
   if(record) snapshot();
   try{ WORLD = await callApi("set_world", next); reindex(); }
   catch(err){ toast(err.message,true); }
   renderAll();
-  await recompute();
+  markStale();
 }
 function upsert(kind, entity){ return {op:"upsert", kind, entity}; }
 function removeEdit(kind, id){ return {op:"remove", kind, id}; }
@@ -528,9 +548,36 @@ async function recompute(){
   const sr={};
   for(const id of ids){ try{ sr[id] = await callApi("recompute",{scope:"system",systemId:id}); }catch(e){} }
   SYSTEM_REPORTS = sr;
+  STALE = false; updateRunState();
   paintOverlay();
   renderReadout();
 }
+// "Run simulation" — the only path that recomputes the balance on demand.
+async function runSimulation(){
+  const btn=$("#runBtn"); if(btn){ btn.disabled=true; }
+  try{ await recompute(); }
+  finally{ if(btn){ btn.disabled=false; } }
+}
+
+/* ---- autosave: dirty flag + 10-minute timer + explicit save (no per-edit write) ---- */
+let DIRTY = false;
+function markDirty(){ DIRTY = true; const s=$("#saveState"); if(s){ s.textContent="unsaved"; s.className="save-state dirty"; } }
+async function saveNow({quiet=false}={}){
+  if(!hasBackend()) return;
+  try{
+    const res = await callApi("save_autosave");
+    DIRTY = false;
+    const s=$("#saveState"); if(s){ s.textContent="saved"; s.className="save-state"; }
+    if(!quiet && res && res.saved===false) toast("already saved");
+    else if(!quiet) toast("saved");
+  }catch(err){ if(!quiet) toast(err.message,true); }
+}
+// Timer flush: every 10 minutes, write only if something changed.
+setInterval(()=>{ if(DIRTY) saveNow({quiet:true}); }, 600000);
+// Best-effort flush as the page/app closes, so at most the last few edits are at
+// risk between timer ticks (the user opted into timer-based autosave).
+window.addEventListener("beforeunload", ()=>{ if(DIRTY) saveNow({quiet:true}); });
+document.addEventListener("visibilitychange", ()=>{ if(document.hidden && DIRTY) saveNow({quiet:true}); });
 
 function undo(){
   const prev = HISTORY.pop(); updateUndo();
@@ -573,8 +620,14 @@ function renderRail(){
   rail.append(scroll);
 
   scroll.append(el("div",{class:"rail-head"},
+    el("button",{class:"tool-btn run-btn",id:"runBtn",title:"Run the balance simulation on the current world",onclick:runSimulation},"▶ Run"),
+    el("button",{class:"tool-btn",id:"saveBtn",title:"Save the working world now (also autosaves every 10 min)",onclick:()=>saveNow()},"💾 Save"),
     el("button",{class:"tool-btn",id:"undoBtn",disabled:HISTORY.length===0,title:"Undo (Ctrl+Z)",onclick:undo},"↶ Undo"),
-    el("button",{class:"tool-btn",title:"Save / load project",onclick:openProjectDialog},"⇄ Project")
+    el("button",{class:"tool-btn",title:"Load / save a named project file",onclick:openProjectDialog},"⇄ Project")
+  ));
+  scroll.append(el("div",{class:"rail-status"},
+    el("span",{class:"stale-flag",id:"staleDot",style:{display:"none"}},"● simulation out of date — press Run"),
+    el("span",{class:"save-state",id:"saveState"}, DIRTY?"unsaved":"saved")
   ));
 
   scroll.append(miImportSection());
@@ -995,9 +1048,9 @@ function endNodeDrag(e){
   const d=nodeDrag; nodeDrag=null; d.dom.classList.remove("dragging");
   if(!d.moved){ return; }
   const x=d._nx!=null?d._nx:d.startX, y=d._ny!=null?d._ny:d.startY;
-  if(d.kind==="system"){ const s=BY.systems[d.id]; applyEdits([upsert("system",{...s,x,y})]); }
-  else if(d.kind==="pipeNode"){ const j=BY.junctions[d.id]; applyEdits([upsert("pipeNode",{...j,x,y})]); }
-  else { const n=BY.nodes[d.id]; applyEdits([upsert("node",{...n,x,y})]); }
+  if(d.kind==="system"){ const s=BY.systems[d.id]; applyEdits([upsert("system",{...s,x,y})],{balance:false}); }
+  else if(d.kind==="pipeNode"){ const j=BY.junctions[d.id]; applyEdits([upsert("pipeNode",{...j,x,y})],{balance:false}); }
+  else { const n=BY.nodes[d.id]; applyEdits([upsert("node",{...n,x,y})],{balance:false}); }
 }
 function liveRedrawEdges(){
   // recompute anchors from current DOM positions and redraw edges only
@@ -1846,31 +1899,38 @@ function miImportSection(){
   const sec=el("div",{class:"rail-section"});
   const open={v:false};
   const head=el("div",{class:"rail-section-head"},
-    el("p",{class:"eyebrow quiet",style:{margin:0}},"Import MI"),
-    el("button",{class:"rail-add",title:"Import Modern Industrialization recipes",onclick:()=>{ open.v=!open.v; render(); }},"+"));
+    el("p",{class:"eyebrow quiet",style:{margin:0}},"Import recipes"),
+    el("button",{class:"rail-add",title:"Import machine/item/recipe data from files or folders",onclick:()=>{ open.v=!open.v; render(); }},"+"));
   sec.append(head);
   const bodyHost=el("div"); sec.append(bodyHost);
   function render(){
     bodyHost.textContent="";
     if(!open.v) return;
-    const inp=el("input",{class:"field-input mono",type:"text",placeholder:"path to extracted MI jar dir",spellcheck:"false"});
+    // One path per line: an extracted jar directory, a recipe folder, or any set
+    // of individual MI-format recipe JSON files (from any mod with the same
+    // structure). The backend gathers every machine recipe among them.
+    const inp=el("textarea",{class:"field-input mono",rows:"3",spellcheck:"false",
+      placeholder:"one path per line —\nextracted jar dir, recipe folder,\nor individual recipe .json files"});
     const msg=el("span",{class:"mi-msg"});
-    const btn=el("button",{class:"tool-btn",onclick:run},"Import recipes");
+    const btn=el("button",{class:"tool-btn",onclick:run},"Import");
     async function run(){
-      const p=inp.value.trim(); if(!p) return;
+      const paths=inp.value.split("\n").map(s=>s.trim()).filter(Boolean);
+      if(!paths.length) return;
       btn.disabled=true; btn.textContent="Importing…"; msg.className="mi-msg"; msg.textContent="";
       try{
         snapshot();
-        const res=await callApi("import_mi_dir", p, {});
+        const res=await callApi("import_recipe_files", paths, {});
         WORLD=res.world; reindex();
         const st=res.stats||{};
         msg.className="mi-msg"; msg.textContent=`Imported ${st.recipesImported||0} recipes · ${st.items||0} items · ${st.machineDefs||0} machines`;
-        renderAll(); await recompute();
+        // Import is a deliberate, catalog-sized change: it's already persisted by
+        // the backend, so clear the dirty flag and run the sim once.
+        DIRTY=false; renderAll(); await recompute();
       }catch(err){ msg.className="mi-msg bad"; msg.textContent=err.message; }
-      finally{ btn.disabled=false; btn.textContent="Import recipes"; }
+      finally{ btn.disabled=false; btn.textContent="Import"; }
     }
     bodyHost.append(el("div",{class:"mi-body"}, inp, btn, msg,
-      el("span",{class:"field-hint"},"reads an extracted MI jar directory (Python host only)")));
+      el("span",{class:"field-hint"},"paths are on the machine running the backend. folders are scanned recursively; the imported catalog is saved into the project (no re-import needed).")));
   }
   return sec;
 }
@@ -1938,9 +1998,10 @@ async function boot(){
   window.addEventListener("resize", ()=>applyView());
 }
 
-// Hook render to also refresh the palette (defs may have changed).
+// Hook render to also refresh the palette (defs may have changed) and restore the
+// Run/Save indicator state onto the freshly-rebuilt rail.
 const _renderAll = renderAll;
-renderAll = function(){ _renderAll(); refreshPalette(); };
+renderAll = function(){ _renderAll(); refreshPalette(); updateRunState(); };
 
 if(window.pywebview && window.pywebview.api) boot();
 window.addEventListener("pywebviewready", boot);

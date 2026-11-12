@@ -72,11 +72,28 @@ def test_edits_autosave_and_restore(tmp_path: Path) -> None:
     autosave = tmp_path / "autosave.psim.json"
     api = app.build_api(None, autosave)
     api.apply_edit(
-        {"op": "upsert", "kind": "item", "entity": {"id": "ore", "name": "Ore", "category": "solid"}}
+        {
+            "op": "upsert",
+            "kind": "item",
+            "entity": {"id": "ore", "name": "Ore", "category": "solid"},
+        }
     )
+    # Autosave is no longer per-edit (it would thrash the disk on a big world):
+    # the edit marks the World dirty and the flush is explicit (timer / Save).
+    assert not autosave.is_file()
+    flushed = api.save_autosave()
+    assert flushed["data"]["saved"] is True
     assert autosave.is_file()
     restored = app.build_api(None, autosave)
     assert [i["id"] for i in restored.get_world()["data"]["items"]] == ["ore"]
+
+
+def test_save_autosave_is_noop_when_clean(tmp_path: Path) -> None:
+    autosave = tmp_path / "autosave.psim.json"
+    api = app.build_api(None, autosave)
+    # Nothing changed yet → nothing to write.
+    assert api.save_autosave()["data"]["saved"] is False
+    assert not autosave.is_file()
 
 
 def test_corrupt_autosave_is_ignored(tmp_path: Path) -> None:
@@ -86,7 +103,9 @@ def test_corrupt_autosave_is_ignored(tmp_path: Path) -> None:
     assert api.get_world()["data"].get("nodes", []) == []
 
 
-def test_explicit_project_wins_over_autosave(tmp_path: Path, furnace_chest: World) -> None:
+def test_explicit_project_wins_over_autosave(
+    tmp_path: Path, furnace_chest: World
+) -> None:
     autosave = tmp_path / "autosave.psim.json"
     save_project(World(items=[], nodes=[]), autosave)
     project = tmp_path / "chain.json"
@@ -125,9 +144,15 @@ def test_ui_has_export_token_once() -> None:
 
 def test_server_exposes_api_methods() -> None:
     expected = {
-        "get_world", "set_world", "apply_edit", "recompute",
-        "load_project", "save_project", "import_mi_dir",
-        "export_library", "import_library",
+        "get_world",
+        "set_world",
+        "apply_edit",
+        "recompute",
+        "load_project",
+        "save_project",
+        "import_mi_dir",
+        "export_library",
+        "import_library",
     }
     assert expected <= server.API_METHODS
     assert not any(m.startswith("_") for m in server.API_METHODS)

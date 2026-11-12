@@ -37,6 +37,7 @@ from .mi_import import (
     MachineSpec,
     MiImport,
     import_mi_library,
+    import_mi_sources,
 )
 from .project import (
     load_project,
@@ -76,4 +77,5 @@ __all__ = [
     "MachineSpec",
     "MiImport",
     "import_mi_library",
+    "import_mi_sources",
 ]

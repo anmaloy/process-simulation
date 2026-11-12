@@ -301,6 +301,15 @@ def _resolve_item(
     if not live:
         return []
 
+    # Fast path: a single carrying edge has no contention — its flow is just the
+    # min of the source's supply, the sink's demand, and the pipe throughput.
+    # This is the overwhelmingly common case (a point-to-point pipe), and skipping
+    # the residual-round machinery is a large constant-factor win on big worlds.
+    if len(live) == 1:
+        e = live[0]
+        f = min(supply.get(e.source, 0.0), demand.get(e.sink, 0.0), e.throughput)
+        return [(e, f)] if f > _EPS else []
+
     by_source: dict[str, list[_Edge]] = {}
     by_sink: dict[str, list[_Edge]] = {}
     for e in live:
@@ -617,6 +626,7 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     def _route(
         supply_duty: dict[str, float],
         demand_amt: dict[str, dict[str, float]],
+        keys: list[str] | None = None,
     ) -> tuple[
         dict[str, dict[str, float]],
         dict[str, dict[str, float]],
@@ -640,6 +650,12 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         each key is tracked across supply keys (``demand_rem``) so a key satisfied
         by several items isn't over-filled. ``supplied`` is keyed by the sink's
         demand key, ``drained`` by the source's supply key.
+
+        ``keys`` optionally restricts resolution to a subset of ``supply_keys``
+        (used by the per-node probe, which only needs the keys that can satisfy
+        the probed node's own inputs — resolving the rest would compute shares it
+        discards). A key outside the subset contributes nothing to the probed
+        node's availability, so the restricted result is exact for that node.
         """
 
         supplied: dict[str, dict[str, float]] = {nid: {} for nid in ids}
@@ -651,7 +667,7 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
             nid: dict(demand_amt.get(nid, {})) for nid in ids
         }
         pipes: dict[str, dict[str, object]] = {}
-        for supply_key in supply_keys:
+        for supply_key in supply_keys if keys is None else keys:
             category = _category_of(index, supply_key)
             # Each producer's output of this one item (no cross-key commit needed —
             # a supply key is resolved exactly once).
@@ -713,6 +729,20 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         for nid in ids
     }
 
+    # Per node: the supply keys that can satisfy any of its inputs. The probe only
+    # needs these — a supply key the node doesn't consume contributes nothing to
+    # its availability — so restricting the probe route to them turns the whole
+    # relaxation from "re-route every supply key for every node" into
+    # "re-route only the node's own feeds", the difference between O(N²) and O(N)
+    # on a long chain. (Internal inputs only: feedstock keys have no in-scope
+    # producer and route to nothing anyway, and their availability is never read.)
+    relevant_supply_keys: dict[str, list[str]] = {}
+    for nid in ids:
+        rel: set[str] = set()
+        for k in internal_inputs[nid]:
+            rel.update(match_sources.get(k, ()))
+        relevant_supply_keys[nid] = sorted(rel)
+
     def _relax_inputs(
         dd: dict[str, float],
     ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
@@ -773,7 +803,7 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
                 # simply not routed to it; a plentiful, reachable carrier is not).
                 demand_amt = dict(base_demand)
                 demand_amt[nid] = {k: v * dd[nid] for k, v in comp.inputs.items()}
-                avail, _, _ = _route(duty, demand_amt)
+                avail, _, _ = _route(duty, demand_amt, keys=relevant_supply_keys[nid])
                 probe_avail[nid] = avail[nid]
                 lim = dd[nid]
                 for k in internal_inputs[nid]:
