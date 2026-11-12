@@ -70,6 +70,7 @@ from .io import (
     export_library,
     import_library,
     import_mi_library,
+    import_mi_sources,
     library_from_dict,
     library_to_dict,
     load_library,
@@ -137,9 +138,13 @@ class Api:
         library_dir: Path | None = None,
     ) -> None:
         self._world: World = world if world is not None else World()
-        #: When set, the current World is written here after every change, so the
-        #: app restores its last state on the next launch (persistence).
+        #: When set, the current World is written here so the app restores its last
+        #: state on the next launch (persistence). Autosave is **not** per-edit: an
+        #: edit only marks the World dirty; the actual write happens on a timer /
+        #: explicit save (:meth:`save_autosave`), keeping big worlds responsive.
         self._autosave_path: Path | None = autosave_path
+        #: True when the in-memory World has unsaved changes since the last write.
+        self._dirty: bool = False
         #: A folder of persisted libraries (e.g. an imported MI catalog). Its
         #: contents are merged into the World at startup and whenever a project is
         #: loaded, so the machine catalog is always available without re-importing;
@@ -187,19 +192,49 @@ class Api:
         except OSError:
             pass
 
-    def _persist(self) -> None:
+    def _persist(self) -> bool:
         """Write the current World to the autosave path, if one is configured.
 
-        Failures are swallowed: a disk hiccup must not break an in-memory edit
-        (the next successful change re-persists the whole World anyway).
+        Returns ``True`` when a write happened. Failures are swallowed: a disk
+        hiccup must not break an in-memory edit (the World stays dirty, so the
+        next save retries the whole World anyway).
         """
 
         if self._autosave_path is None:
-            return
+            return False
         try:
             save_project(self._world, self._autosave_path)
+            self._dirty = False
+            return True
         except OSError:
-            pass
+            return False
+
+    def save_autosave(self) -> dict[str, Any]:
+        """Flush the working World to the autosave file (timer / manual save).
+
+        Edits no longer write on every change — they only mark the World dirty —
+        so this is how the working state is persisted: the UI calls it on a timer
+        (e.g. every 10 minutes), on an explicit *Save*, and best-effort as the
+        page unloads. It writes only when there is something to save; a clean
+        World reports ``saved: false`` rather than rewriting an identical file.
+        """
+
+        if not self._dirty:
+            return _ok(
+                {
+                    "saved": False,
+                    "dirty": False,
+                    "path": str(self._autosave_path) if self._autosave_path else None,
+                }
+            )
+        wrote = self._persist()
+        return _ok(
+            {
+                "saved": wrote,
+                "dirty": self._dirty,
+                "path": str(self._autosave_path) if self._autosave_path else None,
+            }
+        )
 
     # ------------------------------------------------------------------ #
     # World state — read / replace / edit.
@@ -217,7 +252,7 @@ class Api:
             self._world = World.from_dict(world)
         except _EXPECTED_ERRORS as exc:
             return _err(exc)
-        self._persist()
+        self._dirty = True  # persisted on the autosave timer / explicit save
         return _ok(self._world.to_dict())
 
     def apply_edit(self, edit: dict[str, Any]) -> dict[str, Any]:
@@ -232,7 +267,7 @@ class Api:
             self._mutate(edit)
         except _EXPECTED_ERRORS as exc:
             return _err(exc)
-        self._persist()
+        self._dirty = True  # persisted on the autosave timer / explicit save
         return _ok(self._world.to_dict())
 
     def _mutate(self, edit: dict[str, Any]) -> None:
@@ -397,12 +432,14 @@ class Api:
     ) -> dict[str, Any]:
         """Import Modern Industrialization recipes from an extracted jar dir.
 
-        Builds a library from the MI recipe data under ``path`` (for the chosen
-        ``machineTypes``, default the phase-3 subset) and merges it into the
-        current World, resolving id collisions per ``onConflict`` — which here
-        defaults to ``skip`` (not the library default ``rename``) so re-importing
-        the same jar is idempotent rather than duplicating every entity. The
-        payload is the usual import shape plus ``stats`` describing what was read.
+        Builds a library from the MI recipe data under ``path`` (every discovered
+        machine recipe type, or the subset named by ``machineTypes``) and merges it
+        into the current World, resolving id collisions per ``onConflict`` — which
+        here defaults to ``update`` (not the library default ``rename``) so
+        re-importing the same jar refreshes entities in place rather than
+        duplicating or renaming them. The payload is the usual import shape plus
+        ``stats`` describing what was read. See :meth:`import_recipe_files` for the
+        generic file/folder importer that shares this parser.
         """
 
         options = options or {}
@@ -434,6 +471,45 @@ class Api:
         self._world = result.world
         # Persist the catalog to the app's library folder so it is auto-loaded on
         # every future launch / project load — no re-import needed.
+        self._save_library(imported.library, _slug(imported.library.name))
+        self._persist()
+        payload = self._import_payload(result)
+        payload["stats"] = imported.stats
+        return _ok(payload)
+
+    def import_recipe_files(
+        self, paths: list[str], options: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Import MI-format recipes from a user-chosen set of files/directories.
+
+        The generic importer: ``paths`` is any mix of JSON files and folders
+        (a whole extracted jar, a single recipe directory, or a hand-picked set of
+        recipe files from another mod with the same structure). Every machine-shaped
+        recipe found is parsed and merged into the current World, and — exactly like
+        :meth:`import_mi_dir` — the resulting catalog is both persisted to the
+        library folder (so it auto-loads on later launches without re-importing)
+        and baked into the autosaved World. Collisions default to ``update`` so
+        re-importing the same files is idempotent.
+        """
+
+        options = options or {}
+        machine_types = options.get("machineTypes")
+        try:
+            imported = import_mi_sources(
+                [Path(p) for p in paths],
+                machine_types=(
+                    tuple(machine_types) if machine_types is not None else None
+                ),
+                name=options.get("name"),
+            )
+            result = import_library(
+                self._world,
+                imported.library,
+                on_conflict=ConflictPolicy(options.get("onConflict", "update")),
+            )
+        except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
+            return _err(exc)
+        self._world = result.world
         self._save_library(imported.library, _slug(imported.library.name))
         self._persist()
         payload = self._import_payload(result)

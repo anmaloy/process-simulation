@@ -46,6 +46,8 @@ thin API layer); it builds a Library and never touches an existing World.
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -85,6 +87,7 @@ __all__ = [
     "STEAM_ID",
     "MiImport",
     "import_mi_library",
+    "import_mi_sources",
 ]
 
 #: The Modern Industrialization machine recipe ``type`` names (bare, without the
@@ -1058,6 +1061,7 @@ def import_mi_library(
     machine_types: tuple[str, ...] | None = None,
     name: str | None = None,
     include_energy: bool = True,
+    recipe_files: Sequence[str | Path] | None = None,
 ) -> MiImport:
     """Build a :class:`Library` from the machine recipes under ``root``.
 
@@ -1071,6 +1075,15 @@ def import_mi_library(
     crafting/smelting recipes are always skipped. Pass ``machine_types`` (bare
     type names, e.g. ``("macerator", "mixer")``) to import only a subset.
 
+    ``recipe_files`` overrides the directory scan: when given, exactly those JSON
+    files are parsed (any that aren't machine recipes are skipped) instead of
+    ``root``'s recipe directory being globbed. ``root`` is then used only to
+    locate the optional support data (lang display names, fuel maps, tag
+    definitions), each of which is loaded best-effort and simply absent if the
+    files aren't there — so a loose folder (or a hand-picked set) of MI-format
+    recipe files from another mod imports without the full jar layout. This backs
+    the UI's generic file importer (:meth:`Api.import_recipe_files`).
+
     The result is never merged here — hand its ``library`` to
     :func:`~process_sim.io.library.import_library`.
 
@@ -1081,7 +1094,16 @@ def import_mi_library(
     """
 
     root = Path(root)
-    recipe_dir = _resolve_recipe_dir(root)
+    if recipe_files is None:
+        recipe_dir = _resolve_recipe_dir(root)
+        scan_files = sorted(recipe_dir.rglob("*.json"))
+        rel_base = recipe_dir
+    else:
+        # Explicit file set (the generic importer): parse these verbatim, and
+        # derive recipe ids relative to ``root`` where possible so re-importing
+        # the same files stays idempotent.
+        scan_files = [Path(f) for f in recipe_files]
+        rel_base = root
     lang = _load_lang(root)
     fuels = _load_fluid_fuels(root)
     item_fuels, tag_fuels = _load_item_fuels(root)
@@ -1096,7 +1118,7 @@ def import_mi_library(
     files_scanned = 0
     recipes_skipped = 0
 
-    for path in sorted(recipe_dir.rglob("*.json")):
+    for path in scan_files:
         files_scanned += 1
         data = _load_json(path)
         if not isinstance(data, dict):
@@ -1109,7 +1131,10 @@ def import_mi_library(
             continue
         ns, machine_type = parsed
 
-        rel = path.relative_to(recipe_dir).with_suffix("").as_posix()
+        try:
+            rel = path.relative_to(rel_base).with_suffix("").as_posix()
+        except ValueError:
+            rel = path.stem  # a file outside the base: key it by its own name
         recipe_id = f"mi:{rel}"
 
         item_in = _entries(data, "item_inputs")
@@ -1273,6 +1298,69 @@ def import_mi_library(
         "byType": {t: len(agg["recipe_ids"]) for t, agg in by_type.items()},
     }
     return MiImport(library=library, stats=stats)
+
+
+def _collect_recipe_files(paths: Sequence[str | Path]) -> tuple[list[Path], Path]:
+    """Expand a mix of files and directories into a flat list of JSON files.
+
+    Returns ``(files, base)``: every ``*.json`` under each directory (recursively)
+    plus each explicitly-named file, de-duplicated and sorted, and a ``base``
+    directory to resolve recipe ids and support data against (the common ancestor
+    of the inputs — the extracted-jar root when the paths point inside one).
+    """
+
+    expanded: list[Path] = []
+    roots: list[Path] = []
+    for raw in paths:
+        p = Path(raw)
+        if p.is_dir():
+            expanded.extend(sorted(p.rglob("*.json")))
+            roots.append(p)
+        elif p.is_file():
+            expanded.append(p)
+            roots.append(p.parent)
+        else:
+            raise MalformedFileError(f"import path not found: {p}")
+    if not expanded:
+        raise MalformedFileError("no JSON files found in the given import paths")
+    # De-dupe while keeping a stable order.
+    seen: set[Path] = set()
+    files = [f for f in expanded if not (f in seen or seen.add(f))]
+    try:
+        base = Path(os.path.commonpath([str(r) for r in roots]))
+    except ValueError:
+        base = roots[0]  # paths on different drives (Windows): no common ancestor
+    return files, base
+
+
+def import_mi_sources(
+    paths: Sequence[str | Path],
+    *,
+    machine_types: tuple[str, ...] | None = None,
+    name: str | None = None,
+    include_energy: bool = True,
+) -> MiImport:
+    """Import MI-format recipes from an arbitrary set of files and/or directories.
+
+    The generic counterpart to :func:`import_mi_library`: instead of requiring an
+    extracted jar's exact directory layout, it takes whatever files or folders the
+    user points at, gathers every JSON recipe among them, and parses the
+    machine-shaped ones (any non-vanilla type carrying the MI recipe structure).
+    A directory contributes every ``*.json`` under it; a file contributes itself.
+    Support data (display names, fuel maps, tag membership) is loaded from the
+    common ancestor when it happens to be a jar root, and is simply absent
+    otherwise. This is how another mod's recipes — same structure, different
+    packaging — import with no code change.
+    """
+
+    files, base = _collect_recipe_files(paths)
+    return import_mi_library(
+        base,
+        machine_types=machine_types,
+        name=name,
+        include_energy=include_energy,
+        recipe_files=files,
+    )
 
 
 def _tag_file(root: Path, tag_id: str) -> Path:

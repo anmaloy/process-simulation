@@ -19,6 +19,7 @@ from process_sim.io import (
     CABLE_TIER_EU,
     MACHINE_CATALOG,
     import_mi_library,
+    import_mi_sources,
     load_project,
 )
 from process_sim.model import Category
@@ -131,6 +132,61 @@ def _recipe(lib, rid):
 
 def _item(lib, iid):
     return next(i for i in lib.items if i.id == iid)
+
+
+# --------------------------------------------------------------------------- #
+# Generic importer: arbitrary files / directories, not the fixed jar layout.
+# --------------------------------------------------------------------------- #
+
+
+def test_sources_import_from_directory_matches_jar_root(mi_root):
+    # Pointing the generic importer at the recipe directory yields the same parsed
+    # recipes as pointing import_mi_library at the jar root.
+    recipe_dir = mi_root / "data" / NS / "recipe"
+    from_dir = import_mi_sources([recipe_dir])
+    from_root = import_mi_library(mi_root)
+    assert from_dir.stats["recipesImported"] == from_root.stats["recipesImported"]
+    assert {r.id for r in from_dir.library.recipes if r.machine_type} == {
+        r.id for r in from_root.library.recipes if r.machine_type
+    }
+
+
+def test_sources_import_a_hand_picked_file_set(mi_root):
+    recipe_dir = mi_root / "data" / NS / "recipe"
+    imp = import_mi_sources(
+        [recipe_dir / "macerator" / "iron.json", recipe_dir / "mixer" / "clay.json"]
+    )
+    assert imp.stats["recipesImported"] == 2
+    assert set(imp.stats["byType"]) == {"macerator", "mixer"}
+    # Recipe ids are stable (relative to the common base), so re-importing the
+    # same files via the directory would collide-and-update, not duplicate.
+    parsed_ids = {r.id for r in imp.library.recipes if r.id.startswith("mi:")}
+    assert parsed_ids == {"mi:macerator/iron", "mi:mixer/clay"}
+
+
+def test_sources_import_missing_path_errors():
+    from process_sim.io import ProcessSimIOError
+
+    with pytest.raises(ProcessSimIOError):
+        import_mi_sources(["/no/such/path/here.json"])
+
+
+def test_api_import_recipe_files_persists_and_merges(mi_root, tmp_path):
+    recipe_dir = mi_root / "data" / NS / "recipe"
+    autosave = tmp_path / "autosave.psim.json"
+    libdir = tmp_path / "libs"
+    api = Api(autosave_path=autosave, library_dir=libdir)
+    res = api.import_recipe_files([str(recipe_dir / "macerator" / "iron.json")])
+    assert res["ok"] is True
+    assert res["data"]["stats"]["recipesImported"] == 1
+    # Baked into the autosaved world + saved as a reusable library catalog.
+    assert autosave.is_file()
+    assert list(libdir.glob("*.psim-lib.json"))
+    # A relaunch restores the catalog without re-importing.
+    restored = Api(load_project(autosave), autosave_path=autosave, library_dir=libdir)
+    assert any(
+        r["machineType"] == "macerator" for r in restored.get_world()["data"]["recipes"]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -556,7 +612,9 @@ def test_api_import_mi_dir_refreshes_corrected_reference_data(mi_root):
     tid, good = target["id"], target["eu"]
     target["eu"] = 1.0
     api.set_world(world)
-    assert next(i for i in api.get_world()["data"]["items"] if i["id"] == tid)["eu"] == 1.0
+    assert (
+        next(i for i in api.get_world()["data"]["items"] if i["id"] == tid)["eu"] == 1.0
+    )
     # Re-importing refreshes it back to the jar's (corrected) value, in place.
     res = api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})["data"]
     assert tid in res["updatedIds"]

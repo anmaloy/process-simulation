@@ -219,8 +219,12 @@ def test_empty_collections_emit_as_lists() -> None:
             storage=StorageSpec(category=Category.LIQUID, capacity=64000),
             slots=[SlotGroup(Category.LIQUID, Direction.IN, 1, 16000)],
         ),
-        MachineNode(id="n1", machine_def_id="boiler", recipe_id="burn_coal", x=10, y=20),
-        PipeEnd(node_id="n1", role=PipeEndRole.IO, insert_priority=0, extract_priority=5),
+        MachineNode(
+            id="n1", machine_def_id="boiler", recipe_id="burn_coal", x=10, y=20
+        ),
+        PipeEnd(
+            node_id="n1", role=PipeEndRole.IO, insert_priority=0, extract_priority=5
+        ),
         Pipe(
             id="p1",
             category=Category.LIQUID,
@@ -294,7 +298,9 @@ def _sample_world() -> World:
             ),
         ],
         nodes=[
-            MachineNode(id="n_furnace", machine_def_id="furnace", recipe_id="smelt", x=0, y=0),
+            MachineNode(
+                id="n_furnace", machine_def_id="furnace", recipe_id="smelt", x=0, y=0
+            ),
             MachineNode(
                 id="n_boiler",
                 machine_def_id="boiler",
@@ -409,7 +415,9 @@ def test_stack_concrete_item_resource_id_and_sparse_probability() -> None:
 
 
 def test_item_tag_flag_round_trips_and_is_sparse() -> None:
-    tag = Item(id="c:gears/iron", name="Iron Gears", category=Category.SOLID, is_tag=True)
+    tag = Item(
+        id="c:gears/iron", name="Iron Gears", category=Category.SOLID, is_tag=True
+    )
     assert tag.to_dict()["isTag"] is True
     assert Item.from_dict(tag.to_dict()).is_tag is True
     # A concrete item never carries the flag in the wire format.

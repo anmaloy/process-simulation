@@ -115,7 +115,9 @@ def _tiny_world() -> World:
                 slots=[SlotGroup(Category.SOLID, Direction.OUT, 1, 64)],
             )
         ],
-        nodes=[MachineNode(id="asm1", machine_def_id="assembler", recipe_id="make_widget")],
+        nodes=[
+            MachineNode(id="asm1", machine_def_id="assembler", recipe_id="make_widget")
+        ],
     )
 
 
@@ -123,7 +125,9 @@ def test_export_all_is_the_definitional_subset(powered_process):
     lib = export_library(powered_process)
     assert {i.id for i in lib.items} == {i.id for i in powered_process.items}
     assert {r.id for r in lib.recipes} == {r.id for r in powered_process.recipes}
-    assert {d.id for d in lib.machine_defs} == {d.id for d in powered_process.machine_defs}
+    assert {d.id for d in lib.machine_defs} == {
+        d.id for d in powered_process.machine_defs
+    }
 
 
 def test_export_selects_only_requested_ids(powered_process):
@@ -195,7 +199,10 @@ def test_import_rename_remaps_and_rewrites_references(powered_process):
     # Export the smelt recipe + its item, then import back into the SAME world,
     # forcing collisions on every id.
     lib = export_library(
-        powered_process, item_ids=["ingot"], recipe_ids=["smelt"], machine_def_ids=["smelter"]
+        powered_process,
+        item_ids=["ingot"],
+        recipe_ids=["smelt"],
+        machine_def_ids=["smelter"],
     )
     result = import_library(powered_process, lib, on_conflict=ConflictPolicy.RENAME)
     merged = result.world
@@ -222,10 +229,14 @@ def test_import_rename_remaps_and_rewrites_references(powered_process):
 def test_import_rename_avoids_existing_suffix(powered_process):
     # Pre-seed the collision target AND its first rename candidate so the
     # generator must skip 'ore-2' and land on 'ore-3'.
-    seed = export_library(powered_process, item_ids=["ore"], recipe_ids=[], machine_def_ids=[])
+    seed = export_library(
+        powered_process, item_ids=["ore"], recipe_ids=[], machine_def_ids=[]
+    )
     target = import_library(_tiny_world(), seed).world
     target.items.append(Item(id="ore-2", name="Decoy", category=Category.SOLID))
-    lib = export_library(powered_process, item_ids=["ore"], recipe_ids=[], machine_def_ids=[])
+    lib = export_library(
+        powered_process, item_ids=["ore"], recipe_ids=[], machine_def_ids=[]
+    )
     result = import_library(target, lib, on_conflict=ConflictPolicy.RENAME)
     assert result.id_remap == {"ore": "ore-3"}
 
@@ -301,7 +312,9 @@ def test_non_integer_version_raises_malformed(tmp_path):
 def test_newer_version_raises_unsupported(tmp_path):
     path = tmp_path / "future.json"
     path.write_text(
-        json.dumps({"schemaVersion": SCHEMA_VERSION + 1, "kind": "project", "world": {}})
+        json.dumps(
+            {"schemaVersion": SCHEMA_VERSION + 1, "kind": "project", "world": {}}
+        )
     )
     with pytest.raises(UnsupportedVersionError, match="newer"):
         load_project(path)

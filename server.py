@@ -159,6 +159,11 @@ def main():
     except KeyboardInterrupt:
         print("\nshutting down")
         httpd.shutdown()
+    finally:
+        # Autosave is timer/explicit, not per-edit, so flush any unsaved working
+        # state as the server stops (Ctrl-C). A clean World is a no-op.
+        with API_LOCK:
+            API.save_autosave()
 
 
 if __name__ == "__main__":
