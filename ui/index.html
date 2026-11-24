@@ -3081,18 +3081,90 @@ function revealOnCanvas(kind, id){
 
 // Kept outside the section: the rail is rebuilt on every selection/edit, which
 // used to collapse the panel and throw away the typed paths.
-const IMPORT_UI = {open:false, text:"", msg:"", bad:false, busy:false};
+const IMPORT_UI = {open:false, mode:"pack", text:"", pack:"", msg:"", bad:false, busy:false};
 function miImportSection(){
   const sec=el("div",{class:"rail-section","data-fk":"import"});
   const open={get v(){ return IMPORT_UI.open; }, set v(x){ IMPORT_UI.open=x; }};
   const head=el("div",{class:"rail-section-head"},
     el("p",{class:"eyebrow quiet",style:{margin:0}},"Import recipes"),
-    el("button",{class:"rail-add",title:"Import machine/item/recipe data from files or folders",onclick:()=>{ open.v=!open.v; render(); }},"+"));
+    el("button",{class:"rail-add",title:"Import machine/item/recipe data from a modpack, or from files or folders",onclick:()=>{ open.v=!open.v; render(); }},"+"));
   sec.append(head);
   const bodyHost=el("div"); sec.append(bodyHost);
+  const setMsg=(t,bad)=>{ IMPORT_UI.msg=t; IMPORT_UI.bad=!!bad; const m=$("#rail .mi-msg"); if(m){ m.textContent=t; m.className="mi-msg"+(bad?" bad":""); } };
+  const setBusy=b=>{
+    IMPORT_UI.busy=b;
+    document.querySelectorAll("#rail .mi-body .tool-btn").forEach(x=>{ x.disabled=b; });
+    const r=$("#rail .mi-body .mi-run"); if(r) r.textContent=b?"Importing…":"Import";
+  };
+  // Merge an import result into the page: one undo step, then run the sim once.
+  async function applyImport(method, args, summarize){
+    setBusy(true); setMsg("");
+    await enqueue(async()=>{
+      try{
+        const before=structuredClone(WORLD);
+        const res=await callApi(method, ...args);
+        HISTORY.push(before); if(HISTORY.length>100) HISTORY.shift();
+        WORLD=res.world;
+        const [text,bad]=summarize(res);
+        setMsg(text, bad);
+        // Import is a deliberate, catalog-sized change: it's already persisted by
+        // the backend, so clear the dirty flag and run the sim once.
+        DIRTY=false; IMPORT_UI.busy=false; renderAll(); await recompute();
+      }catch(err){ setMsg(err.message, true); }
+      finally{ setBusy(false); }
+    });
+  }
+  const counts=res=>{
+    const st=res.stats||{}, ext=(res.extendedIds||[]).length, skipped=(res.skippedIds||[]).length;
+    return `${st.recipesImported||0} recipes · ${st.items||0} items · ${st.machineDefs||0} machines`
+      + (skipped? ` · ${skipped} already present`:"") + (ext? ` · ${ext} extended`:"");
+  };
+  function packSummary(res){
+    const st=res.stats||{};
+    let text=`${st.pack||"Pack"}: ${counts(res)}`;
+    if(st.usedExport){
+      text+=` — from the in-game export${st.exportedAt?` (${String(st.exportedAt).slice(0,10)})`:""}.`;
+      if(st.exportStale) text+=" Mods or scripts changed since; load the world again to refresh it.";
+    }else{
+      text+=` — read from ${st.mods||0} mods${(st.baseJars||[]).length?" + vanilla/NeoForge":""}.`;
+      text+= st.exporterInstalled
+        ? " Exporter installed: load a world once, then Import again for the pack's scripted recipes."
+        : " Recipes the pack adds by script aren't in any jar: Install exporter, load a world once, then Import again.";
+    }
+    const empty=(st.emptyTags||[]).length;
+    if(empty) text+=` ${empty} tag${empty>1?"s":""} have no known members.`;
+    return [text, false];
+  }
   function render(){
     bodyHost.textContent="";
     if(!open.v) return;
+    const modeBtn=(m,label,title)=>el("button",{class:IMPORT_UI.mode===m?"on":"",title,onclick:()=>{ IMPORT_UI.mode=m; IMPORT_UI.msg=""; render(); }},label);
+    const seg=el("span",{class:"seg"},
+      modeBtn("pack","Modpack","a whole instance: every mod jar plus the pack's own scripts and data"),
+      modeBtn("files","Files","an extracted jar, a recipe folder, or individual recipe .json files"));
+    const msg=el("span",{class:"mi-msg"+(IMPORT_UI.bad?" bad":"")}, IMPORT_UI.msg);
+    if(IMPORT_UI.mode==="pack"){
+      const inp=el("input",{class:"field-input mono",type:"text",spellcheck:"false",autocomplete:"off",
+        placeholder:"modpack instance folder",
+        oninput:e=>{ IMPORT_UI.pack=e.target.value; }});
+      inp.value=IMPORT_UI.pack; inp.defaultValue=IMPORT_UI.pack;
+      const path=()=>{ const p=IMPORT_UI.pack.trim(); if(!p){ setMsg("enter the instance folder", true); flagInvalid(inp); inp.focus(); } return p; };
+      const run=el("button",{class:"tool-btn mi-run",disabled:IMPORT_UI.busy,onclick:()=>{
+        const p=path(); if(p) applyImport("import_pack",[p,{}],packSummary);
+      }}, IMPORT_UI.busy?"Importing…":"Import");
+      const install=el("button",{class:"tool-btn",disabled:IMPORT_UI.busy,
+        title:"copy the exporter script into the pack's local KubeJS scripts; loading a world then writes the pack's final recipe list for Import",
+        onclick:async()=>{
+          const p=path(); if(!p) return;
+          try{
+            const r=await callApi("install_pack_exporter", p);
+            setMsg(`Exporter installed at ${r.path}. Launch the pack and load any world (or /reload), then Import again.`);
+          }catch(err){ setMsg(err.message, true); }
+        }},"Install exporter");
+      bodyHost.append(el("div",{class:"mi-body"}, seg, inp, el("div",{style:{display:"flex",gap:"6px"}}, run, install), msg,
+        el("span",{class:"field-hint"},"the launcher's instance folder (or the folder holding mods/). Reads every mod, vanilla and NeoForge data, and the pack's kubejs data; with the in-game export it matches the game exactly. Re-importing only adds what's new and never undoes your edits.")));
+      return;
+    }
     // One path per line: an extracted jar directory, a recipe folder, or any set
     // of individual MI-format recipe JSON files (from any mod with the same
     // structure). The backend gathers every machine recipe among them.
@@ -3100,29 +3172,12 @@ function miImportSection(){
       placeholder:"one path per line —\nextracted jar dir, recipe folder,\nor individual recipe .json files",
       oninput:e=>{ IMPORT_UI.text=e.target.value; }});
     inp.value=IMPORT_UI.text; inp.defaultValue=IMPORT_UI.text;
-    const msg=el("span",{class:"mi-msg"+(IMPORT_UI.bad?" bad":"")}, IMPORT_UI.msg);
-    const btn=el("button",{class:"tool-btn",disabled:IMPORT_UI.busy,onclick:run}, IMPORT_UI.busy?"Importing…":"Import");
-    const setMsg=(t,bad)=>{ IMPORT_UI.msg=t; IMPORT_UI.bad=!!bad; const m=$("#rail .mi-msg"); if(m){ m.textContent=t; m.className="mi-msg"+(bad?" bad":""); } };
-    async function run(){
+    const btn=el("button",{class:"tool-btn mi-run",disabled:IMPORT_UI.busy,onclick:()=>{
       const paths=IMPORT_UI.text.split("\n").map(s=>s.trim()).filter(Boolean);
       if(!paths.length){ setMsg("enter at least one path", true); return; }
-      IMPORT_UI.busy=true; btn.disabled=true; btn.textContent="Importing…"; setMsg("");
-      await enqueue(async()=>{
-        try{
-          const before=structuredClone(WORLD);
-          const res=await callApi("import_recipe_files", paths, {});
-          HISTORY.push(before); if(HISTORY.length>100) HISTORY.shift();
-          WORLD=res.world;
-          const st=res.stats||{};
-          setMsg(`Imported ${st.recipesImported||0} recipes · ${st.items||0} items · ${st.machineDefs||0} machines`);
-          // Import is a deliberate, catalog-sized change: it's already persisted by
-          // the backend, so clear the dirty flag and run the sim once.
-          DIRTY=false; IMPORT_UI.busy=false; renderAll(); await recompute();
-        }catch(err){ setMsg(err.message, true); }
-        finally{ IMPORT_UI.busy=false; const b=$("#rail .mi-body .tool-btn"); if(b){ b.disabled=false; b.textContent="Import"; } }
-      });
-    }
-    bodyHost.append(el("div",{class:"mi-body"}, inp, btn, msg,
+      applyImport("import_recipe_files",[paths,{}],res=>[`Imported ${counts(res)}`,false]);
+    }}, IMPORT_UI.busy?"Importing…":"Import");
+    bodyHost.append(el("div",{class:"mi-body"}, seg, inp, btn, msg,
       el("span",{class:"field-hint"},"paths are on the machine running the backend. folders are scanned recursively; the imported catalog is saved into the project (no re-import needed).")));
   }
   render();

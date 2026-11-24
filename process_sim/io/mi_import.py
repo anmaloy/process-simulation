@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -64,6 +64,13 @@ from ..model import (
     StorageSpec,
 )
 from .errors import MalformedFileError
+from .ingredients import (
+    Ingredient,
+    entry_amount,
+    is_fluid_ingredient,
+    parse_ingredient,
+    resolve_members,
+)
 from .library import Library
 
 __all__ = [
@@ -86,6 +93,8 @@ __all__ = [
     "ELECTRICITY_ID",
     "STEAM_ID",
     "MiImport",
+    "RecipeSource",
+    "build_import",
     "import_mi_library",
     "import_mi_sources",
 ]
@@ -964,6 +973,11 @@ def _is_machine_recipe(data: dict[str, Any]) -> bool:
         return True
     if "eu" in data or "duration" in data:
         return True
+    # Create-style processing: one mixed ``ingredients`` list → ``results``.
+    if isinstance(data.get("ingredients"), list) and isinstance(
+        data.get("results"), list
+    ):
+        return True
     return isinstance(data.get("ingredient"), dict) and "result" in data
 
 
@@ -995,6 +1009,41 @@ def _machine_type_of(
     return (ns, name) if _is_machine_recipe(data) else None
 
 
+#: ``(tag_id, category) → flattened member ids`` — how a source answers tag
+#: membership (a jar directory, a merged modpack, or a runtime export).
+TagLookup = Callable[[str, Category], "set[str]"]
+
+
+def _no_tags(_tag_id: str, _category: Category) -> set[str]:
+    return set()
+
+
+@dataclass
+class RecipeSource:
+    """Everything the recipe parser reads, already loaded into memory.
+
+    ``recipes`` yields ``(recipe_id, json)`` pairs (``json`` is ``None`` for an
+    unreadable file, counted as skipped). The rest is support data, each part
+    optional: ``lang`` (display names keyed like the game's lang files),
+    ``names`` (``id → display name``, e.g. from a runtime export — wins over
+    ``lang``), the fuel maps, ``tag_members`` (tag membership), and
+    ``condition_ok`` (whether a recipe's load conditions hold — a jar folder
+    can't know which mods are present, so it defaults to always).
+
+    :func:`import_mi_library` builds one from an extracted jar directory;
+    :mod:`process_sim.io.pack_import` builds one from a whole modpack.
+    """
+
+    recipes: Iterable[tuple[str, Any]]
+    lang: dict[str, str] = field(default_factory=dict)
+    names: dict[str, str] = field(default_factory=dict)
+    fluid_fuels: dict[str, float] = field(default_factory=dict)
+    item_fuels: dict[str, float] = field(default_factory=dict)
+    tag_fuels: dict[str, float] = field(default_factory=dict)
+    tag_members: TagLookup = _no_tags
+    condition_ok: Callable[[dict[str, Any]], bool] = lambda _data: True
+
+
 class _ItemRegistry:
     """Accumulates the unique items/fluids/tags referenced, as model Items."""
 
@@ -1003,46 +1052,110 @@ class _ItemRegistry:
         lang: dict[str, str],
         fluid_fuels: dict[str, float],
         item_fuels: dict[str, float] | None = None,
+        names: dict[str, str] | None = None,
     ) -> None:
         self._lang = lang
         self._fuels = fluid_fuels
         self._item_fuels = item_fuels or {}
+        self._names = names or {}
         self.items: dict[str, Item] = {}
+        #: Synthetic "any of" items for composite ingredients, by item id.
+        self.composites: dict[str, Ingredient] = {}
 
-    def ref(self, entry: dict[str, Any], category: Category) -> str | None:
-        """Register the entry's resource, returning its flow id (or ``None``)."""
+    def name_of(self, full_id: str, category: Category) -> str:
+        if full_id in self._names:
+            return self._names[full_id]
+        if category is Category.LIQUID:
+            return _fluid_name(full_id, self._lang)
+        return _item_name(full_id, self._lang)
 
-        if "tag" in entry:
-            raw = str(entry["tag"]).lstrip("#")
-            tag_id = _resolve_id(raw, "c")
+    def _tag_name(self, tag_id: str) -> str:
+        return _prettify(_split(tag_id)[1])
+
+    def ref(self, ing: Ingredient, category: Category) -> tuple[str, bool]:
+        """Register an ingredient's resource; return ``(flow_id, is_tag)``.
+
+        A leaf is a concrete item/fluid or a tag. A composite (vanilla array,
+        NeoForge compound / difference / intersection) becomes one synthetic
+        tag-like item ``any:<expr>`` whose members are resolved later — the
+        engine already treats "any member satisfies" for tags.
+        """
+
+        if ing.kind == "tag":
+            tag_id = str(ing.id)
             if tag_id not in self.items:
                 self.items[tag_id] = Item(
                     id=tag_id,
-                    name=_prettify(_split(tag_id)[1]),
+                    name=self._tag_name(tag_id),
                     category=category,
                     is_tag=True,
                 )
-            return tag_id
-        key = "fluid" if category is Category.LIQUID else "item"
-        raw = entry.get(key)
-        if raw is None:
-            return None
-        full = _resolve_id(str(raw), "minecraft")
-        if full not in self.items:
-            if category is Category.LIQUID:
-                name = _fluid_name(full, self._lang)
-                eu = self._fuels.get(full)
-            else:
-                name = _item_name(full, self._lang)
-                eu = self._item_fuels.get(full)
-            self.items[full] = Item(id=full, name=name, category=category, eu=eu)
-        return full
+            return tag_id, True
+        if ing.kind == "item":
+            full = str(ing.id)
+            if full not in self.items:
+                eu = (
+                    self._fuels.get(full)
+                    if category is Category.LIQUID
+                    else self._item_fuels.get(full)
+                )
+                self.items[full] = Item(
+                    id=full, name=self.name_of(full, category), category=category, eu=eu
+                )
+            return full, False
+        comp_id = f"any:{ing.canonical()}"
+        if comp_id not in self.items:
+            self.items[comp_id] = Item(
+                id=comp_id,
+                name=self._composite_name(ing, category),
+                category=category,
+                is_tag=True,
+            )
+            self.composites[comp_id] = ing
+        return comp_id, True
+
+    def _composite_name(self, ing: Ingredient, category: Category) -> str:
+        def label(p: Ingredient) -> str:
+            if p.kind == "item":
+                return self.name_of(str(p.id), category)
+            if p.kind == "tag":
+                return self._tag_name(str(p.id))
+            return f"({self._composite_name(p, category)})"
+
+        if ing.kind == "union":
+            return " or ".join(label(p) for p in ing.parts)
+        if ing.kind == "inter":
+            return " and ".join(label(p) for p in ing.parts)
+        base, sub = ing.parts
+        return f"{label(base)} except {label(sub)}"
 
 
-def _stack(entry: dict[str, Any], resource_id: str, is_tag: bool) -> Stack:
-    qty = float(entry.get("amount", 1))
-    prob = entry.get("probability")
-    s = Stack(quantity=qty, probability=float(prob) if prob is not None else None)
+def _merge_stacks(stacks: list[Stack]) -> list[Stack]:
+    """Sum repeated entries of one resource (Create lists a 2× input twice)."""
+
+    out: list[Stack] = []
+    index: dict[tuple[str | None, bool, float | None], Stack] = {}
+    for s in stacks:
+        key = (s.resource_id, s.tag is not None, s.probability)
+        if key in index:
+            index[key].quantity += s.quantity
+        else:
+            index[key] = s
+            out.append(s)
+    return out
+
+
+def _stack(
+    entry: Any, resource_id: str, is_tag: bool, *, results: bool = False
+) -> Stack:
+    qty = entry_amount(entry)
+    prob = None
+    if isinstance(entry, dict):
+        prob = entry.get("probability", entry.get("chance"))
+    s = Stack(
+        quantity=qty,
+        probability=float(prob) if isinstance(prob, (int, float)) else None,
+    )
     if is_tag:
         s.tag = resource_id
     else:
@@ -1050,188 +1163,222 @@ def _stack(entry: dict[str, Any], resource_id: str, is_tag: bool) -> Stack:
     return s
 
 
-# --------------------------------------------------------------------------- #
-# Main import.
-# --------------------------------------------------------------------------- #
+def _is_fluid_result(entry: Any) -> bool:
+    """In a Create-style ``results`` list, is this entry a fluid stack?
+
+    A fluid result carries ``fluid`` or an ``amount`` (mB) where an item result
+    carries ``count``.
+    """
+
+    if not isinstance(entry, dict):
+        return False
+    if "fluid" in entry:
+        return True
+    return "amount" in entry and "count" not in entry and "item" not in entry
 
 
-def import_mi_library(
-    root: str | Path,
+def _extract_io(
+    data: dict[str, Any],
+) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
+    """Raw ``(item_in, item_out, fluid_in, fluid_out)`` entries of a recipe.
+
+    Understands the MI arrays (``item_inputs`` …), the single
+    ``ingredient`` → ``result`` shape (forge hammer, vanilla smelting), and the
+    Create-style ``ingredients`` → ``results`` lists that mix items and fluids.
+    """
+
+    item_in = _entries(data, "item_inputs")
+    item_out = _entries(data, "item_outputs")
+    fluid_in = _entries(data, "fluid_inputs")
+    fluid_out = _entries(data, "fluid_outputs")
+
+    ingredient = data.get("ingredient")
+    if isinstance(ingredient, (dict, list)):
+        item_in = [
+            *item_in,
+            _normalize_count(ingredient)
+            if isinstance(ingredient, dict)
+            else ingredient,
+        ]
+    result = data.get("result")
+    if isinstance(result, dict) and (result.get("id") or result.get("item")):
+        item_out = [
+            *item_out,
+            {
+                "item": result.get("id") or result.get("item"),
+                "amount": result.get("count", 1),
+            },
+        ]
+    elif isinstance(result, str):
+        item_out = [*item_out, {"item": result, "amount": 1}]
+
+    ingredients = data.get("ingredients")
+    if isinstance(ingredients, list):
+        for e in ingredients:
+            (fluid_in if is_fluid_ingredient(e) else item_in).append(e)
+    results = data.get("results")
+    if isinstance(results, list):
+        for e in results:
+            if isinstance(e, dict):
+                (fluid_out if _is_fluid_result(e) else item_out).append(e)
+    return item_in, item_out, fluid_in, fluid_out
+
+
+def _duration_ticks(data: dict[str, Any]) -> float | None:
+    for key in ("duration", "cookingtime", "processing_time", "processingTime", "time"):
+        v = data.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    return None
+
+
+def build_import(
+    source: RecipeSource,
     *,
     machine_types: tuple[str, ...] | None = None,
     name: str | None = None,
     include_energy: bool = True,
-    recipe_files: Sequence[str | Path] | None = None,
 ) -> MiImport:
-    """Build a :class:`Library` from the machine recipes under ``root``.
+    """Build a :class:`Library` from an in-memory :class:`RecipeSource`.
 
-    ``root`` is an extracted MI jar directory (or the recipe directory itself).
-    By **default every powered-machine recipe type is discovered and imported** —
-    any namespaced type (not ``minecraft:``, not a bare vanilla type) whose
-    recipes carry a machine shape (``eu`` / ``duration`` / item-fluid I/O arrays,
-    or the forge-hammer ``ingredient``→``result`` shape). So a *different mod*
-    whose machines use the same recipe structure imports with no code change —
-    the type list is no longer a hand-maintained allowlist. Vanilla
-    crafting/smelting recipes are always skipped. Pass ``machine_types`` (bare
-    type names, e.g. ``("macerator", "mixer")``) to import only a subset.
-
-    ``recipe_files`` overrides the directory scan: when given, exactly those JSON
-    files are parsed (any that aren't machine recipes are skipped) instead of
-    ``root``'s recipe directory being globbed. ``root`` is then used only to
-    locate the optional support data (lang display names, fuel maps, tag
-    definitions), each of which is loaded best-effort and simply absent if the
-    files aren't there — so a loose folder (or a hand-picked set) of MI-format
-    recipe files from another mod imports without the full jar layout. This backs
-    the UI's generic file importer (:meth:`Api.import_recipe_files`).
-
-    The result is never merged here — hand its ``library`` to
-    :func:`~process_sim.io.library.import_library`.
-
-    ``include_energy`` (default on) adds the energy-generation machines
-    (:data:`ENERGY_MACHINES`: boilers, steam turbines, diesel/plasma generators)
-    and the carriers they route — these are not recipe-driven in MI, so they ride
-    alongside the parsed recipes rather than being parsed from files.
+    The shared core of every importer (an extracted jar, a loose set of files, a
+    whole modpack). See :func:`import_mi_library` for the import rules.
     """
 
-    root = Path(root)
-    if recipe_files is None:
-        recipe_dir = _resolve_recipe_dir(root)
-        scan_files = sorted(recipe_dir.rglob("*.json"))
-        rel_base = recipe_dir
-    else:
-        # Explicit file set (the generic importer): parse these verbatim, and
-        # derive recipe ids relative to ``root`` where possible so re-importing
-        # the same files stays idempotent.
-        scan_files = [Path(f) for f in recipe_files]
-        rel_base = root
-    lang = _load_lang(root)
-    fuels = _load_fluid_fuels(root)
-    item_fuels, tag_fuels = _load_item_fuels(root)
     wanted = set(machine_types) if machine_types is not None else None
-
-    registry = _ItemRegistry(lang, fuels, item_fuels)
+    lang = source.lang
+    registry = _ItemRegistry(
+        lang, source.fluid_fuels, source.item_fuels, names=source.names
+    )
     recipes: list[Recipe] = []
-    # Per bare machine-type name: its namespace, collected recipe ids, and the max
-    # I/O counts (for the derived slot layout). Populated lazily as types are
-    # discovered, so the importable set is not a fixed allowlist.
-    by_type: dict[str, dict[str, Any]] = {}
+    # Per (namespace, bare type): collected recipe ids, and the max I/O counts
+    # (for the derived slot layout). Populated as types are discovered, so the
+    # importable set is not a fixed allowlist.
+    by_type: dict[tuple[str, str], dict[str, Any]] = {}
+    recipe_type: dict[str, tuple[str, str]] = {}
     files_scanned = 0
     recipes_skipped = 0
+    conditions_failed = 0
 
-    for path in scan_files:
+    for recipe_id, data in source.recipes:
         files_scanned += 1
-        data = _load_json(path)
         if not isinstance(data, dict):
             recipes_skipped += 1
             continue
-        rtype = data.get("type")
-        parsed = _machine_type_of(rtype, data, wanted)
+        parsed = _machine_type_of(data.get("type"), data, wanted)
         if parsed is None:
             recipes_skipped += 1
             continue
+        if not source.condition_ok(data):
+            recipes_skipped += 1
+            conditions_failed += 1
+            continue
         ns, machine_type = parsed
 
-        try:
-            rel = path.relative_to(rel_base).with_suffix("").as_posix()
-        except ValueError:
-            rel = path.stem  # a file outside the base: key it by its own name
-        recipe_id = f"mi:{rel}"
-
-        item_in = _entries(data, "item_inputs")
-        item_out = _entries(data, "item_outputs")
-        fluid_in = _entries(data, "fluid_inputs")
-        fluid_out = _entries(data, "fluid_outputs")
-        # The forge hammer and the vanilla smelting furnaces use a single
-        # ``ingredient`` → ``result`` shape instead of the ``*_inputs``/
-        # ``*_outputs`` arrays. Normalize it to the item-entry shape the loops
-        # below expect (``count`` → ``amount``; a ``result`` that is a dict with
-        # an ``id`` or a bare item-id string → ``item``).
-        ingredient = data.get("ingredient")
-        if isinstance(ingredient, dict):
-            item_in = [*item_in, _normalize_count(ingredient)]
-        result = data.get("result")
-        if isinstance(result, dict) and result.get("id") is not None:
-            item_out = [
-                *item_out,
-                {"item": result["id"], "amount": result.get("count", 1)},
-            ]
-        elif isinstance(result, str):
-            item_out = [*item_out, {"item": result, "amount": 1}]
-
+        item_in, item_out, fluid_in, fluid_out = _extract_io(data)
         inputs: list[Stack] = []
         outputs: list[Stack] = []
-        for e in item_in:
-            rid = registry.ref(e, Category.SOLID)
-            if rid is not None:
-                inputs.append(_stack(e, rid, "tag" in e))
-        for e in fluid_in:
-            rid = registry.ref(e, Category.LIQUID)
-            if rid is not None:
-                inputs.append(_stack(e, rid, "tag" in e))
-        for e in item_out:
-            rid = registry.ref(e, Category.SOLID)
-            if rid is not None:
-                outputs.append(_stack(e, rid, "tag" in e))
-        for e in fluid_out:
-            rid = registry.ref(e, Category.LIQUID)
-            if rid is not None:
-                outputs.append(_stack(e, rid, "tag" in e))
+        for entries, category, into in (
+            (item_in, Category.SOLID, inputs),
+            (fluid_in, Category.LIQUID, inputs),
+            (item_out, Category.SOLID, outputs),
+            (fluid_out, Category.LIQUID, outputs),
+        ):
+            for e in entries:
+                ing = parse_ingredient(e, fluid=category is Category.LIQUID)
+                if ing is None:
+                    continue
+                rid, is_tag = registry.ref(ing, category)
+                into.append(_stack(e, rid, is_tag))
+        inputs = _merge_stacks(inputs)
+        outputs = _merge_stacks(outputs)
 
-        # ``duration`` is MI's per-recipe tick count; a vanilla smelting recipe
-        # uses ``cookingtime`` instead (the furnace runs it at that speed).
-        duration = data.get("duration")
-        if duration is None:
-            duration = data.get("cookingtime")
+        duration = _duration_ticks(data)
         eu = data.get("eu")
-        time_seconds = float(duration) / 20.0 if duration else 0.0
+        if not isinstance(eu, (int, float)) or isinstance(eu, bool):
+            eu = None
+        time_seconds = duration / 20.0 if duration else 0.0
 
         recipes.append(
             Recipe(
                 id=recipe_id,
                 time_seconds=time_seconds,
-                name=_recipe_name(machine_type, outputs, registry, lang, ns),
+                name="",  # named once the machine label is final (below)
                 inputs=inputs,
                 outputs=outputs,
                 eu_per_tick=float(eu) if eu is not None else None,
                 machine_type=machine_type,
             )
         )
+        recipe_type[recipe_id] = (ns, machine_type)
 
         agg = by_type.setdefault(
-            machine_type,
-            {"ns": ns, "recipe_ids": [], "sin": 0, "sout": 0, "lin": 0, "lout": 0},
+            (ns, machine_type),
+            {
+                "ns": ns,
+                "recipe_ids": [],
+                "sin": 0,
+                "sout": 0,
+                "lin": 0,
+                "lout": 0,
+                "has_eu": False,
+            },
         )
         agg["recipe_ids"].append(recipe_id)
-        agg["sin"] = max(agg["sin"], len(item_in))
-        agg["sout"] = max(agg["sout"], len(item_out))
-        agg["lin"] = max(agg["lin"], len(fluid_in))
-        agg["lout"] = max(agg["lout"], len(fluid_out))
+        agg["sin"] = max(
+            agg["sin"], sum(1 for s in inputs if _cat(registry, s) is Category.SOLID)
+        )
+        agg["sout"] = max(
+            agg["sout"], sum(1 for s in outputs if _cat(registry, s) is Category.SOLID)
+        )
+        agg["lin"] = max(
+            agg["lin"], sum(1 for s in inputs if _cat(registry, s) is Category.LIQUID)
+        )
+        agg["lout"] = max(
+            agg["lout"], sum(1 for s in outputs if _cat(registry, s) is Category.LIQUID)
+        )
+        agg["has_eu"] = agg["has_eu"] or eu is not None
+
+    # A bare type name run by two mods (``a:crusher`` and ``b:crusher``) must not
+    # merge into one machine: the first-seen MI type (or the only one) keeps the
+    # bare label, any other namespace's is qualified ``<ns>/<type>``.
+    bare_owner: dict[str, str] = {}
+    for ns, t in sorted(by_type, key=lambda k: (k[0] != _MI_NS, k[0])):
+        bare_owner.setdefault(t, ns)
+    label_of = {
+        key: (key[1] if bare_owner[key[1]] == key[0] else f"{key[0]}/{key[1]}")
+        for key in by_type
+    }
+    for r in recipes:
+        key = recipe_type[r.id]
+        r.machine_type = label_of[key]
+        r.name = _recipe_name(key[1], r.outputs, registry, lang, key[0])
 
     # One def per discovered machine type. A type whose recipes run on several
     # named blocks (a steam vs electric quarry / blast furnace) yields those
-    # variants; every other type yields a single generic electric-consumer def.
+    # variants; every other type yields a single generic def — electric when its
+    # recipes carry an ``eu`` draw, otherwise passive (a manual/kinetic machine).
     machine_defs: list[MachineDef] = []
     needs_steam = False
-    for t, agg in by_type.items():
-        if not agg["recipe_ids"]:
-            continue
+    for key, agg in by_type.items():
+        t = label_of[key]
         variants = MACHINE_VARIANTS.get(t)
-        if variants:
+        if variants and key[0] in (_MI_NS, "minecraft"):
             for v in variants:
                 machine_defs.append(_variant_machine_def(t, v, agg, lang))
                 needs_steam = needs_steam or v.energy_source is EnergySource.LIQUID
         else:
-            machine_defs.append(_machine_def(t, agg, lang))
+            machine_defs.append(_machine_def(t, agg, lang, bare=key[1]))
 
     # Steam (bronze/steel) tiers for the single-block machines that have them,
     # beside the electric variant the recipes built. These are processing machines
     # (not energy generation), so they ride every import; each consumes steam.
     steam_defs: list[MachineDef] = []
-    for t, agg in by_type.items():
-        if not agg["recipe_ids"]:
+    for key, agg in by_type.items():
+        if key[0] != _MI_NS:
             continue
-        for tier in STEAM_MACHINE_TIERS.get(t, ()):
-            steam_defs.append(_steam_machine_def(t, tier, agg, lang))
+        for tier in STEAM_MACHINE_TIERS.get(key[1], ()):
+            steam_defs.append(_steam_machine_def(key[1], tier, agg, lang))
     if steam_defs or needs_steam:
         _ensure_steam_item(registry)
 
@@ -1257,17 +1404,20 @@ def import_mi_library(
     # complete roster, named from lang, inert until modelled by hand.
     special_defs = [_special_def(m, lang) for m in SPECIAL_MACHINES]
 
-    # Resolve tag membership from the game's tag definitions, so a concrete item
-    # can later stand in for a recipe that references a tag (e.g. iron_ore → a
-    # recipe keyed on c:ores/iron). Also register any member item not already
+    # Resolve tag membership from the source's tag definitions, so a concrete
+    # item can later stand in for a recipe that references a tag (e.g. iron_ore →
+    # a recipe keyed on c:ores/iron). Also register any member item not already
     # imported, so it is a named, selectable resource.
-    member_items_added = _resolve_tag_membership(root, registry, lang)
-    # Fill vanilla c: material tags (ores/ingots/raw/…) the jar references but
+    member_items_added = _resolve_tag_membership(source.tag_members, registry)
+    # Fill vanilla c: material tags (ores/ingots/raw/…) the source references but
     # NeoForge — not the mod — defines, so iron ore & co. resolve and are findable.
     member_items_added += _resolve_vanilla_tags(registry, lang)
+    # Composite ("any of") inputs: members are the set expression over the now
+    # known tag membership.
+    member_items_added += _resolve_composites(registry, source.tag_members)
     # A solid fuel named by a #tag (e.g. #c:dusts/coal) carries its burn-time EU to
     # every member, now that membership is resolved.
-    _apply_tag_fuels(registry, tag_fuels)
+    _apply_tag_fuels(registry, source.tag_fuels)
 
     library = Library(
         name=name or "Modern Industrialization",
@@ -1286,8 +1436,13 @@ def import_mi_library(
         "filesScanned": files_scanned,
         "recipesImported": len(recipes),
         "recipesSkipped": recipes_skipped,
+        "conditionsFailed": conditions_failed,
         "items": sum(1 for i in registry.items.values() if not i.is_tag),
         "tags": sum(1 for i in registry.items.values() if i.is_tag),
+        "composites": len(registry.composites),
+        "emptyTags": sorted(
+            i.id for i in registry.items.values() if i.is_tag and not i.members
+        ),
         "memberItemsAdded": member_items_added,
         "machineDefs": len(machine_defs),
         "steamMachines": len(steam_defs),
@@ -1295,9 +1450,109 @@ def import_mi_library(
         "pumps": len(pump_defs),
         "storage": len(storage_defs),
         "special": len(special_defs),
-        "byType": {t: len(agg["recipe_ids"]) for t, agg in by_type.items()},
+        "byType": {label_of[k]: len(agg["recipe_ids"]) for k, agg in by_type.items()},
     }
     return MiImport(library=library, stats=stats)
+
+
+def _cat(registry: _ItemRegistry, s: Stack) -> Category | None:
+    item = registry.items.get(s.resource_id or "")
+    return item.category if item is not None else None
+
+
+def _dir_recipes(
+    scan_files: Sequence[Path], rel_base: Path
+) -> Iterator[tuple[str, Any]]:
+    for path in scan_files:
+        try:
+            rel = path.relative_to(rel_base).with_suffix("").as_posix()
+        except ValueError:
+            rel = path.stem  # a file outside the base: key it by its own name
+        yield f"mi:{rel}", _load_json(path)
+
+
+def _dir_tag_lookup(root: Path) -> TagLookup:
+    cache: dict[tuple[str, Category], set[str]] = {}
+
+    def lookup(tag_id: str, category: Category) -> set[str]:
+        key = (tag_id, category)
+        if key not in cache:
+            kinds = ("fluid", "item") if category is Category.LIQUID else ("item",)
+            found: set[str] = set()
+            for kind in kinds:
+                found = _tag_members(root, tag_id, set(), kind)
+                if found:
+                    break
+            cache[key] = found
+        return cache[key]
+
+    return lookup
+
+
+def import_mi_library(
+    root: str | Path,
+    *,
+    machine_types: tuple[str, ...] | None = None,
+    name: str | None = None,
+    include_energy: bool = True,
+    recipe_files: Sequence[str | Path] | None = None,
+) -> MiImport:
+    """Build a :class:`Library` from the machine recipes under ``root``.
+
+    ``root`` is an extracted MI jar directory (or the recipe directory itself).
+    By **default every powered-machine recipe type is discovered and imported** —
+    any namespaced type (not ``minecraft:``, not a bare vanilla type) whose
+    recipes carry a machine shape (``eu`` / ``duration`` / item-fluid I/O arrays,
+    the forge-hammer ``ingredient``→``result`` shape, or Create-style
+    ``ingredients``→``results`` lists). So a *different mod* whose machines use
+    the same recipe structure imports with no code change — the type list is no
+    longer a hand-maintained allowlist. Vanilla crafting recipes are always
+    skipped. Pass ``machine_types`` (bare type names, e.g.
+    ``("macerator", "mixer")``) to import only a subset.
+
+    ``recipe_files`` overrides the directory scan: when given, exactly those JSON
+    files are parsed (any that aren't machine recipes are skipped) instead of
+    ``root``'s recipe directory being globbed. ``root`` is then used only to
+    locate the optional support data (lang display names, fuel maps, tag
+    definitions), each of which is loaded best-effort and simply absent if the
+    files aren't there — so a loose folder (or a hand-picked set) of MI-format
+    recipe files from another mod imports without the full jar layout. This backs
+    the UI's generic file importer (:meth:`Api.import_recipe_files`).
+
+    The result is never merged here — hand its ``library`` to
+    :func:`~process_sim.io.library.import_library`. A whole modpack (every jar
+    plus the pack's own scripts and data) goes through
+    :func:`process_sim.io.pack_import.import_pack` instead.
+
+    ``include_energy`` (default on) adds the energy-generation machines
+    (:data:`ENERGY_MACHINES`: boilers, steam turbines, diesel/plasma generators)
+    and the carriers they route — these are not recipe-driven in MI, so they ride
+    alongside the parsed recipes rather than being parsed from files.
+    """
+
+    root = Path(root)
+    if recipe_files is None:
+        recipe_dir = _resolve_recipe_dir(root)
+        scan_files: Sequence[Path] = sorted(recipe_dir.rglob("*.json"))
+        rel_base = recipe_dir
+    else:
+        # Explicit file set (the generic importer): parse these verbatim, and
+        # derive recipe ids relative to ``root`` where possible so re-importing
+        # the same files stays idempotent.
+        scan_files = [Path(f) for f in recipe_files]
+        rel_base = root
+    item_fuels, tag_fuels = _load_item_fuels(root)
+    source = RecipeSource(
+        recipes=_dir_recipes(scan_files, rel_base),
+        lang=_load_lang(root),
+        fluid_fuels=_load_fluid_fuels(root),
+        item_fuels=item_fuels,
+        tag_fuels=tag_fuels,
+        tag_members=_dir_tag_lookup(root),
+    )
+    return build_import(
+        source, machine_types=machine_types, name=name, include_energy=include_energy
+    )
 
 
 def _collect_recipe_files(paths: Sequence[str | Path]) -> tuple[list[Path], Path]:
@@ -1363,20 +1618,22 @@ def import_mi_sources(
     )
 
 
-def _tag_file(root: Path, tag_id: str) -> Path:
-    """Path to a tag's definition: ``<ns>:<path>`` → data/<ns>/tags/item/<path>.json."""
+def _tag_file(root: Path, tag_id: str, kind: str = "item") -> Path:
+    """A tag's file: ``<ns>:<path>`` → data/<ns>/tags/<kind>/<path>.json."""
 
     ns, _, path = tag_id.partition(":")
-    return root / "data" / ns / "tags" / "item" / f"{path}.json"
+    return root / "data" / ns / "tags" / kind / f"{path}.json"
 
 
-def _tag_members(root: Path, tag_id: str, seen: set[str]) -> set[str]:
-    """Flatten a tag's member item ids, recursing into nested ``#tag`` refs."""
+def _tag_members(
+    root: Path, tag_id: str, seen: set[str], kind: str = "item"
+) -> set[str]:
+    """Flatten a tag's member ids, recursing into nested ``#tag`` refs."""
 
     if tag_id in seen:
         return set()
     seen.add(tag_id)
-    data = _load_json(_tag_file(root, tag_id))
+    data = _load_json(_tag_file(root, tag_id, kind))
     values = data.get("values") if isinstance(data, dict) else data
     if not isinstance(values, list):
         return set()
@@ -1387,15 +1644,13 @@ def _tag_members(root: Path, tag_id: str, seen: set[str]) -> set[str]:
         if not isinstance(v, str):
             continue
         if v.startswith("#"):
-            out |= _tag_members(root, v[1:], seen)
+            out |= _tag_members(root, v[1:], seen, kind)
         else:
             out.add(_resolve_id(v, "minecraft"))
     return out
 
 
-def _resolve_tag_membership(
-    root: Path, registry: _ItemRegistry, lang: dict[str, str]
-) -> int:
+def _resolve_tag_membership(lookup: TagLookup, registry: _ItemRegistry) -> int:
     """Populate each tag item's ``members`` and register any missing member item.
 
     Returns the count of member items newly created. Member items inherit the
@@ -1403,22 +1658,69 @@ def _resolve_tag_membership(
     """
 
     added = 0
-    tag_items = [i for i in registry.items.values() if i.is_tag]
+    tag_items = [
+        i
+        for i in registry.items.values()
+        if i.is_tag and i.id not in registry.composites
+    ]
     for tag in tag_items:
-        members = sorted(_tag_members(root, tag.id, set()))
+        members = sorted(lookup(tag.id, tag.category))
         if not members:
             continue
         tag.members = members
-        for mid in members:
-            if mid in registry.items:
-                continue
-            if tag.category is Category.LIQUID:
-                name = _fluid_name(mid, lang)
-            else:
-                name = _item_name(mid, lang)
-            registry.items[mid] = Item(id=mid, name=name, category=tag.category)
-            added += 1
+        added += _register_members(registry, members, tag.category)
     return added
+
+
+def _register_members(
+    registry: _ItemRegistry, members: Sequence[str], category: Category
+) -> int:
+    added = 0
+    for mid in members:
+        if mid in registry.items:
+            continue
+        eu = None if category is Category.LIQUID else registry._item_fuels.get(mid)
+        registry.items[mid] = Item(
+            id=mid, name=registry.name_of(mid, category), category=category, eu=eu
+        )
+        added += 1
+    return added
+
+
+def _resolve_composites(registry: _ItemRegistry, lookup: TagLookup) -> int:
+    """Set each composite input's members from the resolved tag membership.
+
+    A tag that appears only *inside* a composite was never registered as an item
+    of its own, so its members come straight from the source (then the vanilla
+    ``c:`` table), the same way a registered tag's would.
+    """
+
+    added = 0
+    for comp_id, ing in registry.composites.items():
+        item = registry.items[comp_id]
+
+        def members_of(tag_id: str, category: Category = item.category) -> set[str]:
+            tag = registry.items.get(tag_id)
+            if tag is not None and tag.members:
+                return set(tag.members)
+            found = lookup(tag_id, category)
+            return found or set(_vanilla_members(tag_id) or ())
+
+        members = sorted(resolve_members(ing, members_of))
+        if members:
+            item.members = members
+            added += _register_members(registry, members, item.category)
+    return added
+
+
+def _vanilla_members(tag_id: str) -> list[str] | None:
+    """The canonical vanilla members of a ``c:<group>/<material>`` tag, if any."""
+
+    ns, _, path = tag_id.partition(":")
+    if ns != "c" or "/" not in path:
+        return None
+    group, _, material = path.partition("/")
+    return _VANILLA_MATERIALS.get(material, {}).get(group)
 
 
 def _resolve_vanilla_tags(registry: _ItemRegistry, lang: dict[str, str]) -> int:
@@ -1432,12 +1734,12 @@ def _resolve_vanilla_tags(registry: _ItemRegistry, lang: dict[str, str]) -> int:
     """
 
     added = 0
-    for tag in [i for i in registry.items.values() if i.is_tag and not i.members]:
-        ns, _, path = tag.id.partition(":")
-        if ns != "c" or "/" not in path:
-            continue
-        group, _, material = path.partition("/")
-        members = _VANILLA_MATERIALS.get(material, {}).get(group)
+    for tag in [
+        i
+        for i in registry.items.values()
+        if i.is_tag and not i.members and i.id not in registry.composites
+    ]:
+        members = _vanilla_members(tag.id)
         if not members:
             continue
         tag.members = list(members)
@@ -1484,15 +1786,28 @@ def _recipe_name(
 
 
 def _machine_def(
-    machine_type: str, agg: dict[str, Any], lang: dict[str, str]
+    machine_type: str,
+    agg: dict[str, Any],
+    lang: dict[str, str],
+    *,
+    bare: str | None = None,
 ) -> MachineDef:
-    """An electric-consumer def for ``machine_type`` with a data-derived layout.
+    """A consumer def for ``machine_type`` with a data-derived layout.
 
-    Electricity is a routed carrier (resolved decision #3): the consumer draws it
-    as the :data:`ELECTRICITY_ID` item through an energy **in** port, so a
-    generator must feed it over an energy pipe (an unwired machine is unpowered).
+    ``machine_type`` is the type's label (its def id), ``bare`` the type name
+    inside its namespace (for lang names and the tier catalog) when the label was
+    qualified to keep two mods' same-named types apart.
+
+    When any of the type's recipes carries an ``eu`` draw the def is an electric
+    consumer: electricity is a routed carrier (resolved decision #3), drawn as the
+    :data:`ELECTRICITY_ID` item through an energy **in** port, so a generator must
+    feed it over an energy pipe (an unwired machine is unpowered). A type with no
+    ``eu`` anywhere (a manual tool, a kinetic Create machine) is **passive** — it
+    gets no energy port and never stalls for power.
     """
 
+    bare = bare or machine_type
+    ns = agg.get("ns", _MI_NS)
     slots: list[SlotGroup] = []
 
     def add(category: Category, direction: Direction, count: int, stack: int) -> None:
@@ -1503,18 +1818,20 @@ def _machine_def(
     add(Category.SOLID, Direction.OUT, agg["sout"], _SOLID_STACK)
     add(Category.LIQUID, Direction.IN, agg["lin"], _FLUID_STACK)
     add(Category.LIQUID, Direction.OUT, agg["lout"], _FLUID_STACK)
-    add(Category.ENERGY, Direction.IN, 1, _ENERGY_STACK)  # routed electricity in
+    powered = agg.get("has_eu", True)
+    if powered:
+        add(Category.ENERGY, Direction.IN, 1, _ENERGY_STACK)  # routed electricity in
 
-    spec = MACHINE_CATALOG.get(machine_type, MachineSpec())
+    spec = MACHINE_CATALOG.get(bare, MachineSpec()) if ns == _MI_NS else MachineSpec()
     return MachineDef(
         id=f"mi.machine.{machine_type}",
-        name=_electric_name(machine_type, lang, agg.get("ns", _MI_NS)),
-        energy_source=EnergySource.ELECTRIC,
-        source_item_id=ELECTRICITY_ID,
+        name=_electric_name(bare, lang, ns),
+        energy_source=EnergySource.ELECTRIC if powered else None,
+        source_item_id=ELECTRICITY_ID if powered else None,
         allowed_recipe_ids=list(agg["recipe_ids"]),
         slots=slots,
-        voltage_tier=spec.voltage_tier,
-        max_eu_per_tick=spec.max_eu_per_tick,
+        voltage_tier=spec.voltage_tier if powered else None,
+        max_eu_per_tick=spec.max_eu_per_tick if powered else None,
     )
 
 
