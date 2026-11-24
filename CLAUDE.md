@@ -42,7 +42,19 @@ A buildless client-side UI over a thin Python backend.
   Booting early on `{}` opens a blank app over a fully restored backend.
   `tests/test_ui_boot.py` pins this (needs Node + Playwright; skipped otherwise).
 - **Tests:** pytest for engine, model, IO, api, and app/server. The UI is
-  validated by driving `server.py` (the real engine) in a headless browser.
+  validated by driving `server.py` (the real engine) in a headless browser:
+  `tests/test_ui_interactions.py` runs the scenarios in `tests/ui_interactions.js`
+  (scroll/focus/half-typed text surviving re-renders, concurrent edits, number
+  entry and validation, Escape/Delete, comboboxes, rename, create, undo, canvas
+  gestures). Add a scenario there for any UI regression. Needs Node + Playwright;
+  skipped otherwise.
+- **UI editing rules** (`ui/index.html`): every edit goes through the serialized
+  edit queue (`applyEdits` / `saveEntity`, which sends a patch of only the changed
+  fields onto the latest entity) — never build an upsert from a closure and send it
+  directly. Panels are rebuilt via `preserving(...)`, which keeps `data-sk` scroll
+  positions and the focused control (located by `data-fk` keys). Numeric fields are
+  text inputs parsed by `numberInput` (`min`/`max`/`gt`/`integer`; empty → `onClear`
+  if optional, else rejected) — not `<input type=number>`.
 
 Styling target: `STYLE_GUIDE.md` (`:root` tokens, pasted verbatim). Fonts ship as
 local `woff2` under `ui/fonts/` (offline-first). The architecture mirrors a simple
