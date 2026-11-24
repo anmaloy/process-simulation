@@ -80,6 +80,16 @@ def test_machine_node_constructs_minimal() -> None:
     n = MachineNode(id="n1", machine_def_id="furnace")
     assert n.overclock == 1.0 and n.count == 1
     assert n.recipe_id is None and n.x is None and n.y is None
+    assert n.max_power is False
+
+
+def test_machine_node_max_power_round_trips() -> None:
+    n = MachineNode(id="n1", machine_def_id="macerator", max_power=True)
+    d = n.to_dict()
+    assert d["maxPower"] is True
+    assert MachineNode.from_dict(d).max_power is True
+    # omitted in older saves → default off
+    assert MachineNode.from_dict({"id": "n2", "machineDefId": "d"}).max_power is False
 
 
 def test_pipe_end_constructs_minimal() -> None:

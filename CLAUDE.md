@@ -281,7 +281,11 @@ tests/               # pytest
   read, and `recipe_list` returns whichever is set. The boundary flag `assumeInputs`
   (manual insertion — treat any unsupplied input as available) lets an edge machine
   run on hand-fed feedstock. (`assumeOutputs` remains for back-compat but no longer
-  affects the balance — output never throttles a machine.) Default off.
+  affects the balance — output never throttles a machine.) `maxPower` runs the node
+  at its power-tier ceiling (each recipe at `maxEuPerTick / euPerTick`), overriding
+  the node's `overclock` — electric machines ramp to their tier's max draw, so this
+  is their "normal" throughput without typing an overclock on every node; a no-op on
+  a def with no ceiling. All default off.
 - **Pipe** — the graph edge. Carries one category between two machine ports; has
   storage capacity, movement capacity, an overclock multiplier, and per-end roles
   and priorities. **Liquid pipes carry an unlimited rate** — only solids and
@@ -476,6 +480,14 @@ non-linear curve. The engine additionally clamps a machine's effective overclock
 its power ceiling (`euPerTick × overclock ≤ maxEuPerTick`) — a machine can't run
 faster than its tier/upgrades can feed it. This clamp is **silent** (the real rate,
 not an error state).
+
+A node's **`maxPower`** flag runs the machine *at* that ceiling instead of its typed
+overclock: each recipe runs at `maxEuPerTick / euPerTick` (clamped per recipe, so
+recipes drawing different EU/t against one ceiling each hit their own max). It is an
+override, not just a cap — it raises the rate as well. Electric machines ramp to
+their tier's maximum draw, so this is their normal throughput; the flag spares typing
+an overclock on every node. With no ceiling (or no per-tick draw to measure against)
+it has no effect and `overclock` governs.
 
 ## Resolved decisions
 

@@ -381,6 +381,41 @@ def test_overclock_uncapped_without_ceiling() -> None:
     assert comp.energy_consume == 4 * 20 * 4  # 320 EU/s
 
 
+def test_max_power_runs_at_tier_ceiling() -> None:
+    # Macerator: recipe 2 EU/t, tier feeds 32 EU/t → max_power runs at ×16,
+    # overriding the node's own overclock of 1.
+    recipe = Recipe(id="r", time_seconds=1.0, eu_per_tick=2, outputs=[Stack("x", 1)])
+    md = MachineDef(
+        id="macerator",
+        energy_source=EnergySource.ELECTRIC,
+        max_eu_per_tick=32,
+    )
+    comp = compute_node(_node(recipe_id="r", max_power=True), md, recipe)
+    assert comp.cycles_per_sec == 16.0  # 32 / 2, not the default ×1
+    assert comp.outputs == {"x": 16.0}
+    assert comp.energy_consume == 2 * 20 * 16  # 640 EU/s = cap (32 EU/t × 20)
+
+
+def test_max_power_is_a_no_op_without_ceiling() -> None:
+    recipe = Recipe(id="r", time_seconds=1.0, eu_per_tick=2, outputs=[Stack("x", 1)])
+    md = MachineDef(id="d1", energy_source=EnergySource.ELECTRIC)
+    comp = compute_node(_node(recipe_id="r", overclock=3.0, max_power=True), md, recipe)
+    assert comp.cycles_per_sec == 3.0  # no ceiling → overclock governs
+
+
+def test_max_power_clamps_per_recipe() -> None:
+    # Two recipes drawing different EU/t against one 32 EU/t ceiling each run
+    # at their own ceiling: 2 EU/t → ×16, 8 EU/t → ×4.
+    slow = Recipe(id="slow", time_seconds=1.0, eu_per_tick=2, outputs=[Stack("a", 1)])
+    fast = Recipe(id="fast", time_seconds=1.0, eu_per_tick=8, outputs=[Stack("b", 1)])
+    md = MachineDef(id="m", energy_source=EnergySource.ELECTRIC, max_eu_per_tick=32)
+    comp = compute_node(
+        _node(recipe_ids=["slow", "fast"], max_power=True), md, [slow, fast]
+    )
+    assert comp.outputs == {"a": 16.0, "b": 4.0}
+    assert comp.energy_consume == (2 * 20 * 16) + (8 * 20 * 4)  # both at the cap
+
+
 def test_probability_scales_expected_output_and_catalyst_input() -> None:
     recipe = Recipe(
         id="r",

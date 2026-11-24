@@ -843,7 +843,8 @@ function nodeDom(n, def, ins, outs){
   const rids=nodeRecipeIds(n);
   if(rids.length===1) meta.push(rids[0]);
   else if(rids.length>1) meta.push(rids.length+" recipes");
-  if(n.overclock!=null && n.overclock!==1) meta.push("×"+n.overclock);
+  if(n.maxPower) meta.push("max");
+  else if(n.overclock!=null && n.overclock!==1) meta.push("×"+n.overclock);
   if(n.count!=null && n.count!==1) meta.push("∥"+n.count);
   const dom=el("div",{class:"node"+(seld||MULTI.has(n.id)?" selected":""),"data-id":n.id},
     el("span",{class:"nbar","data-bar":n.id}),
@@ -1691,10 +1692,21 @@ function nodeInspector(body, n){
     body.append(recipeFinder(n, pool));
   }
 
-  body.append(optionalNumber("overclock", n.overclock, {
-    onSet:v=>saveEntity("node",withField(n,"overclock",v)),
-    onClear:()=>saveEntity("node",withoutField(n,"overclock")),
-    fallback:1,min:def&&def.overclockMin,max:def&&def.overclockMax,step:0.25,hint:"default 1"}));
+  if(n.maxPower){
+    body.append(field("overclock",
+      el("span",{class:"static-val dim mono"}, "max — tier ceiling"),
+      "overridden by max power — each recipe runs at maxEuPerTick ÷ its EU/t"));
+  } else {
+    body.append(optionalNumber("overclock", n.overclock, {
+      onSet:v=>saveEntity("node",withField(n,"overclock",v)),
+      onClear:()=>saveEntity("node",withoutField(n,"overclock")),
+      fallback:1,min:def&&def.overclockMin,max:def&&def.overclockMax,step:0.25,hint:"default 1"}));
+  }
+  const pf=el("div",{class:"field"});
+  pf.append(el("span",{class:"field-label mono"},"power"));
+  pf.append(checkbox(!!n.maxPower, v=>saveEntity("node", v?withField(n,"maxPower",true):withoutField(n,"maxPower")), "run at max EU/t (tier ceiling)"));
+  pf.append(el("span",{class:"field-hint"},"electric machines ramp to their tier's maximum draw. On, the node ignores its overclock and runs each recipe at the EU/t its tier can feed (maxEuPerTick ÷ the recipe's EU/t). No effect on a def without a power ceiling."));
+  body.append(pf);
   body.append(optionalNumber("parallel count", n.count, {
     onSet:v=>saveEntity("node",withField(n,"count",Math.round(v))),
     onClear:()=>saveEntity("node",withoutField(n,"count")),
