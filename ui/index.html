@@ -1370,15 +1370,21 @@ function field(label, control, hint, unit){
   if(hint) f.append(el("span",{class:"field-hint"},hint));
   return f;
 }
+// Inspector inputs commit on `change` (blur / Enter), not per-keystroke: a
+// keystroke that called onChange would saveEntity → renderAll → rebuild the
+// inspector, destroying the very <input> being typed in and dropping focus +
+// caret. Committing on change lets the user type a whole value first. (Live
+// filter boxes — the rail/recipe search — keep their own oninput handlers; they
+// only re-render a sub-list, not the input itself.)
 function textInput(value,onChange,placeholder){
   return el("input",{class:"field-input",type:"text",value:value||"",placeholder:placeholder||"",
-    oninput:e=>onChange(e.target.value)});
+    onchange:e=>onChange(e.target.value)});
 }
 function numberInput(value,onChange,opts){
   opts=opts||{};
   const inp=el("input",{class:"field-input",type:"number",value:value==null?"":value,
     min:opts.min, max:opts.max, step:opts.step||"any",
-    oninput:e=>{ const v=e.target.value; if(v==="") return; const n=Number(v); if(!Number.isNaN(n)) onChange(n); }});
+    onchange:e=>{ const v=e.target.value; if(v==="") return; const n=Number(v); if(!Number.isNaN(n)) onChange(n); }});
   return inp;
 }
 function selectInput(value,options,onChange){
