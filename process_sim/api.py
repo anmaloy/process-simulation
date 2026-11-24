@@ -145,6 +145,10 @@ class Api:
         self._autosave_path: Path | None = autosave_path
         #: True when the in-memory World has unsaved changes since the last write.
         self._dirty: bool = False
+        #: The error from the most recent failed write, surfaced by
+        #: :meth:`save_autosave` so a silent persistence failure (a read-only or
+        #: locked app folder) becomes visible instead of looking like a clean save.
+        self._last_save_error: str | None = None
         #: A folder of persisted libraries (e.g. an imported MI catalog). Its
         #: contents are merged into the World at startup and whenever a project is
         #: loaded, so the machine catalog is always available without re-importing;
@@ -203,10 +207,15 @@ class Api:
         if self._autosave_path is None:
             return False
         try:
+            self._autosave_path.parent.mkdir(parents=True, exist_ok=True)
             save_project(self._world, self._autosave_path)
             self._dirty = False
+            self._last_save_error = None
             return True
-        except OSError:
+        except OSError as exc:
+            # Record why so save_autosave can report it; the World stays dirty so
+            # the next save retries the whole World.
+            self._last_save_error = str(exc)
             return False
 
     def save_autosave(self) -> dict[str, Any]:
@@ -219,22 +228,18 @@ class Api:
         World reports ``saved: false`` rather than rewriting an identical file.
         """
 
+        path = str(self._autosave_path) if self._autosave_path else None
         if not self._dirty:
-            return _ok(
-                {
-                    "saved": False,
-                    "dirty": False,
-                    "path": str(self._autosave_path) if self._autosave_path else None,
-                }
-            )
+            return _ok({"saved": False, "dirty": False, "path": path})
         wrote = self._persist()
-        return _ok(
-            {
-                "saved": wrote,
-                "dirty": self._dirty,
-                "path": str(self._autosave_path) if self._autosave_path else None,
-            }
-        )
+        data: dict[str, Any] = {"saved": wrote, "dirty": self._dirty, "path": path}
+        if not wrote:
+            # A genuine write failure — distinct from a clean "nothing to save".
+            # Surfaced so the UI can warn instead of reporting a phantom save.
+            data["error"] = self._last_save_error or (
+                "no autosave path configured" if path is None else "write failed"
+            )
+        return _ok(data)
 
     # ------------------------------------------------------------------ #
     # World state — read / replace / edit.
