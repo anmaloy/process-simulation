@@ -151,16 +151,16 @@ select.field-input{cursor:pointer}
 .palette{position:absolute;top:14px;left:328px;z-index:6;display:flex;
   gap:8px;align-items:center;flex-wrap:wrap;max-width:min(calc(100% - 342px),560px);padding:9px 12px;
   background:rgba(16,21,31,.92);border:1px solid var(--line-2);border-radius:12px;box-shadow:0 18px 50px -20px #000;backdrop-filter:blur(12px)}
-.legend{position:absolute;bottom:14px;right:14px;z-index:6;display:flex;flex-direction:column;gap:8px;
+.legend{position:absolute;bottom:calc(14px + var(--dock-h,0px));right:14px;z-index:6;display:flex;flex-direction:column;gap:8px;
   padding:9px 11px;background:rgba(16,21,31,.9);border:1px solid var(--line-2);border-radius:10px;backdrop-filter:blur(10px)}
 .legend .row{display:flex;gap:10px;flex-wrap:wrap}
 .legend .key{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;color:var(--ink-dim)}
 .legend-dot{width:9px;height:9px;border-radius:50%}
-.controls{position:absolute;left:14px;bottom:14px;z-index:6;display:flex;flex-direction:column;gap:6px}
+.controls{position:absolute;left:14px;bottom:calc(14px + var(--dock-h,0px));z-index:6;display:flex;flex-direction:column;gap:6px}
 .controls button{width:30px;height:30px;background:rgba(16,21,31,.92);border:1px solid var(--line-2);border-radius:8px;color:var(--ink-dim);font-size:15px}
 .controls button:hover{border-color:var(--spine);color:var(--ink)}
 
-.readout{position:absolute;left:14px;top:14px;z-index:5;width:300px;max-height:calc(100% - 28px);overflow:auto;
+.readout{position:absolute;left:14px;top:14px;z-index:5;width:300px;max-height:calc(100% - 150px - var(--dock-h,0px));overflow:auto;
   background:rgba(16,21,31,.93);border:1px solid var(--line-2);border-radius:12px;padding:12px 14px;backdrop-filter:blur(12px)}
 .readout h3{margin:0 0 2px;font-size:14px}
 .scope-switch{display:flex;gap:3px;margin:8px 0;background:var(--bg-2);border-radius:8px;padding:3px}
@@ -176,6 +176,90 @@ select.field-input{cursor:pointer}
 .ro-item .bad{color:var(--s-bad)}
 .ro-empty{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 .bneck{cursor:pointer}
+.ro-more{background:none;border:0;padding:3px 0 0;font-family:var(--mono);font-size:10px;color:var(--spine);cursor:pointer}
+.ro-more:hover{color:var(--ink)}
+.ro-open{width:100%;margin-top:12px}
+
+/* ---- balance sheet dock (bottom of the stage) ---- */
+.dock{position:absolute;left:0;right:0;bottom:0;z-index:8;display:flex;flex-direction:column;
+  background:rgba(13,18,27,.97);border-top:1px solid var(--line-2);box-shadow:0 -18px 44px -24px #000}
+.dock-grip{height:7px;cursor:ns-resize;flex:none;position:relative}
+.dock-grip::after{content:"";position:absolute;left:50%;top:2px;width:44px;height:3px;margin-left:-22px;border-radius:3px;background:var(--line-2)}
+.dock-grip:hover::after{background:var(--spine)}
+.dock-bar{display:flex;align-items:center;gap:10px;padding:2px 12px 6px;flex:none;flex-wrap:wrap}
+.dock.closed .dock-bar{padding:6px 12px;cursor:pointer}
+.dock-title{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--spine)}
+.dock-scope{font-family:var(--mono);font-size:10.5px;color:var(--ink-dim)}
+.dock-sum{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);display:flex;gap:10px}
+.dock-sum .bad{color:var(--s-bad)}
+.dock-tabs{display:flex;gap:3px;background:var(--bg-2);border-radius:8px;padding:3px}
+.dock-tabs button{background:none;border:0;border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-faint)}
+.dock-tabs button.on{background:var(--panel-2);color:var(--spine)}
+.dock-tabs .n{color:var(--ink-faint);margin-left:5px}
+.dock-spacer{flex:1}
+.dock-btn{background:var(--panel-2);border:1px solid var(--line-2);color:var(--ink-dim);border-radius:7px;padding:3px 8px;font-size:11px;font-family:var(--mono)}
+.dock-btn:hover{border-color:var(--spine);color:var(--ink)}
+.dock-btn.on{border-color:var(--spine);color:var(--spine)}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:7px;overflow:hidden}
+.seg button{background:var(--panel-2);border:0;border-left:1px solid var(--line-2);color:var(--ink-faint);padding:3px 8px;font-family:var(--mono);font-size:10.5px}
+.seg button:first-child{border-left:0}
+.seg button.on{color:var(--spine);background:var(--bg-2)}
+.dock-tools{display:flex;align-items:center;gap:8px;padding:0 12px 8px;flex:none;flex-wrap:wrap}
+.dock-tools .field-input{width:220px;padding:4px 8px;font-size:12px}
+.fchip{background:var(--panel-2);border:1px solid var(--line);color:var(--ink-dim);border-radius:999px;padding:2px 9px;font-family:var(--mono);font-size:10.5px;display:inline-flex;align-items:center;gap:5px}
+.fchip:hover{border-color:var(--line-2);color:var(--ink)}
+.fchip.on{border-color:var(--spine);color:var(--ink);background:var(--bg-2)}
+.fchip .n{color:var(--ink-faint)}
+.fchip .dot{width:7px;height:7px;border-radius:50%}
+.dock-stale{font-family:var(--mono);font-size:10px;color:var(--s-learn)}
+.dock-body{flex:1;min-height:0;overflow:auto;border-top:1px solid var(--line)}
+.dock-empty{padding:18px;font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+.dock-foot{flex:none;padding:4px 12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;color:var(--ink-faint);display:flex;gap:14px}
+table.sheet{border-collapse:separate;border-spacing:0;width:100%;font-family:var(--mono);font-size:11px}
+table.sheet th{position:sticky;top:0;z-index:2;background:var(--bg-2);color:var(--ink-faint);font-weight:500;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  text-align:right;padding:6px 8px;border-bottom:1px solid var(--line-2);white-space:nowrap;cursor:pointer;user-select:none}
+table.sheet th.l{text-align:left}
+table.sheet th:hover{color:var(--ink)}
+table.sheet th.sorted{color:var(--spine)}
+table.sheet td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;color:var(--ink-dim)}
+table.sheet td.l{text-align:left}
+table.sheet td.zero{color:var(--ink-faint)}
+table.sheet td.bad{color:var(--s-bad)}
+table.sheet td.good{color:var(--s-ref)}
+table.sheet td.warn{color:var(--s-learn)}
+table.sheet td.blue{color:var(--s-indep)}
+table.sheet tr.row{cursor:pointer}
+table.sheet tr.row:hover td{background:var(--panel)}
+table.sheet tr.row.open td{background:var(--panel)}
+table.sheet tr.row.selected td{box-shadow:inset 0 1px 0 var(--spine-glow),inset 0 -1px 0 var(--spine-glow)}
+.rname{display:flex;align-items:center;gap:7px;max-width:340px}
+.rname .caret{color:var(--ink-faint);font-size:9px;width:8px;flex:none;transition:transform .12s}
+.rname .caret.open{transform:rotate(90deg)}
+.rname .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.rname .nm{color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+.rname .id{color:var(--ink-faint);font-size:9.5px;overflow:hidden;text-overflow:ellipsis}
+.flag{display:inline-block;font-size:9px;padding:1px 5px;border-radius:4px;margin-left:3px;letter-spacing:.03em}
+.flag.short{background:var(--f-bad);color:var(--s-bad)}
+.flag.in{background:var(--panel-2);color:var(--ink-dim)}
+.flag.out{background:var(--f-indep);color:var(--s-indep)}
+.flag.ok{background:var(--f-ref);color:var(--s-ref)}
+.flag.throttled{background:var(--f-learn);color:var(--s-learn)}
+.flag.stalled{background:var(--f-bad);color:var(--s-bad)}
+.cover{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--line);vertical-align:middle;position:relative;overflow:hidden}
+.cover i{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+tr.detail td{background:var(--bg-2);padding:8px 10px 10px 26px;text-align:left;white-space:normal}
+.det{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.det h4{margin:0 0 5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);font-weight:500;display:flex;gap:10px}
+.det-list{display:flex;flex-direction:column;gap:1px;max-height:220px;overflow:auto}
+.det-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;padding:3px 6px;border-radius:5px;cursor:pointer;color:var(--ink-dim);font-family:var(--mono);font-size:10.5px}
+.det-row:hover{background:var(--panel-2);color:var(--ink)}
+.det-row .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.det-row .who .id{color:var(--ink-faint);margin-left:6px}
+.det-row .bad{color:var(--s-bad)}
+.det-actions{display:flex;gap:8px;margin-top:8px}
+.node.hl-make{outline:2px solid var(--spine);outline-offset:3px}
+.node.hl-use{outline:2px dashed var(--spine);outline-offset:3px}
+.node.hl-dim{opacity:.35}
 .bneck:hover{color:var(--ink)}
 
 /* ---- inspector ---- */
@@ -567,7 +651,7 @@ function updateUndo(){ const b=$("#undoBtn"); if(b) b.disabled = HISTORY.length=
 // every drag/field-edit is what made big worlds unusable. markStale() flags that
 // the shown overlay/readout no longer reflect the world until Run is pressed.
 let STALE = false;
-function markStale(){ STALE = true; markDirty(); updateRunState(); }
+function markStale(){ STALE = true; markDirty(); updateRunState(); if(typeof renderDock==="function") renderDock(); }
 function updateRunState(){
   const r=$("#runBtn"); if(r) r.classList.toggle("stale", STALE);
   const s=$("#staleDot"); if(s) s.style.display = STALE ? "" : "none";
@@ -619,6 +703,7 @@ function recomputeRequest(){
 async function recompute(){
   const req = recomputeRequest();
   let failure=null;
+  if(!hasBackend()){ REPORT=null; SYSTEM_REPORTS={}; paintOverlay(); renderReadout(); renderDock(); return; }  // standalone export: view-only
   if(!req){ REPORT=null; }
   else { try{ REPORT = await callApi("recompute", req); }catch(e){ REPORT=null; failure=e; } }
   // per-collapsed-system aggregate reports
@@ -629,6 +714,7 @@ async function recompute(){
   STALE = false; updateRunState();
   paintOverlay();
   renderReadout();
+  renderDock();
   // A failed solve used to vanish silently (the readout just showed "—").
   if(failure) toast("simulation failed — "+(failure.message||failure), true);
 }
@@ -705,7 +791,7 @@ function renderAll(){
   // leave an inspector showing "(gone)".
   if(SEL && !currentEntity()) SEL=null;
   renderShell(); renderRail(); renderGraph(); renderInspector(); paintOverlay(); renderReadout();
-  refreshPalette(); updateRunState();
+  refreshPalette(); updateRunState(); renderDock();
 }
 
 /* ---- keep the user's place across re-renders ----
@@ -903,7 +989,7 @@ function renderGraph(){
     const vp=el("div",{id:"viewport"});
     vp.append(svg("svg",{id:"edges"}));
     canvas.append(vp);
-    stage.append(canvas, paletteEl(), legendEl(), controlsEl(), el("div",{id:"readout"}));
+    stage.append(canvas, paletteEl(), legendEl(), controlsEl(), el("div",{id:"readout"}), el("div",{id:"dock",class:"dock closed"}));
     // replace boot / insert as middle column
     const boot=$("#bootmsg"); if(boot) boot.remove();
     const app=$("#app");
@@ -1400,8 +1486,12 @@ window.addEventListener("keydown",e=>{
     if(typing) return;                                // the field's own text undo
     e.preventDefault(); undo(); return;
   }
+  if((e.key==="b"||e.key==="B") && !typing && !e.ctrlKey && !e.metaKey && !e.altKey && $("#dock")){
+    e.preventDefault(); toggleDock(); return;         // the balance sheet
+  }
   if(e.key==="Escape"){
     if(typing || $("#projectDialog")) return;         // fields/dialogs handle their own Escape
+    if(COLMENU_OPEN){ COLMENU_OPEN=false; renderDock(true); return; }
     if(connectState) return;
     clearSel(); return;
   }
@@ -1510,16 +1600,20 @@ function buildReadout(host){
   }
   panel.append(roRow("nodes", String((rep.nodeIds||[]).length)));
   panel.append(roRow("net energy", rep.netEnergy!=null?fmtEnergy(rep.netEnergy):"—"));
-  // feedstock in
-  panel.append(ioSection("Feedstock in", rep.externalInputs));
-  panel.append(ioSection("Actual yield", rep.externalOutputs));
+  const nRes=Object.keys(rep.itemLedger||{}).length;
+  panel.append(roRow("resources", String(nRes)));
+  // The readout is a glance: the top few of each list. Everything else — every
+  // resource, machine and bottleneck, sortable and filterable — is in the balance
+  // sheet the "more" links open.
+  panel.append(ioSection("Feedstock in", rep.externalInputs, ()=>openDock({tab:"resources", view:"in"})));
+  panel.append(ioSection("Actual yield", rep.externalOutputs, ()=>openDock({tab:"resources", view:"out"})));
   // bottlenecks
   const bn=rep.bottlenecks||[];
-  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},"Bottlenecks"));
+  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},"Bottlenecks"+(bn.length?` (${bn.length})`:"")));
   if(!bn.length) sec.append(el("div",{class:"ro-empty"},"none"));
   else{
     const list=el("div",{class:"ro-list"});
-    bn.slice(0,8).forEach(b=>{
+    bn.slice(0,RO_TOP).forEach(b=>{
       const nm=(BY.defs[BY.nodes[b.nodeId]?.machineDefId]?.name)||b.nodeId;
       const it=(BY.items[b.itemId]?.name)||b.itemId;
       list.append(el("div",{class:"ro-item bneck",onclick:()=>select("node",b.nodeId)},
@@ -1527,26 +1621,551 @@ function buildReadout(host){
         el("span",{class:"bad"}, "−"+fmtShort(b.shortfall))));
     });
     sec.append(list);
+    if(bn.length>RO_TOP) sec.append(el("button",{class:"ro-more",onclick:()=>openDock({tab:"bottlenecks"})},`+${bn.length-RO_TOP} more`));
   }
   panel.append(sec);
+  panel.append(el("button",{class:"tool-btn ro-open",title:"Every resource, machine and bottleneck in this scope (B)",
+    onclick:()=>openDock({})},"▤ Open balance sheet"));
   host.append(panel);
 }
+const RO_TOP=5;
 function fmtShort(v){ const {v:val,s}=scaleMag(v); return val+s; }
 function roRow(k,v){ return el("div",{class:"ro-row"}, el("span",{class:"k"},k), el("span",{class:"v"},v)); }
-function ioSection(label, map){
+function ioSection(label, map, onMore){
   const keys=Object.keys(map||{});
-  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},label));
+  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},label+(keys.length?` (${keys.length})`:"")));
   if(!keys.length){ sec.append(el("div",{class:"ro-empty"},"none")); return sec; }
   const list=el("div",{class:"ro-list"});
-  keys.sort((a,b)=>Math.abs(map[b])-Math.abs(map[a])).slice(0,10).forEach(k=>{
+  keys.sort((a,b)=>Math.abs(map[b])-Math.abs(map[a])).slice(0,RO_TOP).forEach(k=>{
     const it=BY.items[k]; const nm=(it&&it.name)||k;
-    list.append(el("div",{class:"ro-item"}, el("span",null,nm), el("span",null, fmtRateFor(it&&it.category, map[k]))));
+    list.append(el("div",{class:"ro-item bneck",title:"show in the balance sheet",onclick:()=>openDock({tab:"resources",focus:k})},
+      el("span",null,nm), el("span",null, fmtRateFor(it&&it.category, map[k]))));
   });
-  sec.append(list); return sec;
+  sec.append(list);
+  if(keys.length>RO_TOP && onMore) sec.append(el("button",{class:"ro-more",onclick:onMore},`+${keys.length-RO_TOP} more`));
+  return sec;
 }
 function setScope(sc){
   if(sc==="system"&&!SYSTEM_ID){ SYSTEM_ID=(WORLD.systems&&WORLD.systems[0]&&WORLD.systems[0].id)||null; }
   SCOPE=sc; renderReadout(); recompute();
+}
+
+/* ============================================================================
+   Balance sheet — a resizable dock along the bottom of the stage
+   ============================================================================
+   The readout is a glance; a real chain touches hundreds of resources. The sheet
+   lists all of them for the current scope (world / process / node / system), off
+   the engine's per-resource ledger (REPORT.itemLedger):
+
+   - Resources: made / used / net, need and capacity at 100% duty, production
+     missing to run every user flat out, feedstock in, yield out, shortfall, maker
+     and user counts, and a coverage bar. Sort by any column, search, filter by
+     category and by state (short, under-supplied, imported, product, intermediate,
+     balanced), hide columns, switch rates between /s, /min and /h. Click a row to
+     expand who makes and who uses it (click one to select it on the canvas);
+     hovering a row outlines its makers (solid) and users (dashed) on the canvas.
+   - Machines: every machine's duty, run band, recipes, limiting inputs, products.
+   - Bottlenecks: every limiting shortfall, ranked, with its share of the need.
+   Copy (TSV) and CSV export take the current filtered view. State persists. */
+const DOCK_DEFAULT = {
+  open:false, tab:"resources", h:340, max:false, unit:"s",
+  q:"", cats:["solid","liquid","energy"], view:"all", hidden:[],
+  mq:"", mview:"all", bq:"",
+  sort:{resources:{key:"short",dir:-1}, machines:{key:"duty",dir:1}, bottlenecks:{key:"short",dir:-1}},
+};
+let DOCK = loadDock();
+const DOCK_OPEN_ROWS = new Set();     // expanded resource rows
+let DOCK_STAMP = null;                // skip rebuilding an unchanged sheet
+let DOCK_SHOWN_SEL = null;
+const EPS = 1e-9;
+function loadDock(){
+  const d = structuredClone(DOCK_DEFAULT);
+  try{
+    const j = JSON.parse(localStorage.getItem("ps.dock")||"null");
+    if(j && typeof j==="object"){ Object.assign(d, j); d.sort = {...DOCK_DEFAULT.sort, ...(j.sort||{})}; }
+  }catch(e){}
+  return d;
+}
+function saveDock(){ try{ localStorage.setItem("ps.dock", JSON.stringify(DOCK)); }catch(e){} }
+function setDock(patch){ Object.assign(DOCK, patch); saveDock(); renderDock(true); }
+// Open the sheet, optionally on a tab / filter, or scrolled to one resource.
+function openDock({tab, view, focus}={}){
+  const patch = {open:true};
+  if(tab) patch.tab = tab;
+  if(view){ patch.view = view; patch.q = ""; }
+  if(focus){
+    patch.tab = "resources"; patch.view = "all"; patch.q = "";
+    const cat = ((REPORT&&REPORT.itemLedger&&REPORT.itemLedger[focus])||{}).category;
+    if(cat && !DOCK.cats.includes(cat)) patch.cats = [...DOCK.cats, cat];
+    DOCK_OPEN_ROWS.add(focus);
+  }
+  setDock(patch);
+  if(focus){
+    const row = $(`#dock tr.row[data-item="${cssEsc(focus)}"]`);
+    if(row && row.scrollIntoView) row.scrollIntoView({block:"nearest"});
+  }
+}
+function toggleDock(){ setDock({open:!DOCK.open}); }
+
+/* ---- units: material rates per s / min / h; energy always EU/t (as elsewhere) */
+const UNIT_MUL = {s:1, min:60, h:3600};
+function unitLabel(cat){
+  if(cat==="energy") return "EU/t";
+  const per = "/"+DOCK.unit;
+  return cat==="liquid"? "mB"+per : per;
+}
+function inUnit(cat, perSec){ return cat==="energy"? toPerTick(perSec) : perSec*UNIT_MUL[DOCK.unit]; }
+function fmtCell(cat, perSec){
+  if(perSec==null) return "—";
+  const v = inUnit(cat, perSec);
+  if(Math.abs(v) < 1e-9) return "·";
+  const {v:val, s} = scaleMag(v);
+  return (v<0&&!String(val).startsWith("-")?"−":"")+String(val).replace("-","−")+s;
+}
+function exportNum(cat, perSec){ return perSec==null? "" : String(clean(inUnit(cat, perSec))); }
+
+/* ---- data ---- */
+function nodeLabel(nid){ const n=BY.nodes[nid]; return (n && BY.defs[n.machineDefId] && BY.defs[n.machineDefId].name) || (n && n.machineDefId) || nid; }
+function itemLabel(id){ const it=BY.items[id]; return (it && it.name) || id; }
+function ledgerRows(){
+  const L = (REPORT && REPORT.itemLedger) || {};
+  return Object.values(L).map(r=>{
+    const it = BY.items[r.itemId];
+    const cat = r.category || (it && it.category) || "solid";
+    const supply = r.capacity + r.feedstock;
+    const missing = r.isTag ? 0 : Math.max(0, r.demand - supply);
+    const cover = r.demand > EPS ? Math.min(1, (r.produced + r.feedstock) / r.demand) : null;
+    const internal = r.producers.length>0 && r.consumers.length>0;
+    const flags = [];
+    if(r.shortfall > EPS) flags.push("short");
+    if(r.feedstock > EPS) flags.push("in");
+    if(r.yield > EPS) flags.push("out");
+    return {...r, cat, name:itemLabel(r.itemId), tag:!!r.isTag, net:r.produced - r.consumed,
+      missing, cover, internal, flags, makers:r.producers.length, users:r.consumers.length};
+  });
+}
+const RES_VIEWS = [
+  ["all","all", ()=>true],
+  ["short","short", r=>r.shortfall>EPS],
+  ["under","under-supplied", r=>r.missing>EPS],
+  ["in","imported", r=>r.feedstock>EPS],
+  ["out","products", r=>r.yield>EPS],
+  ["mid","intermediates", r=>r.internal],
+  ["ok","balanced", r=>r.shortfall<=EPS && r.missing<=EPS && r.feedstock<=EPS && r.yield<=EPS],
+];
+const RES_COLS = [
+  {k:"name", h:"resource", l:true, get:r=>r.name.toLowerCase(), title:"click a row for its makers and users"},
+  {k:"unit", h:"unit", l:true, get:r=>unitLabel(r.cat)},
+  {k:"made", h:"made", get:r=>r.produced, title:"produced at the solved duty cycles"},
+  {k:"used", h:"used", get:r=>r.consumed, title:"consumed at the solved duty cycles"},
+  {k:"net", h:"net", get:r=>r.net, title:"made − used (feedstock covers a negative net, yield takes a positive one)"},
+  {k:"need", h:"need @100%", get:r=>r.demand, title:"what every user would draw running flat out"},
+  {k:"cap", h:"can make @100%", get:r=>r.capacity, title:"what every maker would produce running flat out"},
+  {k:"missing", h:"missing", get:r=>r.missing, title:"production (or feedstock) missing to run every user at 100%"},
+  {k:"in", h:"feedstock", get:r=>r.feedstock, title:"fed in across the scope boundary"},
+  {k:"out", h:"yield", get:r=>r.yield, title:"leaves the scope (product / surplus)"},
+  {k:"short", h:"short", get:r=>r.shortfall, title:"shortfall at the machines starved of it"},
+  {k:"makers", h:"makers", get:r=>r.makers},
+  {k:"users", h:"users", get:r=>r.users},
+  {k:"cover", h:"coverage", get:r=>r.cover==null?2:r.cover, title:"share of the full-rate need actually supplied"},
+  {k:"state", h:"state", l:true, get:r=>r.flags.join(" "), title:"short · imported · product"},
+];
+function machineRows(){
+  if(!REPORT) return [];
+  const bals = REPORT.balances||{}, duty = REPORT.nodeDuty||{};
+  return (REPORT.nodeIds||[]).map(nid=>{
+    const n = BY.nodes[nid]||{}, b = bals[nid]||{inputs:{},outputs:{}};
+    const limits = Object.values(b.inputs||{}).filter(x=>x.status==="shortfall").map(x=>x.itemId);
+    const makes = Object.values(b.outputs||{}).filter(x=>x.rate>EPS).sort((a,c)=>c.rate-a.rate).map(x=>x.itemId);
+    const recipes = nodeRecipeIds(n).map(id=>(BY.recipes[id]&&BY.recipes[id].name)||id);
+    return {nid, name:nodeLabel(nid), recipes, duty:duty[nid]==null?1:duty[nid], status:b.status||"ok",
+      limits, makes, uses:Object.keys(b.inputs||{})};
+  });
+}
+const MACH_VIEWS = [["all","all",()=>true],["stalled","stalled",m=>m.status==="stalled"],["throttled","throttled",m=>m.status==="throttled"],["ok","full",m=>m.status==="ok"]];
+const MACH_COLS = [
+  {k:"name", h:"machine", l:true, get:m=>m.name.toLowerCase()},
+  {k:"nid", h:"node", l:true, get:m=>m.nid},
+  {k:"duty", h:"duty", get:m=>m.duty},
+  {k:"status", h:"state", l:true, get:m=>({stalled:0,throttled:1,ok:2})[m.status]??3},
+  {k:"recipes", h:"recipes", l:true, get:m=>m.recipes.join(", ").toLowerCase()},
+  {k:"limits", h:"limited by", l:true, get:m=>m.limits.length},
+  {k:"makes", h:"makes", l:true, get:m=>m.makes.length},
+];
+function bottleneckRows(){
+  if(!REPORT) return [];
+  const bals = REPORT.balances||{};
+  return (REPORT.bottlenecks||[]).map((b,i)=>{
+    const need = ((bals[b.nodeId]||{}).inputs||{})[b.itemId];
+    const cat = (BY.items[b.itemId]||{}).category || "solid";
+    return {rank:i+1, nid:b.nodeId, name:nodeLabel(b.nodeId), item:b.itemId, itemName:itemLabel(b.itemId), cat,
+      short:b.shortfall, need:need?need.demand:null, pct:need&&need.demand>EPS? b.shortfall/need.demand : null};
+  });
+}
+const BN_COLS = [
+  {k:"rank", h:"#", get:b=>b.rank},
+  {k:"name", h:"machine", l:true, get:b=>b.name.toLowerCase()},
+  {k:"nid", h:"node", l:true, get:b=>b.nid},
+  {k:"itemName", h:"short of", l:true, get:b=>b.itemName.toLowerCase()},
+  {k:"short", h:"short", get:b=>b.short},
+  {k:"need", h:"need", get:b=>b.need==null?-1:b.need},
+  {k:"pct", h:"% of need", get:b=>b.pct==null?-1:b.pct},
+];
+function sortRows(rows, cols, tab){
+  const st = DOCK.sort[tab] || {}; const col = cols.find(c=>c.k===st.key) || cols[0]; const dir = st.dir || 1;
+  return rows.slice().sort((a,b)=>{
+    const x=col.get(a), y=col.get(b);
+    const c = (typeof x==="number" && typeof y==="number")? x-y : cmp(String(x),String(y));
+    return c*dir || cmp(a.name||"", b.name||"");
+  });
+}
+function sortBy(tab, key, cols){
+  const cur = DOCK.sort[tab] || {};
+  const col = cols.find(c=>c.k===key);
+  const dir = cur.key===key ? -cur.dir : (col&&col.l ? 1 : -1);   // numbers: largest first
+  setDock({sort:{...DOCK.sort, [tab]:{key, dir}}});
+}
+function filteredResources(){
+  const q = DOCK.q.trim().toLowerCase();
+  const view = (RES_VIEWS.find(v=>v[0]===DOCK.view)||RES_VIEWS[0])[2];
+  const all = ledgerRows();
+  const base = all.filter(r=>DOCK.cats.includes(r.cat) && (!q || r.name.toLowerCase().includes(q) || r.itemId.toLowerCase().includes(q)));
+  return {all, base, rows: sortRows(base.filter(view), RES_COLS, "resources")};
+}
+function filteredMachines(){
+  const q = DOCK.mq.trim().toLowerCase();
+  const view = (MACH_VIEWS.find(v=>v[0]===DOCK.mview)||MACH_VIEWS[0])[2];
+  const hit = m => !q || m.name.toLowerCase().includes(q) || m.nid.toLowerCase().includes(q)
+    || m.recipes.some(r=>r.toLowerCase().includes(q)) || m.makes.concat(m.uses).some(i=>itemLabel(i).toLowerCase().includes(q)||i.includes(q));
+  const all = machineRows(); const base = all.filter(hit);
+  return {all, base, rows: sortRows(base.filter(view), MACH_COLS, "machines")};
+}
+function filteredBottlenecks(){
+  const q = DOCK.bq.trim().toLowerCase();
+  const all = bottleneckRows();
+  const base = all.filter(b=>!q || b.name.toLowerCase().includes(q) || b.nid.includes(q) || b.itemName.toLowerCase().includes(q) || b.item.includes(q));
+  return {all, base, rows: sortRows(base, BN_COLS, "bottlenecks")};
+}
+
+/* ---- canvas highlight while hovering a resource ---- */
+function highlightNodes(makers, users){
+  const vp=$("#viewport"); if(!vp) return;
+  const mk=new Set(makers||[]), us=new Set(users||[]), any=mk.size||us.size;
+  vp.querySelectorAll(".node").forEach(d=>{
+    const id=d.getAttribute("data-id");
+    d.classList.toggle("hl-make", mk.has(id));
+    d.classList.toggle("hl-use", !mk.has(id) && us.has(id));
+    d.classList.toggle("hl-dim", !!any && !mk.has(id) && !us.has(id));
+  });
+}
+// Fit the canvas around a set of nodes (a resource's makers and users).
+function frameNodes(ids){
+  const pts = ids.map(id=>BY.nodes[id]).filter(n=>n && n.x!=null && n.y!=null);
+  if(!pts.length) return;
+  const vb=viewportBox();
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const n of pts){ minX=Math.min(minX,n.x); minY=Math.min(minY,n.y); maxX=Math.max(maxX,n.x+NODE_W); maxY=Math.max(maxY,n.y+140); }
+  const visH = vb.h - (DOCK.open ? dockHeight() : 0);
+  const w=maxX-minX, h=maxY-minY;
+  const k=Math.min(1.5, Math.max(0.2, Math.min(vb.w*0.8/w, visH*0.8/h)));
+  view={k, x: vb.cx-(minX+w/2)*k, y: visH/2-(minY+h/2)*k};
+  applyView();
+}
+
+/* ---- export ---- */
+function sheetTable(){
+  if(DOCK.tab==="machines"){
+    const {rows}=filteredMachines();
+    return [["machine","node","duty %","state","recipes","limited by","makes"],
+      ...rows.map(m=>[m.name,m.nid,String(clean(m.duty*100)),m.status,m.recipes.join("; "),m.limits.map(itemLabel).join("; "),m.makes.map(itemLabel).join("; ")])];
+  }
+  if(DOCK.tab==="bottlenecks"){
+    const {rows}=filteredBottlenecks();
+    return [["rank","machine","node","short of","unit","short","need","% of need"],
+      ...rows.map(b=>[String(b.rank),b.name,b.nid,b.itemName,unitLabel(b.cat),exportNum(b.cat,b.short),exportNum(b.cat,b.need),b.pct==null?"":String(clean(b.pct*100))])];
+  }
+  const {rows}=filteredResources();
+  return [["resource","id","category","unit","made","used","net","need @100%","can make @100%","missing","feedstock","yield","short","makers","users","coverage %","state"],
+    ...rows.map(r=>[r.name,r.itemId,r.cat,unitLabel(r.cat),exportNum(r.cat,r.produced),exportNum(r.cat,r.consumed),exportNum(r.cat,r.net),
+      exportNum(r.cat,r.demand),exportNum(r.cat,r.capacity),exportNum(r.cat,r.missing),exportNum(r.cat,r.feedstock),exportNum(r.cat,r.yield),
+      exportNum(r.cat,r.shortfall),String(r.makers),String(r.users),r.cover==null?"":String(clean(r.cover*100)),r.flags.join(" ")])];
+}
+async function copySheet(){
+  const text = sheetTable().map(r=>r.map(c=>String(c).replace(/[\t\n]/g," ")).join("\t")).join("\n");
+  let ok=false;
+  try{ await navigator.clipboard.writeText(text); ok=true; }catch(e){}
+  if(!ok){
+    const ta=el("textarea",{style:{position:"fixed",left:"-9999px"}}); ta.value=text; document.body.append(ta); ta.select();
+    try{ ok=document.execCommand("copy"); }catch(e){} ta.remove();
+  }
+  toast(ok? `copied ${text.split("\n").length-1} rows — paste into a spreadsheet` : "copy failed", !ok);
+}
+function downloadCsv(){
+  const csv = sheetTable().map(r=>r.map(c=>{ const s=String(c); return /[",\n]/.test(s)? '"'+s.replace(/"/g,'""')+'"' : s; }).join(",")).join("\n");
+  const a=el("a",{href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:`balance-${DOCK.tab}-${SCOPE}.csv`});
+  document.body.append(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/* ---- rendering ---- */
+function dockHeight(){
+  const stage=$("#stage"); const max = stage? stage.clientHeight - 40 : 600;
+  return DOCK.max ? max : Math.max(150, Math.min(max, DOCK.h));
+}
+function scopeLabel(){
+  if(SCOPE==="world") return "whole world";
+  if(SCOPE==="system") return "system · "+((BY.systems[SYSTEM_ID]||{}).name||SYSTEM_ID||"—");
+  const id = SEL&&SEL.kind==="node"? SEL.id : null;
+  return SCOPE+" · "+(id? nodeLabel(id)+" "+id : "select a machine");
+}
+function renderDock(force){
+  const dock=$("#dock"); if(!dock) return;
+  const selKey = SEL? SEL.kind+":"+SEL.id : "";
+  const stamp = [REPORT, STALE, selKey, JSON.stringify(DOCK), SCOPE, DOCK_OPEN_ROWS.size];
+  if(!force && DOCK_STAMP && stamp.every((x,i)=>x===DOCK_STAMP[i])) return;
+  DOCK_STAMP = stamp;
+  preserving(dock, ()=>buildDock(dock));
+  const stage=$("#stage");
+  if(stage) stage.style.setProperty("--dock-h", dock.offsetHeight+"px");
+  // A resource selected elsewhere (library, inspector) scrolls into view here.
+  if(DOCK.open && DOCK.tab==="resources" && SEL && SEL.kind==="item" && DOCK_SHOWN_SEL!==selKey){
+    const row=dock.querySelector(`tr.row[data-item="${cssEsc(SEL.id)}"]`);
+    if(row && row.scrollIntoView) row.scrollIntoView({block:"nearest"});
+  }
+  DOCK_SHOWN_SEL = selKey;
+}
+function buildDock(dock){
+  dock.textContent="";
+  dock.className = "dock"+(DOCK.open?"":" closed");
+  dock.style.height = DOCK.open? dockHeight()+"px" : "";
+  const res = REPORT? ledgerRows() : [];
+  const nShort = res.filter(r=>r.shortfall>EPS).length, nUnder = res.filter(r=>r.missing>EPS).length;
+  const sum = el("div",{class:"dock-sum"},
+    el("span",null, `${res.length} resources`),
+    REPORT? el("span",null, `${(REPORT.nodeIds||[]).length} machines`) : null,
+    nShort? el("span",{class:"bad"}, `${nShort} short`) : null,
+    nUnder? el("span",null, `${nUnder} under-supplied`) : null);
+  if(!DOCK.open){
+    const bar = el("div",{class:"dock-bar",title:"Open the balance sheet (B)",onclick:()=>setDock({open:true})},
+      el("span",{class:"dock-title"},"▤ Balance sheet"), el("span",{class:"dock-scope"},scopeLabel()), sum,
+      el("span",{class:"dock-spacer"}), el("span",{class:"dock-btn"},"open ▴"));
+    dock.append(bar);
+    return;
+  }
+  const grip = el("div",{class:"dock-grip",title:"drag to resize · double-click to maximize"});
+  grip.addEventListener("pointerdown", startDockResize);
+  grip.addEventListener("dblclick", ()=>setDock({max:!DOCK.max}));
+  dock.append(grip);
+  const ledger = REPORT? Object.keys(REPORT.itemLedger||{}).length : 0;
+  const tabs = el("div",{class:"dock-tabs"},
+    [["resources","resources",ledger],["machines","machines",REPORT?(REPORT.nodeIds||[]).length:0],["bottlenecks","bottlenecks",REPORT?(REPORT.bottlenecks||[]).length:0]]
+      .map(([k,lbl,n])=>el("button",{class:DOCK.tab===k?"on":"",onclick:()=>setDock({tab:k})}, lbl, el("span",{class:"n"},String(n)))));
+  const unit = el("span",{class:"seg",title:"material rates per second / minute / hour (energy stays EU/t)"},
+    ["s","min","h"].map(u=>el("button",{class:DOCK.unit===u?"on":"",onclick:()=>setDock({unit:u})},"/"+u)));
+  dock.append(el("div",{class:"dock-bar"},
+    el("span",{class:"dock-title"},"▤ Balance sheet"), el("span",{class:"dock-scope"},scopeLabel()),
+    tabs, STALE? el("span",{class:"dock-stale"},"● out of date — press Run") : null,
+    el("span",{class:"dock-spacer"}),
+    unit,
+    el("button",{class:"dock-btn",title:"copy the filtered table (tab-separated, pastes into a spreadsheet)",onclick:copySheet},"⧉ copy"),
+    el("button",{class:"dock-btn",title:"download the filtered table as CSV",onclick:downloadCsv},"⤓ csv"),
+    el("button",{class:"dock-btn"+(DOCK.max?" on":""),title:DOCK.max?"restore height":"maximize",onclick:()=>setDock({max:!DOCK.max})},DOCK.max?"▾":"▴"),
+    el("button",{class:"dock-btn",title:"close (B)",onclick:()=>setDock({open:false})},"✕")));
+  if(!REPORT){
+    dock.append(el("div",{class:"dock-body"}, el("div",{class:"dock-empty"},
+      SCOPE==="node"||SCOPE==="process"? "select a machine to see its "+SCOPE+"'s balance" : SCOPE==="system"? "select a system" : "press Run to fill the balance sheet")));
+    return;
+  }
+  if(DOCK.tab==="machines") buildMachines(dock);
+  else if(DOCK.tab==="bottlenecks") buildBottlenecks(dock);
+  else buildResources(dock);
+}
+function searchBox(key, placeholder){
+  const inp = el("input",{class:"field-input mono",type:"text",placeholder,value:DOCK[key],spellcheck:"false",autocomplete:"off","data-fk":"dock-"+key,
+    oninput:e=>{ DOCK[key]=e.target.value; e.target.defaultValue=e.target.value; saveDock(); renderDock(true); },
+    onkeydown:e=>{ if(e.key==="Escape"){ e.stopPropagation(); if(DOCK[key]){ DOCK[key]=""; saveDock(); renderDock(true); } else e.target.blur(); } }});
+  return inp;
+}
+function headRow(cols, tab, hidden){
+  const st = DOCK.sort[tab]||{};
+  return el("tr",null, cols.filter(c=>!hidden.includes(c.k)).map(c=>el("th",{class:(c.l?"l ":"")+(st.key===c.k?"sorted":""),title:c.title||"sort",
+    onclick:()=>sortBy(tab, c.k, cols)}, c.h, st.key===c.k? (st.dir>0?" ▲":" ▼") : "")));
+}
+function numTd(cat, v, cls){
+  const txt = fmtCell(cat, v);
+  return el("td",{class:txt==="·"? "zero" : (cls||""), title: v==null? "" : String(clean(inUnit(cat,v)))+" "+unitLabel(cat)}, txt);
+}
+function buildResources(dock){
+  const {all, base, rows} = filteredResources();
+  const tools = el("div",{class:"dock-tools"});
+  tools.append(searchBox("q","search resources…"));
+  for(const c of ["solid","liquid","energy"]){
+    const on = DOCK.cats.includes(c);
+    tools.append(el("button",{class:"fchip"+(on?" on":""),title:"show "+c,
+      onclick:()=>setDock({cats: on? DOCK.cats.filter(x=>x!==c) : [...DOCK.cats, c]})},
+      el("span",{class:"dot",style:{background:catColor(c)}}), c, el("span",{class:"n"}, String(all.filter(r=>r.cat===c).length))));
+  }
+  tools.append(el("span",{style:{width:"6px"}}));
+  for(const [k,lbl,f] of RES_VIEWS){
+    tools.append(el("button",{class:"fchip"+(DOCK.view===k?" on":""),onclick:()=>setDock({view:k})}, lbl, el("span",{class:"n"}, String(base.filter(f).length))));
+  }
+  tools.append(el("span",{class:"dock-spacer"}));
+  tools.append(columnMenu());
+  dock.append(tools);
+  const hidden = DOCK.hidden||[];
+  const cols = RES_COLS.filter(c=>!hidden.includes(c.k));
+  const body = el("div",{class:"dock-body","data-sk":"dock-resources"});
+  if(!rows.length){ body.append(el("div",{class:"dock-empty"}, all.length? "no resource matches these filters" : "nothing flows in this scope")); }
+  else{
+    const tb = el("tbody");
+    for(const r of rows){
+      const open = DOCK_OPEN_ROWS.has(r.itemId);
+      const seld = SEL && SEL.kind==="item" && SEL.id===r.itemId;
+      const tr = el("tr",{class:"row"+(open?" open":"")+(seld?" selected":""),"data-item":r.itemId,
+        onclick:()=>{ if(open) DOCK_OPEN_ROWS.delete(r.itemId); else DOCK_OPEN_ROWS.add(r.itemId); renderDock(true); },
+        onmouseenter:()=>highlightNodes(r.producers.map(p=>p.nodeId), r.consumers.map(c=>c.nodeId)),
+        onmouseleave:()=>highlightNodes()});
+      for(const c of cols) tr.append(resCell(c.k, r, open));
+      tb.append(tr);
+      if(open) tb.append(el("tr",{class:"detail"}, el("td",{colspan:String(cols.length)}, resourceDetail(r))));
+    }
+    body.append(el("table",{class:"sheet"}, el("thead",null, headRow(RES_COLS,"resources",hidden)), tb));
+  }
+  dock.append(body);
+  dock.append(el("div",{class:"dock-foot"},
+    el("span",null, `showing ${rows.length} of ${all.length}`),
+    el("span",null, "click a row for makers & users · hover to outline them on the canvas · click a header to sort")));
+}
+function resCell(k, r, open){
+  const c = r.cat;
+  switch(k){
+    case "name": return el("td",{class:"l"}, el("div",{class:"rname"},
+      el("span",{class:"caret"+(open?" open":"")},"▸"),
+      el("span",{class:"dot",style:{background:r.tag?"var(--ink-faint)":catColor(c)}}),
+      el("span",{class:"nm"}, (r.tag?"# ":"")+r.name), el("span",{class:"id"}, r.itemId)));
+    case "unit": return el("td",{class:"l zero"}, unitLabel(c));
+    case "made": return numTd(c, r.produced);
+    case "used": return numTd(c, r.consumed);
+    case "net": return numTd(c, r.net, r.net>EPS? "blue" : r.net< -EPS? "warn" : "");
+    case "need": return numTd(c, r.demand);
+    case "cap": return numTd(c, r.capacity);
+    case "missing": return numTd(c, r.missing, "warn");
+    case "in": return numTd(c, r.feedstock);
+    case "out": return numTd(c, r.yield, "blue");
+    case "short": return numTd(c, r.shortfall, "bad");
+    case "makers": return el("td",{class:r.makers?"":"zero"}, String(r.makers||"·"));
+    case "users": return el("td",{class:r.users?"":"zero"}, String(r.users||"·"));
+    case "cover": {
+      if(r.cover==null) return el("td",{class:"zero"},"—");
+      const pct = Math.round(r.cover*100);
+      const col = r.cover>=0.999? "var(--s-ref)" : r.cover>0? "var(--s-learn)" : "var(--s-bad)";
+      return el("td",{title:pct+"% of the full-rate need is supplied"}, el("span",{class:"cover"}, el("i",{style:{width:(r.cover*100)+"%",background:col}})), " "+pct+"%");
+    }
+    case "state": return el("td",{class:"l"}, r.flags.length? r.flags.map(f=>el("span",{class:"flag "+f}, {short:"short",in:"imported",out:"product"}[f])) : el("span",{class:"flag ok"}, r.internal?"balanced":"—"));
+  }
+  return el("td");
+}
+function resourceDetail(r){
+  const c=r.cat;
+  const pick = nid => { select("node", nid); revealOnCanvas("node", nid); };
+  const makers = el("div",{class:"det-list"}, r.producers.length? r.producers.map(p=>{
+      const d = p.capacity>EPS? p.rate/p.capacity : 1;
+      return el("div",{class:"det-row",title:"select on the canvas",onclick:e=>{ e.stopPropagation(); pick(p.nodeId); }},
+        el("span",{class:"who"}, nodeLabel(p.nodeId), el("span",{class:"id"}, p.nodeId+(p.itemId?" · makes "+itemLabel(p.itemId):""))),
+        el("span",null, fmtCell(c,p.rate)+" "+unitLabel(c)),
+        el("span",{style:{color:"var(--ink-faint)"}}, Math.round(d*100)+"% of "+fmtCell(c,p.capacity)));
+    }) : el("div",{class:"ro-empty"}, r.feedstock>EPS? "no maker in scope — fed in as feedstock" : "no maker in scope"));
+  const users = el("div",{class:"det-list"}, r.consumers.length? r.consumers.map(u=>
+      el("div",{class:"det-row",title:"select on the canvas",onclick:e=>{ e.stopPropagation(); pick(u.nodeId); }},
+        el("span",{class:"who"}, nodeLabel(u.nodeId), el("span",{class:"id"}, u.nodeId)),
+        el("span",null, fmtCell(c,u.rate)+" / "+fmtCell(c,u.demand)+" "+unitLabel(c)),
+        u.shortfall? el("span",{class:"bad"}, "short "+fmtCell(c,u.shortfall)) : el("span",{style:{color:"var(--ink-faint)"}},"full"))
+    ) : el("div",{class:"ro-empty"}, r.yield>EPS? "no user in scope — leaves as yield" : "no user in scope"));
+  const ids = [...r.producers.map(p=>p.nodeId), ...r.consumers.map(u=>u.nodeId)];
+  return el("div",{onclick:e=>e.stopPropagation()},
+    el("div",{class:"det"},
+      el("div",null, el("h4",null, `made by (${r.producers.length})`, el("span",null, fmtCell(c,r.produced)+" of "+fmtCell(c,r.capacity)+" "+unitLabel(c))), makers),
+      el("div",null, el("h4",null, `used by (${r.consumers.length})`, el("span",null, fmtCell(c,r.consumed)+" of "+fmtCell(c,r.demand)+" "+unitLabel(c))), users)),
+    el("div",{class:"det-actions"},
+      BY.items[r.itemId]? el("button",{class:"dock-btn",onclick:()=>select("item", r.itemId)},"inspect item") : null,
+      ids.length? el("button",{class:"dock-btn",onclick:()=>frameNodes(ids)},"⌖ frame on canvas") : null,
+      el("button",{class:"dock-btn",onclick:()=>{ DOCK_OPEN_ROWS.delete(r.itemId); renderDock(true); }},"collapse")));
+}
+let COLMENU_OPEN=false;
+function columnMenu(){
+  const wrap = el("span",{style:{position:"relative"}});
+  wrap.append(el("button",{class:"dock-btn"+(COLMENU_OPEN?" on":""),onclick:()=>{ COLMENU_OPEN=!COLMENU_OPEN; renderDock(true); }},"columns ▾"));
+  if(COLMENU_OPEN){
+    const hidden = DOCK.hidden||[];
+    const pop = el("div",{class:"combo-pop up",style:{left:"auto",right:"0",width:"200px",padding:"4px 0"}});
+    for(const c of RES_COLS){
+      if(c.k==="name") continue;
+      pop.append(el("label",{class:"combo-opt"}, el("input",{type:"checkbox",checked:!hidden.includes(c.k),
+        onchange:e=>setDock({hidden: e.target.checked? hidden.filter(x=>x!==c.k) : [...hidden, c.k]})}), c.h));
+    }
+    pop.append(el("div",{class:"combo-opt",onclick:()=>setDock({hidden:[]})},"show all"));
+    wrap.append(pop);
+  }
+  return wrap;
+}
+function buildMachines(dock){
+  const {all, base, rows} = filteredMachines();
+  const tools = el("div",{class:"dock-tools"}, searchBox("mq","search machines, recipes, items…"));
+  for(const [k,lbl,f] of MACH_VIEWS) tools.append(el("button",{class:"fchip"+(DOCK.mview===k?" on":""),onclick:()=>setDock({mview:k})}, lbl, el("span",{class:"n"}, String(base.filter(f).length))));
+  dock.append(tools);
+  const body = el("div",{class:"dock-body","data-sk":"dock-machines"});
+  if(!rows.length) body.append(el("div",{class:"dock-empty"}, all.length? "no machine matches" : "no machines in this scope"));
+  else{
+    const tb = el("tbody");
+    for(const m of rows){
+      const seld = SEL && SEL.kind==="node" && SEL.id===m.nid;
+      tb.append(el("tr",{class:"row"+(seld?" selected":""),"data-node":m.nid,title:"select on the canvas",
+        onclick:()=>{ select("node", m.nid); revealOnCanvas("node", m.nid); },
+        onmouseenter:()=>highlightNodes([m.nid],[]), onmouseleave:()=>highlightNodes()},
+        el("td",{class:"l"}, el("span",{style:{color:"var(--ink)"}}, m.name)),
+        el("td",{class:"l zero"}, m.nid),
+        el("td",{class:m.duty<0.999?(m.duty<=EPS?"bad":"warn"):"good"}, Math.round(m.duty*100)+"%"),
+        el("td",{class:"l"}, el("span",{class:"flag "+m.status}, {ok:"full",throttled:"throttled",stalled:"stalled"}[m.status]||m.status)),
+        el("td",{class:"l",title:m.recipes.join("\n")}, m.recipes.length>2? m.recipes.slice(0,2).join(", ")+` +${m.recipes.length-2}` : m.recipes.join(", ")||"—"),
+        el("td",{class:"l bad"}, m.limits.map(itemLabel).join(", ")),
+        el("td",{class:"l",title:m.makes.map(itemLabel).join("\n")}, m.makes.slice(0,3).map(itemLabel).join(", ")+(m.makes.length>3?` +${m.makes.length-3}`:""))));
+    }
+    body.append(el("table",{class:"sheet"}, el("thead",null, headRow(MACH_COLS,"machines",[])), tb));
+  }
+  dock.append(body);
+  dock.append(el("div",{class:"dock-foot"}, el("span",null, `showing ${rows.length} of ${all.length}`), el("span",null,"click a machine to select it on the canvas")));
+}
+function buildBottlenecks(dock){
+  const {all, rows} = filteredBottlenecks();
+  dock.append(el("div",{class:"dock-tools"}, searchBox("bq","search machines or items…")));
+  const body = el("div",{class:"dock-body","data-sk":"dock-bottlenecks"});
+  if(!rows.length) body.append(el("div",{class:"dock-empty"}, all.length? "no bottleneck matches" : "no bottlenecks — every machine gets what it needs"));
+  else{
+    const tb = el("tbody");
+    for(const b of rows){
+      tb.append(el("tr",{class:"row",title:"select on the canvas",onclick:()=>{ select("node", b.nid); revealOnCanvas("node", b.nid); },
+        onmouseenter:()=>highlightNodes([],[b.nid]), onmouseleave:()=>highlightNodes()},
+        el("td",null, String(b.rank)),
+        el("td",{class:"l"}, el("span",{style:{color:"var(--ink)"}}, b.name)),
+        el("td",{class:"l zero"}, b.nid),
+        el("td",{class:"l"}, el("span",{class:"bneck",style:{textDecoration:"underline dotted"},title:"show in resources",
+          onclick:e=>{ e.stopPropagation(); openDock({focus:b.item}); }}, b.itemName)),
+        numTd(b.cat, b.short, "bad"),
+        numTd(b.cat, b.need),
+        el("td",{class:"warn"}, b.pct==null?"—":Math.round(b.pct*100)+"%")));
+    }
+    body.append(el("table",{class:"sheet"}, el("thead",null, headRow(BN_COLS,"bottlenecks",[])), tb));
+  }
+  dock.append(body);
+  dock.append(el("div",{class:"dock-foot"}, el("span",null, `${rows.length} limiting shortfalls`)));
+}
+function startDockResize(e){
+  e.preventDefault();
+  const dock=$("#dock"), stage=$("#stage");
+  const y0=e.clientY, h0=dock.offsetHeight, max=stage.clientHeight-40;
+  const move=ev=>{ const h=Math.max(150, Math.min(max, h0+(y0-ev.clientY))); dock.style.height=h+"px"; stage.style.setProperty("--dock-h", h+"px"); };
+  const up=()=>{ window.removeEventListener("pointermove",move); DOCK.h=dock.offsetHeight; DOCK.max=false; saveDock(); renderDock(true); };
+  window.addEventListener("pointermove",move);
+  window.addEventListener("pointerup",up,{once:true});
 }
 
 /* ============================================================================

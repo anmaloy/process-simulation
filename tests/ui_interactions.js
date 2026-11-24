@@ -462,6 +462,100 @@ scenario("shift_click_group", async (t) => {
   t.eq((await t.entity("system", sel.id)).memberNodeIds.sort(), ["mac_node_3", "mac_node_4"], "members");
 });
 
+/* ---------------------------------------------------------------- balance sheet */
+async function openSheet(t) {
+  await t.ev(() => runSimulation()); await t.idle();
+  await t.page.locator("text=▤ Open balance sheet").click(); await t.idle();
+}
+const sheetRows = (t) => t.ev(() => [...document.querySelectorAll("#dock tr.row")].map(r => r.dataset.item || r.dataset.node));
+
+scenario("balance_sheet_lists_every_resource", async (t) => {
+  await openSheet(t);
+  const ledger = await t.ev(() => Object.keys(REPORT.itemLedger).sort());
+  t.expect(ledger.length > 10, "the test world touches more than 10 resources (" + ledger.length + ")");
+  t.eq((await sheetRows(t)).sort(), ledger, "one row per ledger resource, none cut off");
+  // the readout's "+N more" opens the sheet filtered to that list
+  await t.ev(() => setDock({ open: false })); await t.idle();
+  const more = t.page.locator(".readout .ro-more").first();
+  if (await more.count()) {
+    await more.click(); await t.idle();
+    t.eq(await t.ev(() => DOCK.open), true, "+N more opens the sheet");
+  }
+});
+
+scenario("balance_sheet_sort_search_filter_units", async (t) => {
+  await openSheet(t);
+  // sort by "made" (largest first), then toggle to ascending
+  await t.page.locator("#dock th", { hasText: /^made/ }).click(); await t.idle();
+  const made = () => t.ev(() => [...document.querySelectorAll("#dock tr.row")].map(r => REPORT.itemLedger[r.dataset.item].produced));
+  let v = await made();
+  t.expect(v.every((x, i) => i === 0 || v[i - 1] >= x), "sorted by made, descending");
+  await t.page.locator("#dock th", { hasText: /^made/ }).click(); await t.idle();
+  v = await made();
+  t.expect(v.every((x, i) => i === 0 || v[i - 1] <= x), "second click: ascending");
+  // search keeps focus while filtering
+  const q = t.page.locator('#dock [data-fk="dock-q"]');
+  await q.click(); await t.page.keyboard.type("ore 1");
+  t.expect((await sheetRows(t)).every(id => id.startsWith("ore_1")), "search filters rows");
+  const a = await t.active();
+  t.eq(a && a.value, "ore 1", "search box keeps focus and text while the sheet re-renders");
+  await q.press("Escape"); await t.idle();
+  // category chip: hide energy
+  await t.page.locator("#dock .fchip", { hasText: "energy" }).click(); await t.idle();
+  t.expect(!(await sheetRows(t)).includes("electricity"), "energy hidden");
+  // state view: products only
+  await t.page.locator("#dock .fchip", { hasText: "products" }).click(); await t.idle();
+  const prods = await t.ev(() => [...document.querySelectorAll("#dock tr.row")].every(r => REPORT.itemLedger[r.dataset.item].yield > 0));
+  t.expect(prods, "products view shows only resources with yield");
+  // units: /min is 60× /s
+  await t.page.locator("#dock .fchip", { hasText: /^all/ }).click(); await t.idle();
+  const cell = async () => t.ev(() => { const r = document.querySelector('#dock tr.row[data-item="ore_1"]'); return r ? r.children[2].title : null; });
+  const perS = parseFloat(await cell());
+  await t.page.locator("#dock .seg button", { hasText: "/min" }).click(); await t.idle();
+  t.eq(parseFloat(await cell()), +(perS * 60).toPrecision(12), "made in /min");
+});
+
+scenario("balance_sheet_expand_and_select_maker", async (t) => {
+  await openSheet(t);
+  await t.page.locator('#dock tr.row[data-item="ore_2"]').click(); await t.idle();
+  t.expect(await t.page.locator("#dock tr.detail").count() === 1, "row expands");
+  const maker = t.page.locator("#dock tr.detail .det-row").first();
+  await maker.click(); await t.idle();
+  t.eq(await t.ev(() => SEL), { kind: "node", id: "mac_node_2" }, "clicking a maker selects that machine");
+  // hovering a row outlines its makers / users on the canvas
+  await t.page.locator('#dock tr.row[data-item="ore_3"]').hover();
+  t.expect(await t.page.locator('.node.hl-make[data-id="mac_node_3"]').count() === 1, "maker outlined on hover");
+  t.expect(await t.page.locator('.node.hl-use[data-id="mac_node_4"]').count() === 1, "user outlined on hover");
+});
+
+scenario("balance_sheet_keeps_place_and_persists", async (t) => {
+  await t.page.setViewportSize({ width: 1400, height: 700 });
+  await openSheet(t);
+  const before = await t.setScroll("#dock .dock-body", 80);
+  t.expect(before > 0, "sheet scrolls for this test");
+  await t.select("recipe", "mac_3");
+  await t.commit(t.input("cycle time"), "6");
+  t.eq(await t.scrollTop("#dock .dock-body"), before, "sheet scroll survives a selection + edit");
+  await t.page.locator("#dock .dock-tabs button", { hasText: "machines" }).click(); await t.idle();
+  await t.page.reload(); await t.page.waitForFunction(() => BOOTED); await t.idle();
+  t.eq(await t.ev(() => [DOCK.open, DOCK.tab]), [true, "machines"], "open state and tab persist across reloads");
+  await t.ev(() => document.activeElement.blur && document.activeElement.blur());
+  await t.page.keyboard.press("b"); await t.idle();
+  t.eq(await t.ev(() => DOCK.open), false, "B toggles the sheet");
+});
+
+scenario("balance_sheet_machines_bottlenecks_export", async (t) => {
+  await openSheet(t);
+  await t.page.locator("#dock .dock-tabs button", { hasText: "machines" }).click(); await t.idle();
+  t.eq((await sheetRows(t)).length, await t.ev(() => REPORT.nodeIds.length), "every machine listed");
+  await t.page.locator('#dock tr.row[data-node="mac_node_6"]').click(); await t.idle();
+  t.eq(await t.ev(() => SEL), { kind: "node", id: "mac_node_6" }, "clicking a machine selects it");
+  await t.page.locator("#dock .dock-tabs button", { hasText: "bottlenecks" }).click(); await t.idle();
+  t.eq(await t.page.locator("#dock tr.row").count(), await t.ev(() => REPORT.bottlenecks.length), "every bottleneck listed");
+  const tbl = await t.ev(() => sheetTable());
+  t.eq(tbl.length - 1, await t.ev(() => REPORT.bottlenecks.length), "export has one line per row + header");
+});
+
 /* ---------------------------------------------------------------- runner */
 (async () => {
   const browser = await chromium.launch();

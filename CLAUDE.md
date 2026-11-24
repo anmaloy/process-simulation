@@ -70,6 +70,10 @@ per-kind inspectors with sparse-field discipline (item / recipe / machineDef /
 node / pipe / pipeNode / system), the input/output recipe finder, the balance
 overlay (status bar + chip + duty %, flow-weighted/dashed edges, floating readout
 with a world/process/node/system scope switcher and ranked bottlenecks), the
+**balance sheet** dock (`B`; resources / machines / bottlenecks tables for the
+current scope off `itemLedger` — sort, search, category/state filters, column
+toggles, /s·/min·/h, expandable maker/user breakdown, canvas outline on hover,
+copy/CSV; state persisted in `localStorage`), the
 collapsible/searchable library rail, systems (shift-select → Group,
 collapse/expand), undo (Ctrl+Z), recipe import, project save/load, and the
 **Run** / **Save** controls.
@@ -144,8 +148,11 @@ camelCase wire format.
 - **`recompute` scopes:** `world` (default), `node` (`nodeId` — a single machine),
   `process` (`nodeId` — its connected component via `trace_process`), `system`
   (`systemId`). Payload is `ScopeReport.to_dict()` (external I/O, per-node
-  balances, net energy, ranked bottlenecks, and `pipeFlows` — per-pipe resolved
-  flow + a starved-edge `shortfall` flag).
+  balances, net energy, ranked bottlenecks, `pipeFlows` — per-pipe resolved
+  flow + a starved-edge `shortfall` flag — and `itemLedger`: per resource,
+  `produced`/`consumed` at the solved duty, `capacity`/`demand` at 100% duty,
+  `feedstock`, `yield`, `shortfall`, and the `producers`/`consumers` node lists;
+  a tag row lists its members' producers).
 - **`on_conflict`** is a `ConflictPolicy`: `rename` (default), `skip`, `update`,
   `error`. `update` overwrites the World's entity of a colliding id **in place**
   (reported in `updatedIds`). Both importers default to `update` — MI entities are

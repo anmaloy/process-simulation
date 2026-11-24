@@ -36,6 +36,7 @@ from .node import NodeComputation, compute_node
 
 __all__ = [
     "Bottleneck",
+    "ItemLedger",
     "PipeFlow",
     "ScopeReport",
     "compute_scope",
@@ -86,6 +87,58 @@ class PipeFlow:
 
 
 @dataclass
+class ItemLedger:
+    """One resource's steady-state account across a scope (the balance sheet row).
+
+    All rates are per second. ``produced`` / ``consumed`` are what actually flows at
+    the solved duty cycles; ``capacity`` / ``demand`` are the same at 100% duty
+    (every producer / consumer running flat out), so ``demand − capacity`` says how
+    much production is missing to run every consumer at full rate. ``feedstock``
+    and ``yield_`` are this item's share of the scope's external inputs / outputs;
+    ``shortfall`` sums the limiter shortfalls of the machines starved of it.
+    ``producers`` / ``consumers`` list the contributing nodes (``rate`` actual,
+    ``capacity`` / ``demand`` at full rate, ``shortfall`` for a starved consumer).
+
+    A **tag** (``isTag``) is demanded by reference and satisfied by its members:
+    its producers are the nodes making any member, each listed with the member it
+    makes (``itemId``), and ``produced`` / ``capacity`` sum that member output —
+    the supply the tag can draw on, shared with any direct demand for the members.
+    """
+
+    item_id: str
+    category: str | None = None
+    is_tag: bool = False
+    produced: float = 0.0
+    consumed: float = 0.0
+    capacity: float = 0.0
+    demand: float = 0.0
+    feedstock: float = 0.0
+    yield_: float = 0.0
+    shortfall: float = 0.0
+    producers: list[dict[str, object]] = field(default_factory=list)
+    consumers: list[dict[str, object]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        out: dict[str, object] = {
+            "itemId": self.item_id,
+            "produced": self.produced,
+            "consumed": self.consumed,
+            "capacity": self.capacity,
+            "demand": self.demand,
+            "feedstock": self.feedstock,
+            "yield": self.yield_,
+            "shortfall": self.shortfall,
+            "producers": [dict(p) for p in self.producers],
+            "consumers": [dict(c) for c in self.consumers],
+        }
+        if self.category is not None:
+            out["category"] = self.category
+        if self.is_tag:
+            out["isTag"] = True
+        return out
+
+
+@dataclass
 class ScopeReport:
     """Aggregated steady-state stats for one scope.
 
@@ -108,6 +161,7 @@ class ScopeReport:
     bottlenecks: list[Bottleneck] = field(default_factory=list)
     pipe_flows: dict[str, PipeFlow] = field(default_factory=dict)
     node_duty: dict[str, float] = field(default_factory=dict)
+    item_ledger: dict[str, ItemLedger] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -118,6 +172,7 @@ class ScopeReport:
             "bottlenecks": [b.to_dict() for b in self.bottlenecks],
             "pipeFlows": {k: v.to_dict() for k, v in self.pipe_flows.items()},
             "nodeDuty": dict(self.node_duty),
+            "itemLedger": {k: v.to_dict() for k, v in self.item_ledger.items()},
         }
         if self.net_energy is not None:
             out["netEnergy"] = self.net_energy
@@ -950,6 +1005,10 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
     # Net energy scales with duty (a throttled machine draws/makes less).
     net_energy = _sum_net_energy((computations[nid], duty[nid]) for nid in ids)
 
+    item_ledger = _item_ledger(
+        index, ids, computations, duty, balances, external_inputs, external_outputs
+    )
+
     return ScopeReport(
         node_ids=ids,
         external_inputs=external_inputs,
@@ -960,7 +1019,89 @@ def compute_scope(world: World, node_ids: list[str] | None = None) -> ScopeRepor
         bottlenecks=bottlenecks,
         pipe_flows=pipe_flows,
         node_duty=duty,
+        item_ledger=item_ledger,
     )
+
+
+def _item_ledger(
+    index: _Index,
+    ids: list[str],
+    computations: dict[str, NodeComputation],
+    duty: dict[str, float],
+    balances: dict[str, NodeBalance],
+    external_inputs: dict[str, float],
+    external_outputs: dict[str, float],
+) -> dict[str, ItemLedger]:
+    """Per-resource account of a solved scope (see :class:`ItemLedger`)."""
+
+    ledger: dict[str, ItemLedger] = {}
+
+    def row(item_id: str) -> ItemLedger:
+        entry = ledger.get(item_id)
+        if entry is None:
+            item = index.items.get(item_id)
+            entry = ItemLedger(
+                item_id,
+                category=item.category.value if item else None,
+                is_tag=bool(item and item.is_tag),
+            )
+            ledger[item_id] = entry
+        return entry
+
+    for nid in ids:
+        comp = computations[nid]
+        d = duty[nid]
+        bal = balances.get(nid)
+        for item_id, nominal in comp.outputs.items():
+            if nominal <= _EPS:
+                continue
+            r = row(item_id)
+            r.produced += nominal * d
+            r.capacity += nominal
+            r.producers.append(
+                {"nodeId": nid, "rate": nominal * d, "capacity": nominal}
+            )
+        for item_id, nominal in comp.inputs.items():
+            if nominal <= _EPS:
+                continue
+            r = row(item_id)
+            short = 0.0
+            if bal is not None and item_id in bal.inputs:
+                short = bal.inputs[item_id].shortfall
+            r.consumed += nominal * d
+            r.demand += nominal
+            r.shortfall += short
+            entry: dict[str, object] = {
+                "nodeId": nid,
+                "rate": nominal * d,
+                "demand": nominal,
+            }
+            if short > _EPS:
+                entry["shortfall"] = short
+            r.consumers.append(entry)
+
+    # A tag is supplied by its members: list the member producers against it.
+    for item_id, r in list(ledger.items()):
+        if not r.is_tag:
+            continue
+        item = index.items.get(item_id)
+        for member in (item.members or []) if item else []:
+            m = ledger.get(member)
+            if m is None:
+                continue
+            for p in m.producers:
+                r.producers.append({**p, "itemId": member})
+                r.produced += float(p["rate"])  # type: ignore[arg-type]
+                r.capacity += float(p["capacity"])  # type: ignore[arg-type]
+
+    for item_id, rate in external_inputs.items():
+        row(item_id).feedstock += rate
+    for item_id, rate in external_outputs.items():
+        row(item_id).yield_ += rate
+    for r in ledger.values():
+        r.producers.sort(key=lambda p: -float(p["rate"]))  # type: ignore[arg-type]
+        r.consumers.sort(key=lambda c: -float(c["demand"]))  # type: ignore[arg-type]
+    return ledger
 
 
 def _sum_net_energy(items) -> float | None:

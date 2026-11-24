@@ -213,6 +213,11 @@ SCENARIOS = [
     "canvas_drag_wire_and_undo",
     "rail_pick_reveals_offscreen_node",
     "shift_click_group",
+    "balance_sheet_lists_every_resource",
+    "balance_sheet_sort_search_filter_units",
+    "balance_sheet_expand_and_select_maker",
+    "balance_sheet_keeps_place_and_persists",
+    "balance_sheet_machines_bottlenecks_export",
 ]
 
 
