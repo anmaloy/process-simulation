@@ -65,18 +65,24 @@ from typing import Any
 
 from .engine import compute_scope, compute_system, compute_world, trace_process
 from .io import (
+    LIBRARY_KINDS,
     ConflictPolicy,
+    Library,
     ProcessSimIOError,
     export_library,
     import_library,
     import_mi_library,
     import_mi_sources,
     library_from_dict,
+    library_ids,
     library_to_dict,
     load_library,
     load_project,
+    merge_libraries,
+    remove_from_library,
     save_library,
     save_project,
+    sync_library,
 )
 from .model import (
     Item,
@@ -149,11 +155,16 @@ class Api:
         #: :meth:`save_autosave` so a silent persistence failure (a read-only or
         #: locked app folder) becomes visible instead of looking like a clean save.
         self._last_save_error: str | None = None
-        #: A folder of persisted libraries (e.g. an imported MI catalog). Its
-        #: contents are merged into the World at startup and whenever a project is
-        #: loaded, so the machine catalog is always available without re-importing;
-        #: ``import_mi_dir`` writes the imported library here.
+        #: A folder of persisted libraries (e.g. an imported MI catalog). Each is
+        #: the app's **own editable copy** of an import — the source (a mod jar)
+        #: is read once, at import, and never again. Its entities are merged into
+        #: the World at startup and on project load **without overwriting** the
+        #: World's versions, and edits to them are written back into the copy.
         self._library_dir: Path | None = library_dir
+        #: The loaded catalog copies, by file path.
+        self._catalogs: dict[Path, Library] = self._load_catalogs()
+        #: Catalog files with edits not yet written (flushed with the autosave).
+        self._catalogs_dirty: set[Path] = set()
         # Make the persisted catalog available in the starting World too.
         self._merge_persisted_libraries()
 
@@ -161,40 +172,95 @@ class Api:
     # Persistent library catalog (the app folder's saved libraries).
     # ------------------------------------------------------------------ #
 
+    def _load_catalogs(self) -> dict[Path, Library]:
+        """Read every library saved under ``library_dir``. Unreadable files are
+        skipped (a bad catalog must not stop the app launching)."""
+
+        out: dict[Path, Library] = {}
+        if self._library_dir is None or not self._library_dir.is_dir():
+            return out
+        for path in sorted(self._library_dir.glob("*.psim-lib.json")):
+            try:
+                out[path] = load_library(path)
+            except (OSError, *_EXPECTED_ERRORS):
+                continue
+        return out
+
     def _merge_persisted_libraries(self) -> None:
-        """Merge every library saved under ``library_dir`` into the World.
+        """Merge every saved catalog copy into the World, **adding only**.
 
         Keeps an imported catalog (MI machines/recipes/items) available in any
         project — a fresh World, a loaded project, or a restored autosave — so it
-        never has to be re-imported. Uses ``UPDATE`` so re-running is idempotent
-        and a corrected catalog refreshes stale entities in place. Unreadable
-        files are skipped (a bad catalog must not stop the app launching).
+        never has to be re-imported. Uses ``SKIP``: an entity the World already
+        has is the World's (possibly edited) version and is never overwritten.
         """
 
-        if self._library_dir is None or not self._library_dir.is_dir():
-            return
-        for path in sorted(self._library_dir.glob("*.psim-lib.json")):
+        for lib in self._catalogs.values():
             try:
-                lib = load_library(path)
                 self._world = import_library(
-                    self._world, lib, on_conflict=ConflictPolicy.UPDATE
+                    self._world, lib, on_conflict=ConflictPolicy.SKIP
                 ).world
-            except (OSError, *_EXPECTED_ERRORS):
+            except _EXPECTED_ERRORS:
                 continue
 
-    def _save_library(self, library: Any, slug: str) -> None:
+    def _sync_catalogs(self, edit: dict[str, Any] | None = None) -> None:
+        """Write the World's edits into the catalog copies that hold them.
+
+        With ``edit`` (one ``apply_edit``) only that entity is synced — an upsert
+        copies the World's version in, a remove drops it from the copy. Without
+        it (a whole-World ``set_world``, e.g. undo) every held entity is synced
+        from the World; nothing is dropped, since a replaced World need not
+        contain the whole catalog.
+        """
+
+        kind = edit.get("kind") if edit else None
+        if edit is not None and kind not in LIBRARY_KINDS:
+            return
+        for path, lib in self._catalogs.items():
+            if edit is None:
+                changed = sync_library(lib, self._world)
+            elif edit.get("op") == "remove":
+                changed = remove_from_library(lib, kind, edit.get("id"))
+            else:
+                eid = (edit.get("entity") or {}).get("id")
+                changed = eid in library_ids(lib, kind) and sync_library(
+                    lib, self._world, {eid}
+                )
+            if changed:
+                self._catalogs_dirty.add(path)
+
+    def _save_library(self, library: Any, slug: str, *, overwrite: bool) -> None:
         """Persist ``library`` under ``library_dir`` as ``<slug>.psim-lib.json``.
 
-        Failures are swallowed — a disk hiccup must not break an import that has
-        already merged into the live World."""
+        A re-import into an existing copy **merges** into it: new entities are
+        added, existing (possibly edited) ones are kept unless ``overwrite`` (an
+        explicit ``update`` re-import). Failures are swallowed — a disk hiccup
+        must not break an import that has already merged into the live World."""
 
         if self._library_dir is None:
             return
+        path = self._library_dir / f"{slug}.psim-lib.json"
+        base = self._catalogs.get(path)
+        lib = (
+            merge_libraries(base, library, overwrite=overwrite)
+            if base is not None
+            else library
+        )
+        self._catalogs[path] = lib
+        self._catalogs_dirty.discard(path)
         try:
             self._library_dir.mkdir(parents=True, exist_ok=True)
-            save_library(library, self._library_dir / f"{slug}.psim-lib.json")
+            save_library(lib, path)
         except OSError:
-            pass
+            self._catalogs_dirty.add(path)  # retried with the next autosave
+
+    def _flush_catalogs(self) -> None:
+        """Write catalog copies holding unsaved edits (raises ``OSError``)."""
+
+        for path in sorted(self._catalogs_dirty):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            save_library(self._catalogs[path], path)
+            self._catalogs_dirty.discard(path)
 
     def _persist(self) -> bool:
         """Write the current World to the autosave path, if one is configured.
@@ -209,6 +275,7 @@ class Api:
         try:
             self._autosave_path.parent.mkdir(parents=True, exist_ok=True)
             save_project(self._world, self._autosave_path)
+            self._flush_catalogs()
             self._dirty = False
             self._last_save_error = None
             return True
@@ -257,6 +324,7 @@ class Api:
             self._world = World.from_dict(world)
         except _EXPECTED_ERRORS as exc:
             return _err(exc)
+        self._sync_catalogs()
         self._dirty = True  # persisted on the autosave timer / explicit save
         return _ok(self._world.to_dict())
 
@@ -272,6 +340,7 @@ class Api:
             self._mutate(edit)
         except _EXPECTED_ERRORS as exc:
             return _err(exc)
+        self._sync_catalogs(edit)
         self._dirty = True  # persisted on the autosave timer / explicit save
         return _ok(self._world.to_dict())
 
@@ -450,6 +519,7 @@ class Api:
         options = options or {}
         machine_types = options.get("machineTypes")
         try:
+            policy = ConflictPolicy(options.get("onConflict", "skip"))
             imported = import_mi_library(
                 path,
                 # None → discover and import every machine recipe type found
@@ -462,21 +532,22 @@ class Api:
             result = import_library(
                 self._world,
                 imported.library,
-                # MI entities are canonical reference data keyed by stable ids
-                # (e.g. ``modern_industrialization:iron_dust``), so re-importing
-                # the same jar **refreshes** them in place (``update``): no
-                # duplication, and corrected values (a fixed fuel ``eu``, a
-                # changed machine def) reach a project already built on the old
-                # data without touching its nodes/pipes. New recipes are added as
-                # before. (The autosave persists the merged World across launches.)
-                on_conflict=ConflictPolicy(options.get("onConflict", "update")),
+                # The import is read once into the app's own copy; a re-import
+                # only **adds** what is new (``skip``) and never reverts the
+                # user's edits. ``update`` is the explicit opt-in to refresh
+                # existing entities from the source.
+                on_conflict=policy,
             )
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)
         self._world = result.world
         # Persist the catalog to the app's library folder so it is auto-loaded on
         # every future launch / project load — no re-import needed.
-        self._save_library(imported.library, _slug(imported.library.name))
+        self._save_library(
+            imported.library,
+            _slug(imported.library.name),
+            overwrite=policy is ConflictPolicy.UPDATE,
+        )
         self._persist()
         payload = self._import_payload(result)
         payload["stats"] = imported.stats
@@ -500,6 +571,7 @@ class Api:
         options = options or {}
         machine_types = options.get("machineTypes")
         try:
+            policy = ConflictPolicy(options.get("onConflict", "skip"))
             imported = import_mi_sources(
                 [Path(p) for p in paths],
                 machine_types=(
@@ -507,15 +579,15 @@ class Api:
                 ),
                 name=options.get("name"),
             )
-            result = import_library(
-                self._world,
-                imported.library,
-                on_conflict=ConflictPolicy(options.get("onConflict", "update")),
-            )
+            result = import_library(self._world, imported.library, on_conflict=policy)
         except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
             return _err(exc)
         self._world = result.world
-        self._save_library(imported.library, _slug(imported.library.name))
+        self._save_library(
+            imported.library,
+            _slug(imported.library.name),
+            overwrite=policy is ConflictPolicy.UPDATE,
+        )
         self._persist()
         payload = self._import_payload(result)
         payload["stats"] = imported.stats

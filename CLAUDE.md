@@ -30,10 +30,14 @@ A buildless client-side UI over a thin Python backend.
   `.process_sim/autosave.psim.json` (next to `backend.py`, gitignored;
   `PROCESS_SIM_HOME` overrides the dir). Autosave is **on a timer / explicit save,
   not per-edit** (see Performance). Project files are JSON (the whole World). An
-  **imported catalog** is also saved to `.process_sim/libraries/*.psim-lib.json`
-  and merged into the World at startup and on project load
-  (`ConflictPolicy.UPDATE`), so the machine catalog is always available without
-  re-importing. `export_standalone.py` bakes the World into a single view-only HTML.
+  **imported catalog** is saved to `.process_sim/libraries/*.psim-lib.json` —
+  the app's **own editable copy**: the source (an MI jar) is read once, at
+  import, and never again. The copy is merged into the World at startup and on
+  project load **adding only** (`ConflictPolicy.SKIP` — the World's possibly
+  edited entity always wins), and every edit to a catalog item/recipe/machineDef
+  (`apply_edit` upsert/remove, `set_world` e.g. undo) is written back into the
+  copy with the autosave, so edits stick across relaunches and fresh Worlds.
+  `export_standalone.py` bakes the World into a single view-only HTML.
 - **UI boot:** the page boots **once**, from the backend (`get_world`) when a
   bridge/HTTP backend exists, else from the baked `#world-data` (standalone
   export). In the desktop app the page is `file://` and pywebview injects
@@ -155,10 +159,11 @@ camelCase wire format.
   a tag row lists its members' producers).
 - **`on_conflict`** is a `ConflictPolicy`: `rename` (default), `skip`, `update`,
   `error`. `update` overwrites the World's entity of a colliding id **in place**
-  (reported in `updatedIds`). Both importers default to `update` — MI entities are
-  canonical reference data keyed by stable ids, so re-importing is idempotent (no
-  duplication, nothing renamed) **and refreshes** values in place without
-  disturbing nodes/pipes; new recipes are still added.
+  (reported in `updatedIds`). Both importers default to `skip` — re-importing is
+  idempotent (no duplication, nothing renamed), only **adds** new entities, and
+  **never reverts the user's edits** (in the World or the saved catalog copy).
+  `onConflict:"update"` is the explicit opt-in to refresh existing entities from
+  the source, overwriting edits in both.
 
 ### Importing recipes
 
@@ -178,7 +183,7 @@ auto-loads on later launches with **no re-import**):
   recursively; support data (lang names, fuel maps, tag definitions) is loaded
   best-effort from the common ancestor when it is a jar root and simply absent
   otherwise. Recipe ids are stable (relative to the common base), so re-importing
-  the same files updates in place.
+  the same files adds nothing and keeps edits.
 
 The parser normalizes MI's shapes (object-or-list I/O, the forge hammer's
 `ingredient`/`result` shape, bare/namespaced ids, `tag` refs → `isTag` items,
@@ -286,7 +291,9 @@ tests/               # pytest
 - **Recipe** — input stacks → output stacks over a production time. Energy is
   **hybrid**: a recipe may carry its own `euPerTick` (overrides the machine's
   `baseEnergyConsumption` default); without it, it falls back to the machine draw.
-  Optional `machineType` names the machine kind that runs it (MI's recipe `type`).
+  Optional `machineType` names the machine kind that runs it (MI's recipe `type`) —
+  a grouping label only: the engine ignores it; a def's `allowedRecipeIds` decides
+  what it runs, and the def inspector can allow a whole type at once.
 - **MachineDef** — a template: `energySource` ∈ `electric` / `liquid` / `fuel`
   (absent = passive) says how it is powered; `sourceItemId` names the carrier it
   consumes. A `fuel` converter may leave `sourceItemId` **unset** (an MI boiler —
