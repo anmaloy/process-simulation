@@ -55,6 +55,7 @@ def _world() -> dict:
             "euPerTick": 2,
             "inputs": [{"itemId": f"ore_{i}", "quantity": 1}],
             "outputs": [{"itemId": f"ore_{i + 1}", "quantity": 2, "probability": 0.5}],
+            **({"machineType": "macerator"} if i < 40 else {}),
         }
         for i in range(60)
     ]
@@ -218,6 +219,10 @@ SCENARIOS = [
     "balance_sheet_expand_and_select_maker",
     "balance_sheet_keeps_place_and_persists",
     "balance_sheet_machines_bottlenecks_export",
+    "long_allowed_recipes_list_is_capped_and_filterable",
+    "long_tag_member_list_is_capped",
+    "recipe_machine_type_suggests_and_lists_runners",
+    "balance_sheet_under_supplied_vs_limiting",
 ]
 
 

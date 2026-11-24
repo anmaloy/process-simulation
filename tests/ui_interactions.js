@@ -556,6 +556,75 @@ scenario("balance_sheet_machines_bottlenecks_export", async (t) => {
   t.eq(tbl.length - 1, await t.ev(() => REPORT.bottlenecks.length), "export has one line per row + header");
 });
 
+/* ---------------------------------------------------------------- long lists */
+scenario("long_allowed_recipes_list_is_capped_and_filterable", async (t) => {
+  await t.select("machineDef", "macerator");          // 60 allowed recipes
+  const f = t.page.locator('.insp-body [data-fk="allowed"]');
+  const box = await f.locator(".chipset-box").boundingBox();
+  t.expect(box && box.height <= 160, "60 chips sit in a capped scroll box (height " + (box && box.height) + ")");
+  const fieldH = (await f.boundingBox()).height;
+  t.expect(fieldH < 360, "the allowed-recipes field stays compact (" + fieldH + "px)");
+  t.eq(await f.locator(".type-chip").allTextContents(), ["macerator×40×", "(no type)×20×"], "summary by machine type");
+  // filter keeps focus as it narrows; "remove shown" drops just the matches
+  const q = f.locator(".chipset-head input");
+  await q.click(); await t.page.keyboard.type("Macerate 1");
+  t.eq(await f.locator(".chipset-n").textContent(), "11 / 60", "filter count");
+  t.eq((await t.active()).value, "Macerate 1", "filter keeps focus and text");
+  await f.locator(".chipset-head button").click(); await t.idle();
+  const left = (await t.entity("machineDef", "macerator")).allowedRecipeIds;
+  t.eq(left.length, 49, "11 filtered recipes removed");
+  t.expect(!left.includes("mac_1") && !left.includes("mac_15") && left.includes("mac_2"), "only the matches removed");
+  t.eq(await t.page.locator('.insp-body [data-fk="allowed"] .chipset-head input').inputValue(), "Macerate 1", "filter survives the re-render");
+  // a whole machine type at once
+  await t.page.locator('.insp-body [placeholder="+ allow a whole machine type…"]').click();
+  await t.page.keyboard.type("macerator"); await t.page.keyboard.press("Enter"); await t.idle();
+  const ids = (await t.entity("machineDef", "macerator")).allowedRecipeIds;
+  t.eq(ids.length, 60, "the 11 removed (all macerator-type) re-allowed in one pick");
+  // a type block can be removed in one click
+  await t.page.locator('.insp-body .type-chip', { hasText: "(no type)" }).locator(".chip-x").click(); await t.idle();
+  t.eq((await t.entity("machineDef", "macerator")).allowedRecipeIds.length, 40, "untyped block removed");
+});
+
+scenario("long_tag_member_list_is_capped", async (t) => {
+  await t.ev(() => applyEdits([{ op: "upsert", kind: "item", entity: { ...findEntity("item", "ore_0"), isTag: true, members: WORLD.items.slice(1, 101).map(i => i.id) } }]));
+  await t.select("item", "ore_0");
+  const box = await t.page.locator(".insp-body .chipset-box").boundingBox();
+  t.expect(box && box.height <= 160, "100 members sit in a capped scroll box");
+  t.expect(await t.page.locator('.insp-body [placeholder="+ add member…"]').isVisible(), "add-member box still reachable");
+});
+
+scenario("recipe_machine_type_suggests_and_lists_runners", async (t) => {
+  await t.select("recipe", "mac_3");
+  t.eq(await t.ev(() => [...document.querySelectorAll("#dl-machine-types option")].map(o => o.value)), ["macerator"], "existing types suggested");
+  t.eq(await t.field("run by").locator("button.chip").allTextContents(), ["Electric Macerator"], "run by lists the def");
+  await t.field("run by").locator("button.chip").click(); await t.idle();
+  t.eq(await t.ev(() => SEL), { kind: "machineDef", id: "macerator" }, "clicking it opens the def");
+});
+
+scenario("balance_sheet_under_supplied_vs_limiting", async (t) => {
+  // A quarry makes 0.1 ore/s; the macerator needs 1/s but has no power, so power
+  // (not ore) is what holds it: ore is under-supplied but not limiting.
+  await api("set_world", {
+    items: [{ id: "silver_ore", name: "Silver Ore", category: "solid" }, { id: "silver_dust", name: "Silver Dust", category: "solid" }, { id: "power", name: "Power", category: "energy" }],
+    recipes: [{ id: "mine", name: "Mine", timeSeconds: 10, outputs: [{ itemId: "silver_ore", quantity: 1 }] },
+      { id: "grind", name: "Grind", timeSeconds: 1, euPerTick: 2, inputs: [{ itemId: "silver_ore", quantity: 1 }], outputs: [{ itemId: "silver_dust", quantity: 1 }] }],
+    machineDefs: [{ id: "quarry", name: "Quarry" }, { id: "mac", name: "Macerator", energySource: "electric", sourceItemId: "power", baseEnergyConsumption: 40 }, { id: "gen", name: "Generator" }],
+    nodes: [{ id: "q1", machineDefId: "quarry", recipeIds: ["mine"], x: 0, y: 0 }, { id: "m1", machineDefId: "mac", recipeIds: ["grind"], x: 300, y: 0 }, { id: "g1", machineDefId: "gen", x: 300, y: 200 }],
+    pipes: [{ id: "p1", category: "solid", movementCapacity: 16, a: { nodeId: "q1", role: "out", port: "solid:out" }, b: { nodeId: "m1", role: "in", port: "solid:in" } },
+      { id: "p2", category: "energy", movementCapacity: 5120, a: { nodeId: "g1", role: "out", port: "energy:out" }, b: { nodeId: "m1", role: "in", port: "energy:in" } }],
+    pipeNodes: [], systems: [],
+  });
+  await t.page.reload(); await t.page.waitForFunction(() => BOOTED); await t.idle();
+  await openSheet(t);
+  const flags = (id) => t.page.locator(`#dock tr.row[data-item="${id}"] .flag`).allTextContents();
+  t.eq(await flags("silver_ore"), ["under-supplied", "product"], "ore: capacity deficit, not the binding input (its unused trickle is surplus)");
+  t.eq(await flags("power"), ["limiting", "under-supplied"], "power: binding input and in deficit");
+  await t.page.locator('#dock tr.row[data-item="silver_ore"]').click(); await t.idle();
+  const user = await t.page.locator("#dock tr.detail .det-row").last().textContent();
+  t.expect(/stalled · held by Power/.test(user), "the user says what actually holds it: " + user);
+  t.expect(await t.page.locator("#dock .fchip", { hasText: /^limiting/ }).getAttribute("title"), "filter chips explain themselves");
+});
+
 /* ---------------------------------------------------------------- runner */
 (async () => {
   const browser = await chromium.launch();

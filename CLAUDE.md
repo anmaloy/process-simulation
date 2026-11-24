@@ -291,7 +291,9 @@ tests/               # pytest
 - **Recipe** — input stacks → output stacks over a production time. Energy is
   **hybrid**: a recipe may carry its own `euPerTick` (overrides the machine's
   `baseEnergyConsumption` default); without it, it falls back to the machine draw.
-  Optional `machineType` names the machine kind that runs it (MI's recipe `type`).
+  Optional `machineType` names the machine kind that runs it (MI's recipe `type`) —
+  a grouping label only: the engine ignores it; a def's `allowedRecipeIds` decides
+  what it runs, and the def inspector can allow a whole type at once.
 - **MachineDef** — a template: `energySource` ∈ `electric` / `liquid` / `fuel`
   (absent = passive) says how it is powered; `sourceItemId` names the carrier it
   consumes. A `fuel` converter may leave `sourceItemId` **unset** (an MI boiler —

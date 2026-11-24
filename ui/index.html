@@ -240,6 +240,7 @@ table.sheet tr.row.selected td{box-shadow:inset 0 1px 0 var(--spine-glow),inset 
 .rname .id{color:var(--ink-faint);font-size:9.5px;overflow:hidden;text-overflow:ellipsis}
 .flag{display:inline-block;font-size:9px;padding:1px 5px;border-radius:4px;margin-left:3px;letter-spacing:.03em}
 .flag.short{background:var(--f-bad);color:var(--s-bad)}
+.flag.under{background:var(--f-learn);color:var(--s-learn)}
 .flag.in{background:var(--panel-2);color:var(--ink-dim)}
 .flag.out{background:var(--f-indep);color:var(--s-indep)}
 .flag.ok{background:var(--f-ref);color:var(--s-ref)}
@@ -256,6 +257,8 @@ tr.detail td{background:var(--bg-2);padding:8px 10px 10px 26px;text-align:left;w
 .det-row .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .det-row .who .id{color:var(--ink-faint);margin-left:6px}
 .det-row .bad{color:var(--s-bad)}
+.det-row .warn{color:var(--s-learn)}
+.dock-sum .warn{color:var(--s-learn)}
 .det-actions{display:flex;gap:8px;margin-top:8px}
 .node.hl-make{outline:2px solid var(--spine);outline-offset:3px}
 .node.hl-use{outline:2px dashed var(--spine);outline-offset:3px}
@@ -291,6 +294,22 @@ tr.detail td{background:var(--bg-2);padding:8px 10px 10px 26px;text-align:left;w
 .chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:3px 6px;color:var(--ink-dim)}
 .chip-x{background:none;border:0;color:var(--ink-faint);font-size:12px;line-height:1}
 .chip-x:hover{color:var(--s-bad)}
+/* a chip list that can run to hundreds (allowed recipes, tag members): counted,
+   filterable, capped to a scroll box so it never pushes the inspector off-screen */
+.chipset-head{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.chipset-head .field-input{flex:1;padding:4px 7px;font-size:11px}
+.chipset-n{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);white-space:nowrap}
+.chipset-box{max-height:148px;overflow-y:auto;border:1px solid var(--line);border-radius:7px;padding:5px;background:var(--bg-2);margin-bottom:6px}
+.chipset-box .chip-list{margin-bottom:0}
+.chipset-box .chip{max-width:100%}
+.chipset-box .chip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini-btn{background:none;border:1px solid var(--line-2);color:var(--ink-dim);border-radius:6px;padding:2px 7px;font-size:10.5px;white-space:nowrap}
+.mini-btn:hover{border-color:var(--spine);color:var(--ink)}
+.mini-btn.danger-ish:hover{border-color:var(--s-bad);color:var(--s-bad)}
+.type-chip{cursor:default}
+.type-chip .n{color:var(--ink-faint)}
+button.chip{cursor:pointer}
+button.chip:hover{border-color:var(--spine);color:var(--ink)}
 .stack-empty{font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
 .inline-row{display:flex;gap:6px;align-items:center}
 .inline-row .field-input{flex:1}
@@ -1660,8 +1679,8 @@ function setScope(sc){
    - Resources: made / used / net, need and capacity at 100% duty, production
      missing to run every user flat out, feedstock in, yield out, shortfall, maker
      and user counts, and a coverage bar. Sort by any column, search, filter by
-     category and by state (short, under-supplied, imported, product, intermediate,
-     balanced), hide columns, switch rates between /s, /min and /h. Click a row to
+     category and by state (limiting, under-supplied, imported, product,
+     intermediate, balanced), hide columns, switch rates between /s, /min and /h. Click a row to
      expand who makes and who uses it (click one to select it on the canvas);
      hovering a row outlines its makers (solid) and users (dashed) on the canvas.
    - Machines: every machine's duty, run band, recipes, limiting inputs, products.
@@ -1738,15 +1757,28 @@ function ledgerRows(){
     const internal = r.producers.length>0 && r.consumers.length>0;
     const flags = [];
     if(r.shortfall > EPS) flags.push("short");
+    if(missing > EPS) flags.push("under");
     if(r.feedstock > EPS) flags.push("in");
     if(r.yield > EPS) flags.push("out");
     return {...r, cat, name:itemLabel(r.itemId), tag:!!r.isTag, net:r.produced - r.consumed,
       missing, cover, internal, flags, makers:r.producers.length, users:r.consumers.length};
   });
 }
+// Two different questions, often confused:
+// - limiting: at the solved operating point this resource is what pins at least
+//   one machine's rate (its binding input; it has a shortfall, a bottleneck).
+// - under-supplied: a capacity deficit — every maker at 100% plus feedstock can't
+//   cover every user at 100%. Its users may still be held lower by something else
+//   (power, another input), in which case it is under-supplied but not limiting.
+const STATE_INFO = {
+  short:["limiting","the binding input of at least one machine right now — it is what holds that machine's rate down (a bottleneck)"],
+  under:["under-supplied","makers at 100% + feedstock can't cover users at 100% — a capacity deficit, whether or not it is what currently binds"],
+  in:["imported","fed in across the scope boundary"],
+  out:["product","leaves the scope as yield / surplus"],
+};
 const RES_VIEWS = [
   ["all","all", ()=>true],
-  ["short","short", r=>r.shortfall>EPS],
+  ["short","limiting", r=>r.shortfall>EPS],
   ["under","under-supplied", r=>r.missing>EPS],
   ["in","imported", r=>r.feedstock>EPS],
   ["out","products", r=>r.yield>EPS],
@@ -1764,11 +1796,11 @@ const RES_COLS = [
   {k:"missing", h:"missing", get:r=>r.missing, title:"production (or feedstock) missing to run every user at 100%"},
   {k:"in", h:"feedstock", get:r=>r.feedstock, title:"fed in across the scope boundary"},
   {k:"out", h:"yield", get:r=>r.yield, title:"leaves the scope (product / surplus)"},
-  {k:"short", h:"short", get:r=>r.shortfall, title:"shortfall at the machines starved of it"},
+  {k:"short", h:"shortfall", get:r=>r.shortfall, title:"what the machines it limits are missing of it (only where it is their binding input)"},
   {k:"makers", h:"makers", get:r=>r.makers},
   {k:"users", h:"users", get:r=>r.users},
   {k:"cover", h:"coverage", get:r=>r.cover==null?2:r.cover, title:"share of the full-rate need actually supplied"},
-  {k:"state", h:"state", l:true, get:r=>r.flags.join(" "), title:"short · imported · product"},
+  {k:"state", h:"state", l:true, get:r=>r.flags.join(" "), title:"limiting · under-supplied · imported · product"},
 ];
 function machineRows(){
   if(!REPORT) return [];
@@ -1885,10 +1917,10 @@ function sheetTable(){
       ...rows.map(b=>[String(b.rank),b.name,b.nid,b.itemName,unitLabel(b.cat),exportNum(b.cat,b.short),exportNum(b.cat,b.need),b.pct==null?"":String(clean(b.pct*100))])];
   }
   const {rows}=filteredResources();
-  return [["resource","id","category","unit","made","used","net","need @100%","can make @100%","missing","feedstock","yield","short","makers","users","coverage %","state"],
+  return [["resource","id","category","unit","made","used","net","need @100%","can make @100%","missing","feedstock","yield","shortfall","makers","users","coverage %","state"],
     ...rows.map(r=>[r.name,r.itemId,r.cat,unitLabel(r.cat),exportNum(r.cat,r.produced),exportNum(r.cat,r.consumed),exportNum(r.cat,r.net),
       exportNum(r.cat,r.demand),exportNum(r.cat,r.capacity),exportNum(r.cat,r.missing),exportNum(r.cat,r.feedstock),exportNum(r.cat,r.yield),
-      exportNum(r.cat,r.shortfall),String(r.makers),String(r.users),r.cover==null?"":String(clean(r.cover*100)),r.flags.join(" ")])];
+      exportNum(r.cat,r.shortfall),String(r.makers),String(r.users),r.cover==null?"":String(clean(r.cover*100)),r.flags.map(f=>STATE_INFO[f][0]).join("; ")])];
 }
 async function copySheet(){
   const text = sheetTable().map(r=>r.map(c=>String(c).replace(/[\t\n]/g," ")).join("\t")).join("\n");
@@ -1942,8 +1974,8 @@ function buildDock(dock){
   const sum = el("div",{class:"dock-sum"},
     el("span",null, `${res.length} resources`),
     REPORT? el("span",null, `${(REPORT.nodeIds||[]).length} machines`) : null,
-    nShort? el("span",{class:"bad"}, `${nShort} short`) : null,
-    nUnder? el("span",null, `${nUnder} under-supplied`) : null);
+    nShort? el("span",{class:"bad",title:STATE_INFO.short[1]}, `${nShort} limiting`) : null,
+    nUnder? el("span",{class:"warn",title:STATE_INFO.under[1]}, `${nUnder} under-supplied`) : null);
   if(!DOCK.open){
     const bar = el("div",{class:"dock-bar",title:"Open the balance sheet (B)",onclick:()=>setDock({open:true})},
       el("span",{class:"dock-title"},"▤ Balance sheet"), el("span",{class:"dock-scope"},scopeLabel()), sum,
@@ -2006,7 +2038,7 @@ function buildResources(dock){
   }
   tools.append(el("span",{style:{width:"6px"}}));
   for(const [k,lbl,f] of RES_VIEWS){
-    tools.append(el("button",{class:"fchip"+(DOCK.view===k?" on":""),onclick:()=>setDock({view:k})}, lbl, el("span",{class:"n"}, String(base.filter(f).length))));
+    tools.append(el("button",{class:"fchip"+(DOCK.view===k?" on":""),title:(STATE_INFO[k]||[])[1]||"",onclick:()=>setDock({view:k})}, lbl, el("span",{class:"n"}, String(base.filter(f).length))));
   }
   tools.append(el("span",{class:"dock-spacer"}));
   tools.append(columnMenu());
@@ -2060,9 +2092,20 @@ function resCell(k, r, open){
       const col = r.cover>=0.999? "var(--s-ref)" : r.cover>0? "var(--s-learn)" : "var(--s-bad)";
       return el("td",{title:pct+"% of the full-rate need is supplied"}, el("span",{class:"cover"}, el("i",{style:{width:(r.cover*100)+"%",background:col}})), " "+pct+"%");
     }
-    case "state": return el("td",{class:"l"}, r.flags.length? r.flags.map(f=>el("span",{class:"flag "+f}, {short:"short",in:"imported",out:"product"}[f])) : el("span",{class:"flag ok"}, r.internal?"balanced":"—"));
+    case "state": return el("td",{class:"l"}, r.flags.length? r.flags.map(f=>el("span",{class:"flag "+f,title:STATE_INFO[f][1]}, STATE_INFO[f][0])) : el("span",{class:"flag ok"}, r.internal?"balanced":"—"));
   }
   return el("td");
+}
+// One user of a resource: limited by it, held lower by something else, or full.
+function userVerdict(u, c){
+  if(u.shortfall) return el("span",{class:"bad",title:"this resource is the machine's binding input"}, "limited by it · short "+fmtCell(c,u.shortfall));
+  const d = (REPORT&&REPORT.nodeDuty||{})[u.nodeId];
+  if(d==null || d >= 1-1e-6) return el("span",{style:{color:"var(--ink-faint)"}},"full");
+  const ins = (((REPORT.balances||{})[u.nodeId]||{}).inputs)||{};
+  const by = Object.values(ins).filter(x=>x.status==="shortfall").map(x=>itemLabel(x.itemId));
+  const pct = Math.round(d*100)+"%";
+  return el("span",{class:"warn",title:"running below full rate because of a different input, so it draws less of this one"},
+    (d<=1e-9?"stalled":"at "+pct)+(by.length? " · held by "+by.join(", ") : ""));
 }
 function resourceDetail(r){
   const c=r.cat;
@@ -2078,7 +2121,7 @@ function resourceDetail(r){
       el("div",{class:"det-row",title:"select on the canvas",onclick:e=>{ e.stopPropagation(); pick(u.nodeId); }},
         el("span",{class:"who"}, nodeLabel(u.nodeId), el("span",{class:"id"}, u.nodeId)),
         el("span",null, fmtCell(c,u.rate)+" / "+fmtCell(c,u.demand)+" "+unitLabel(c)),
-        u.shortfall? el("span",{class:"bad"}, "short "+fmtCell(c,u.shortfall)) : el("span",{style:{color:"var(--ink-faint)"}},"full"))
+        userVerdict(u, c))
     ) : el("div",{class:"ro-empty"}, r.yield>EPS? "no user in scope — leaves as yield" : "no user in scope"));
   const ids = [...r.producers.map(p=>p.nodeId), ...r.consumers.map(u=>u.nodeId)];
   return el("div",{onclick:e=>e.stopPropagation()},
@@ -2488,12 +2531,49 @@ function itemInspector(body, it){
   }));
   body.append(dangerButton("Delete item", ()=>deleteSelected()));
 }
+// A chip list that can hold hundreds of entries (allowed recipes, tag members,
+// system members). Up to CHIPSET_FOLD it is plain chips; past that it gets a count,
+// a filter, a "remove shown" action, and the chips sit in a capped scroll box
+// (its scroll survives re-renders via data-sk) — so a long list never pushes the
+// rest of the inspector off-screen. The filter text outlives the re-render a
+// removal causes (CHIPSET_STATE), so pruning a filtered set is one click per chip.
+const CHIPSET_STATE = new Map();
+const CHIPSET_FOLD = 10;
+function chipSet({key, ids, nameOf, onRemove, onRemoveMany, noun="entries"}){
+  const wrap=el("div",{class:"chipset","data-fk":"chipset:"+key});
+  if(!ids.length) return wrap;
+  const chip=id=>el("span",{class:"chip mono",title:nameOf(id)===id?id:nameOf(id)+"\n"+id},
+    el("span",null,nameOf(id)),
+    el("button",{class:"chip-x",title:"remove",onclick:()=>onRemove(id)},"×"));
+  if(ids.length<=CHIPSET_FOLD){ wrap.append(el("div",{class:"chip-list"}, ids.map(chip))); return wrap; }
+  let st=CHIPSET_STATE.get(key); if(!st){ st={q:""}; CHIPSET_STATE.set(key,st); }
+  const q=el("input",{class:"field-input mono",type:"text",placeholder:`filter ${ids.length} ${noun}…`,value:st.q,spellcheck:"false",autocomplete:"off"});
+  const n=el("span",{class:"chipset-n"});
+  const rm=el("button",{class:"mini-btn danger-ish"});
+  const box=el("div",{class:"chipset-box","data-sk":"chipset:"+key});
+  let shown=ids;
+  function paint(){
+    const ql=st.q.trim().toLowerCase();
+    shown = ql? ids.filter(id=>nameOf(id).toLowerCase().includes(ql)||id.toLowerCase().includes(ql)) : ids;
+    n.textContent = ql? `${shown.length} / ${ids.length}` : `${ids.length}`;
+    rm.textContent = ql? `remove ${shown.length} shown` : "remove all";
+    rm.disabled = !shown.length;
+    box.textContent="";
+    box.append(shown.length? el("div",{class:"chip-list"}, shown.map(chip)) : el("span",{class:"stack-empty mono"},"no matches"));
+  }
+  rm.addEventListener("click",()=>{ if(shown.length) (onRemoveMany? onRemoveMany(shown.slice()) : shown.forEach(onRemove)); });
+  q.addEventListener("input",()=>{ st.q=q.value; paint(); });
+  q.addEventListener("keydown",e=>{ if(e.key==="Escape"){ e.stopPropagation(); if(q.value){ q.value=""; st.q=""; paint(); } else q.blur(); } });
+  paint();
+  wrap.append(el("div",{class:"chipset-head"}, q, n, rm), box);
+  return wrap;
+}
 function tagMembersEditor(it){
   const wrap=el("div");
   const members=it.members||[];
-  if(members.length) wrap.append(el("div",{class:"chip-list"}, members.map(m=>
-    el("span",{class:"chip mono"}, (BY.items[m]?.name)||m,
-      el("button",{class:"chip-x",onclick:()=>saveEntity("item", withField(it,"members",members.filter(x=>x!==m)))},"×")))));
+  const drop=rm=>{ const r=new Set(rm); saveEntity("item", withField(it,"members",members.filter(x=>!r.has(x)))); };
+  wrap.append(chipSet({key:"members:"+it.id, ids:members, noun:"members",
+    nameOf:m=>(BY.items[m]&&BY.items[m].name)||m, onRemove:m=>drop([m]), onRemoveMany:drop}));
   const addable=(WORLD.items||[]).filter(x=>x.id!==it.id&&!x.isTag&&!members.includes(x.id));
   wrap.append(combo("", itemOptions(addable), id=>saveEntity("item", withField(it,"members",[...members,id])), "+ add member…",{clearOnPick:true}));
   return wrap;
@@ -2508,11 +2588,23 @@ function recipeInspector(body, r){
     onSet:v=>saveEntity("recipe", withField(r,"euPerTick",v)),
     onClear:()=>saveEntity("recipe", withoutField(r,"euPerTick")),
     fallback:2, min:0, unit:"EU/t", hint:"overrides the machine's default draw while making this"}));
+  // machineType is a grouping label, not engine input: machine defs list the
+  // recipes they run (allowedRecipeIds), and the type lets a def allow a whole
+  // kind at once. Suggest the types already in the world so one isn't misspelled.
+  const typeList=el("datalist",{id:"dl-machine-types"}, [...recipesByMachineType().keys()].map(t=>el("option",{value:t})));
+  const typeInput=textInput(r.machineType, v=>saveEntity("recipe", v.trim()===""?withoutField(r,"machineType"):withField(r,"machineType",v.trim())), "e.g. macerator");
+  typeInput.setAttribute("list","dl-machine-types");
   body.append(optional("machine type", r.machineType!=null, {
     onAdd:()=>saveEntity("recipe", withField(r,"machineType","")),
     onClear:()=>saveEntity("recipe", withoutField(r,"machineType")),
-    hint:"the machine kind that runs it (e.g. macerator)",
-    child:textInput(r.machineType, v=>saveEntity("recipe", withField(r,"machineType",v)))}));
+    hint:"groups recipes by the machine kind that runs them — a machine def can allow every recipe of a type at once. Does not change the balance.",
+    child:el("div",null, typeInput, typeList)}));
+  // Which machines can run it is set on the machine def (allowed recipes).
+  const runBy=(WORLD.machineDefs||[]).filter(d=>(d.allowedRecipeIds||[]).includes(r.id));
+  body.append(field("run by", runBy.length
+    ? el("div",{class:"chip-list"}, runBy.map(d=>el("button",{class:"chip mono",title:"open this machine def",onclick:()=>select("machineDef",d.id)}, d.name||d.id)))
+    : el("span",{class:"static-val dim mono"},"any machine def with no allow-list"),
+    "machine defs whose allowed recipes include this one"));
   body.append(stackListEditor("inputs", r, "inputs"));
   body.append(stackListEditor("outputs", r, "outputs"));
   body.append(dangerButton("Delete recipe", ()=>deleteSelected()));
@@ -2642,17 +2734,41 @@ function defInspector(body, def){
 function allowedRecipesEditor(def){
   const recipes=WORLD.recipes||[];
   const allowed=def.allowedRecipeIds||[];
-  const f=el("div",{class:"field"});
-  f.append(el("span",{class:"field-label mono"},"allowed recipes"));
-  if(!recipes.length) f.append(el("span",{class:"stack-empty mono"},"no recipes"));
+  const allowedSet=new Set(allowed);
+  const f=el("div",{class:"field","data-fk":"allowed"});
+  f.append(el("span",{class:"field-label mono"}, "allowed recipes"+(allowed.length?` (${allowed.length})`:"")));
+  if(!recipes.length){ f.append(el("span",{class:"stack-empty mono"},"no recipes")); return f; }
   const set=ids=>saveEntity("machineDef", ids.length?withField(def,"allowedRecipeIds",ids):withoutField(def,"allowedRecipeIds"));
-  if(allowed.length) f.append(el("div",{class:"chip-list"}, allowed.map(id=>
-    el("span",{class:"chip mono"}, (BY.recipes[id]?.name)||id,
-      el("button",{class:"chip-x",onclick:()=>set(allowed.filter(x=>x!==id))},"×")))));
-  const addable=recipes.filter(r=>!allowed.includes(r.id)).map(r=>({value:r.id,label:r.name||r.id}));
-  if(addable.length) f.append(combo("", addable, id=>{ if(id&&!allowed.includes(id)) set([...allowed,id]); }, "+ allow a recipe…",{clearOnPick:true}));
-  f.append(el("span",{class:"field-hint"},"empty = every recipe allowed"));
+  const drop=rm=>{ const r=new Set(rm); set(allowed.filter(x=>!r.has(x))); };
+  const types=recipesByMachineType();
+  // A def allowed hundreds of recipes is almost always "every recipe of a type or
+  // two": summarise by machine type (each removable as a block) above the list.
+  if(allowed.length>CHIPSET_FOLD){
+    const byType=new Map();
+    for(const id of allowed){ const t=(BY.recipes[id]&&BY.recipes[id].machineType)||""; if(!byType.has(t)) byType.set(t,[]); byType.get(t).push(id); }
+    f.append(el("div",{class:"chip-list"}, [...byType].sort((a,b)=>b[1].length-a[1].length).map(([t,ids])=>
+      el("span",{class:"chip mono type-chip",title:t?`recipes of machine type “${t}”`:"recipes with no machine type"},
+        el("span",null,t||"(no type)"), el("span",{class:"n"},"×"+ids.length),
+        el("button",{class:"chip-x",title:"remove all of these",onclick:()=>drop(ids)},"×")))));
+  }
+  f.append(chipSet({key:"allowed:"+def.id, ids:allowed, noun:"recipes",
+    nameOf:id=>(BY.recipes[id]&&BY.recipes[id].name)||id,
+    onRemove:id=>drop([id]), onRemoveMany:drop}));
+  const addable=recipes.filter(r=>!allowedSet.has(r.id)).map(r=>({value:r.id,label:r.name||r.id,hint:r.machineType||undefined}));
+  if(addable.length) f.append(combo("", addable, id=>{ if(id&&!allowedSet.has(id)) set([...allowed,id]); }, "+ allow a recipe…",{clearOnPick:true}));
+  const typeOpts=[...types].map(([t,ids])=>{
+    const add=ids.filter(id=>!allowedSet.has(id)).length;
+    return add? {value:t,label:t,hint:add===ids.length? ids.length+" recipes" : `+${add} of ${ids.length}`} : null;
+  }).filter(Boolean);
+  if(typeOpts.length) f.append(combo("", typeOpts, t=>{ const ids=types.get(t)||[]; set([...allowed, ...ids.filter(id=>!allowedSet.has(id))]); }, "+ allow a whole machine type…",{clearOnPick:true}));
+  f.append(el("span",{class:"field-hint"},"empty = every recipe allowed · a recipe's type is its “machine type” field"));
   return f;
+}
+// machineType → recipe ids, sorted by type name.
+function recipesByMachineType(){
+  const m=new Map();
+  for(const r of WORLD.recipes||[]){ if(!r.machineType) continue; if(!m.has(r.machineType)) m.set(r.machineType,[]); m.get(r.machineType).push(r.id); }
+  return new Map([...m].sort((a,b)=>cmp(a[0],b[0])));
 }
 function slotListEditor(def){
   const rows=def.slots||[];
@@ -2909,9 +3025,9 @@ function systemInspector(body, s){
   // member nodes
   const mf=el("div",{class:"field"});
   mf.append(el("span",{class:"field-label mono"}, `member nodes (${members.size})`));
-  if(members.size) mf.append(el("div",{class:"chip-list"}, [...members].map(id=>
-    el("span",{class:"chip mono"}, nodeLabel(id),
-      el("button",{class:"chip-x",onclick:()=>saveEntity("system", withField(s,"memberNodeIds",[...members].filter(x=>x!==id)))},"×")))));
+  const dropMembers=rm=>{ const r=new Set(rm); saveEntity("system", withField(s,"memberNodeIds",[...members].filter(x=>!r.has(x)))); };
+  mf.append(chipSet({key:"sys:"+s.id, ids:[...members], noun:"nodes",
+    nameOf:nodeLabel, onRemove:id=>dropMembers([id]), onRemoveMany:dropMembers}));
   const addable=nodes.filter(nn=>!members.has(nn.id)).map(nn=>({value:nn.id,label:nodeLabel(nn.id)}));
   if(addable.length) mf.append(combo("", addable, id=>saveEntity("system", withField(s,"memberNodeIds",[...members,id])), "+ add member…",{clearOnPick:true}));
   body.append(mf);
