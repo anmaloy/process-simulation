@@ -84,6 +84,8 @@ input,select{font-family:inherit}
 /* ---- inputs ---- */
 .field-input,select.field-input{width:100%;background:var(--bg-2);border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:6px 8px;font-size:12.5px}
 .field-input:focus{outline:none;border-color:var(--spine)}
+.field-input.invalid{border-color:var(--s-bad);box-shadow:0 0 0 1px var(--s-bad)}
+.field-input.num{font-family:var(--mono)}
 select.field-input{cursor:pointer}
 
 /* ---- stage ---- */
@@ -143,19 +145,22 @@ select.field-input{cursor:pointer}
 .sys .expand{margin-left:auto;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;font-size:10px;padding:2px 6px;color:var(--ink-dim)}
 
 /* floating overlays on the stage */
-.palette{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;display:flex;
-  gap:8px;align-items:center;flex-wrap:wrap;max-width:min(66%,560px);padding:9px 12px;
+/* The palette sits right of the readout (which owns the top-left 300px) and the
+   legend lives bottom-right: centred, the palette covered the readout's scope tabs
+   and ran into the legend whenever the inspector narrowed the stage. */
+.palette{position:absolute;top:14px;left:328px;z-index:6;display:flex;
+  gap:8px;align-items:center;flex-wrap:wrap;max-width:min(calc(100% - 342px),560px);padding:9px 12px;
   background:rgba(16,21,31,.92);border:1px solid var(--line-2);border-radius:12px;box-shadow:0 18px 50px -20px #000;backdrop-filter:blur(12px)}
-.legend{position:absolute;top:14px;right:14px;z-index:6;display:flex;flex-direction:column;gap:8px;
+.legend{position:absolute;bottom:calc(14px + var(--dock-h,0px));right:14px;z-index:6;display:flex;flex-direction:column;gap:8px;
   padding:9px 11px;background:rgba(16,21,31,.9);border:1px solid var(--line-2);border-radius:10px;backdrop-filter:blur(10px)}
 .legend .row{display:flex;gap:10px;flex-wrap:wrap}
 .legend .key{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;color:var(--ink-dim)}
 .legend-dot{width:9px;height:9px;border-radius:50%}
-.controls{position:absolute;left:14px;bottom:14px;z-index:6;display:flex;flex-direction:column;gap:6px}
+.controls{position:absolute;left:14px;bottom:calc(14px + var(--dock-h,0px));z-index:6;display:flex;flex-direction:column;gap:6px}
 .controls button{width:30px;height:30px;background:rgba(16,21,31,.92);border:1px solid var(--line-2);border-radius:8px;color:var(--ink-dim);font-size:15px}
 .controls button:hover{border-color:var(--spine);color:var(--ink)}
 
-.readout{position:absolute;left:14px;top:14px;z-index:5;width:300px;max-height:calc(100% - 28px);overflow:auto;
+.readout{position:absolute;left:14px;top:14px;z-index:5;width:300px;max-height:calc(100% - 150px - var(--dock-h,0px));overflow:auto;
   background:rgba(16,21,31,.93);border:1px solid var(--line-2);border-radius:12px;padding:12px 14px;backdrop-filter:blur(12px)}
 .readout h3{margin:0 0 2px;font-size:14px}
 .scope-switch{display:flex;gap:3px;margin:8px 0;background:var(--bg-2);border-radius:8px;padding:3px}
@@ -171,6 +176,90 @@ select.field-input{cursor:pointer}
 .ro-item .bad{color:var(--s-bad)}
 .ro-empty{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 .bneck{cursor:pointer}
+.ro-more{background:none;border:0;padding:3px 0 0;font-family:var(--mono);font-size:10px;color:var(--spine);cursor:pointer}
+.ro-more:hover{color:var(--ink)}
+.ro-open{width:100%;margin-top:12px}
+
+/* ---- balance sheet dock (bottom of the stage) ---- */
+.dock{position:absolute;left:0;right:0;bottom:0;z-index:8;display:flex;flex-direction:column;
+  background:rgba(13,18,27,.97);border-top:1px solid var(--line-2);box-shadow:0 -18px 44px -24px #000}
+.dock-grip{height:7px;cursor:ns-resize;flex:none;position:relative}
+.dock-grip::after{content:"";position:absolute;left:50%;top:2px;width:44px;height:3px;margin-left:-22px;border-radius:3px;background:var(--line-2)}
+.dock-grip:hover::after{background:var(--spine)}
+.dock-bar{display:flex;align-items:center;gap:10px;padding:2px 12px 6px;flex:none;flex-wrap:wrap}
+.dock.closed .dock-bar{padding:6px 12px;cursor:pointer}
+.dock-title{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--spine)}
+.dock-scope{font-family:var(--mono);font-size:10.5px;color:var(--ink-dim)}
+.dock-sum{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);display:flex;gap:10px}
+.dock-sum .bad{color:var(--s-bad)}
+.dock-tabs{display:flex;gap:3px;background:var(--bg-2);border-radius:8px;padding:3px}
+.dock-tabs button{background:none;border:0;border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-faint)}
+.dock-tabs button.on{background:var(--panel-2);color:var(--spine)}
+.dock-tabs .n{color:var(--ink-faint);margin-left:5px}
+.dock-spacer{flex:1}
+.dock-btn{background:var(--panel-2);border:1px solid var(--line-2);color:var(--ink-dim);border-radius:7px;padding:3px 8px;font-size:11px;font-family:var(--mono)}
+.dock-btn:hover{border-color:var(--spine);color:var(--ink)}
+.dock-btn.on{border-color:var(--spine);color:var(--spine)}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:7px;overflow:hidden}
+.seg button{background:var(--panel-2);border:0;border-left:1px solid var(--line-2);color:var(--ink-faint);padding:3px 8px;font-family:var(--mono);font-size:10.5px}
+.seg button:first-child{border-left:0}
+.seg button.on{color:var(--spine);background:var(--bg-2)}
+.dock-tools{display:flex;align-items:center;gap:8px;padding:0 12px 8px;flex:none;flex-wrap:wrap}
+.dock-tools .field-input{width:220px;padding:4px 8px;font-size:12px}
+.fchip{background:var(--panel-2);border:1px solid var(--line);color:var(--ink-dim);border-radius:999px;padding:2px 9px;font-family:var(--mono);font-size:10.5px;display:inline-flex;align-items:center;gap:5px}
+.fchip:hover{border-color:var(--line-2);color:var(--ink)}
+.fchip.on{border-color:var(--spine);color:var(--ink);background:var(--bg-2)}
+.fchip .n{color:var(--ink-faint)}
+.fchip .dot{width:7px;height:7px;border-radius:50%}
+.dock-stale{font-family:var(--mono);font-size:10px;color:var(--s-learn)}
+.dock-body{flex:1;min-height:0;overflow:auto;border-top:1px solid var(--line)}
+.dock-empty{padding:18px;font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+.dock-foot{flex:none;padding:4px 12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;color:var(--ink-faint);display:flex;gap:14px}
+table.sheet{border-collapse:separate;border-spacing:0;width:100%;font-family:var(--mono);font-size:11px}
+table.sheet th{position:sticky;top:0;z-index:2;background:var(--bg-2);color:var(--ink-faint);font-weight:500;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  text-align:right;padding:6px 8px;border-bottom:1px solid var(--line-2);white-space:nowrap;cursor:pointer;user-select:none}
+table.sheet th.l{text-align:left}
+table.sheet th:hover{color:var(--ink)}
+table.sheet th.sorted{color:var(--spine)}
+table.sheet td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;color:var(--ink-dim)}
+table.sheet td.l{text-align:left}
+table.sheet td.zero{color:var(--ink-faint)}
+table.sheet td.bad{color:var(--s-bad)}
+table.sheet td.good{color:var(--s-ref)}
+table.sheet td.warn{color:var(--s-learn)}
+table.sheet td.blue{color:var(--s-indep)}
+table.sheet tr.row{cursor:pointer}
+table.sheet tr.row:hover td{background:var(--panel)}
+table.sheet tr.row.open td{background:var(--panel)}
+table.sheet tr.row.selected td{box-shadow:inset 0 1px 0 var(--spine-glow),inset 0 -1px 0 var(--spine-glow)}
+.rname{display:flex;align-items:center;gap:7px;max-width:340px}
+.rname .caret{color:var(--ink-faint);font-size:9px;width:8px;flex:none;transition:transform .12s}
+.rname .caret.open{transform:rotate(90deg)}
+.rname .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.rname .nm{color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+.rname .id{color:var(--ink-faint);font-size:9.5px;overflow:hidden;text-overflow:ellipsis}
+.flag{display:inline-block;font-size:9px;padding:1px 5px;border-radius:4px;margin-left:3px;letter-spacing:.03em}
+.flag.short{background:var(--f-bad);color:var(--s-bad)}
+.flag.in{background:var(--panel-2);color:var(--ink-dim)}
+.flag.out{background:var(--f-indep);color:var(--s-indep)}
+.flag.ok{background:var(--f-ref);color:var(--s-ref)}
+.flag.throttled{background:var(--f-learn);color:var(--s-learn)}
+.flag.stalled{background:var(--f-bad);color:var(--s-bad)}
+.cover{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--line);vertical-align:middle;position:relative;overflow:hidden}
+.cover i{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+tr.detail td{background:var(--bg-2);padding:8px 10px 10px 26px;text-align:left;white-space:normal}
+.det{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.det h4{margin:0 0 5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);font-weight:500;display:flex;gap:10px}
+.det-list{display:flex;flex-direction:column;gap:1px;max-height:220px;overflow:auto}
+.det-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;padding:3px 6px;border-radius:5px;cursor:pointer;color:var(--ink-dim);font-family:var(--mono);font-size:10.5px}
+.det-row:hover{background:var(--panel-2);color:var(--ink)}
+.det-row .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.det-row .who .id{color:var(--ink-faint);margin-left:6px}
+.det-row .bad{color:var(--s-bad)}
+.det-actions{display:flex;gap:8px;margin-top:8px}
+.node.hl-make{outline:2px solid var(--spine);outline-offset:3px}
+.node.hl-use{outline:2px dashed var(--spine);outline-offset:3px}
+.node.hl-dim{opacity:.35}
 .bneck:hover{color:var(--ink)}
 
 /* ---- inspector ---- */
@@ -223,6 +312,7 @@ select.field-input{cursor:pointer}
 /* combobox */
 .combo{position:relative}
 .combo-pop{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;max-height:240px;overflow:auto;background:var(--panel);border:1px solid var(--line-2);border-radius:8px;box-shadow:0 18px 44px -18px #000}
+.combo-pop.up{top:auto;bottom:calc(100% + 3px)}
 .combo-opt{display:flex;align-items:center;gap:7px;padding:6px 9px;font-size:12px;cursor:pointer;color:var(--ink-dim)}
 .combo-opt:hover,.combo-opt.active{background:var(--panel-2);color:var(--ink)}
 .combo-opt .dot{width:8px;height:8px;border-radius:50%;flex:none}
@@ -360,7 +450,9 @@ const STATUS_COLOR = { ok:"var(--s-ref)", overflow:"var(--s-indep)", throttled:"
 const STATUS_FILL  = { ok:"var(--f-ref)", overflow:"var(--f-indep)", throttled:"var(--f-learn)", stalled:"var(--f-bad)", shortfall:"var(--f-bad)" };
 const statusColor = s => STATUS_COLOR[s||"stalled"];
 const TPS = 20;
-const toPerTick = v => v/TPS, toPerSecond = v => v*TPS;
+// Rounded to 12 significant digits so a per-tick ↔ per-second round trip is exact
+// (1.1 EU/t must come back as 1.1, not 1.1000000000000003).
+const toPerTick = v => Number((v/TPS).toPrecision(12)), toPerSecond = v => Number((v*TPS).toPrecision(12));
 
 function defaultMovementCapacity(cat){
   if(cat==="solid") return 16;
@@ -498,8 +590,59 @@ function setNodeRecipes(n, ids){
 /* ============================================================================
    Edit pipeline — snapshot, apply, re-render, recompute
    ============================================================================ */
-let BUSY = false;
 function snapshot(){ HISTORY.push(structuredClone(WORLD)); if(HISTORY.length>100) HISTORY.shift(); updateUndo(); }
+
+// Edits are serialized through one queue. Each apply_edit is an async round trip,
+// so without this a second edit made before the first returned (Tab from one field
+// into the next, two quick checkbox clicks) was built from the same stale entity
+// and silently overwrote the first. Queued edits run strictly in order, and an
+// inspector edit is applied as a *patch* onto the entity as it stands when its turn
+// comes (see saveEntity), so concurrent edits to different fields all land.
+let EDIT_Q = Promise.resolve();
+function enqueue(task){
+  const p = EDIT_Q.then(task).catch(err=>toast((err&&err.message)||String(err), true));
+  EDIT_Q = p;
+  return p;
+}
+// Resolves once every edit queued so far has been applied (Run/Save wait on it).
+function editsSettled(){ return EDIT_Q; }
+
+// ---- deep patch: what an inspector edit changed, re-applied onto the latest ----
+const isPlainObj = v => v!==null && typeof v==="object" && !Array.isArray(v);
+const sameJson = (a,b) => JSON.stringify(a)===JSON.stringify(b);
+function diffPatch(a, b, path=[], out=[]){
+  // Plain objects diff key-by-key; equal-length arrays of objects diff per element
+  // (so editing a stack's qty then its probability both land); anything else is
+  // replaced whole.
+  if(isPlainObj(a) && isPlainObj(b)){
+    for(const k of new Set([...Object.keys(a), ...Object.keys(b)])){
+      if(!(k in b)){ out.push({p:[...path,k], del:true}); continue; }
+      diffPatch(a[k], b[k], [...path,k], out);
+    }
+    return out;
+  }
+  if(Array.isArray(a) && Array.isArray(b) && a.length===b.length && a.every(isPlainObj) && b.every(isPlainObj)){
+    a.forEach((x,i)=>diffPatch(x, b[i], [...path,i], out));
+    return out;
+  }
+  if(!sameJson(a,b)) out.push({p:path, v:b===undefined?undefined:structuredClone(b)});
+  return out;
+}
+function applyPatch(obj, patch){
+  let r = structuredClone(obj);
+  for(const op of patch){
+    if(!op.p.length){ r = structuredClone(op.v); continue; }
+    let o = r;
+    for(const k of op.p.slice(0,-1)){
+      if(o[k]==null || typeof o[k]!=="object") o[k] = typeof k==="number"? [] : {};
+      o = o[k];
+    }
+    const last = op.p[op.p.length-1];
+    if(op.del) delete o[last]; else o[last] = structuredClone(op.v);
+  }
+  return r;
+}
+function findEntity(kind, id){ return (WORLD[KIND_FIELD[kind]]||[]).find(e=>e.id===id) || null; }
 function updateUndo(){ const b=$("#undoBtn"); if(b) b.disabled = HISTORY.length===0; }
 
 // The world is steady-state, not a tick loop: an edit changes the graph but the
@@ -508,31 +651,44 @@ function updateUndo(){ const b=$("#undoBtn"); if(b) b.disabled = HISTORY.length=
 // every drag/field-edit is what made big worlds unusable. markStale() flags that
 // the shown overlay/readout no longer reflect the world until Run is pressed.
 let STALE = false;
-function markStale(){ STALE = true; markDirty(); updateRunState(); }
+function markStale(){ STALE = true; markDirty(); updateRunState(); if(typeof renderDock==="function") renderDock(); }
 function updateRunState(){
   const r=$("#runBtn"); if(r) r.classList.toggle("stale", STALE);
   const s=$("#staleDot"); if(s) s.style.display = STALE ? "" : "none";
 }
 
-async function applyEdits(edits, {record=true, balance=true}={}){
-  if(!edits.length) return;
-  if(record) snapshot();
-  try{
-    let next=null;
-    for(const e of edits) next = await callApi("apply_edit", e);
-    if(next){ WORLD=next; reindex(); }
-  }catch(err){ toast(err.message,true); }
-  renderAll();
-  // Balance-affecting edits (topology, recipes, fields) flag the sim stale; pure
-  // moves (dragging a node) only need saving, not a re-run.
-  if(balance) markStale(); else markDirty();
+// `edits` is a list, or a function returning one — evaluated when the edit's turn
+// in the queue comes, against the World as it then stands.
+function applyEdits(edits, {record=true, balance=true}={}){
+  return enqueue(async()=>{
+    const list = typeof edits==="function"? edits() : edits;
+    if(!list || !list.length) return;
+    if(record) snapshot();
+    let next=null, failed=false;
+    try{
+      for(const e of list) next = await callApi("apply_edit", e);
+    }catch(err){ failed=true; toast(err.message,true); }
+    if(failed){
+      // Part of a batch may have landed before the failure — resync rather than
+      // show a World that disagrees with the backend.
+      try{ next = await callApi("get_world"); }catch(e){}
+    }
+    if(next) WORLD=next;
+    renderAll();
+    // Balance-affecting edits (topology, recipes, fields) flag the sim stale; pure
+    // moves (dragging a node) only need saving, not a re-run.
+    if(balance) markStale(); else markDirty();
+  });
 }
-async function replaceWorld(next, {record=true}={}){
-  if(record) snapshot();
-  try{ WORLD = await callApi("set_world", next); reindex(); }
-  catch(err){ toast(err.message,true); }
-  renderAll();
-  markStale();
+function replaceWorld(next, {record=true}={}){
+  return enqueue(async()=>{
+    const w = typeof next==="function"? next() : next;
+    if(record) snapshot();
+    try{ WORLD = await callApi("set_world", w); }
+    catch(err){ toast(err.message,true); }
+    renderAll();
+    markStale();
+  });
 }
 function upsert(kind, entity){ return {op:"upsert", kind, entity}; }
 function removeEdit(kind, id){ return {op:"remove", kind, id}; }
@@ -546,22 +702,36 @@ function recomputeRequest(){
 }
 async function recompute(){
   const req = recomputeRequest();
+  let failure=null;
+  if(!hasBackend()){ REPORT=null; SYSTEM_REPORTS={}; paintOverlay(); renderReadout(); renderDock(); return; }  // standalone export: view-only
   if(!req){ REPORT=null; }
-  else { try{ REPORT = await callApi("recompute", req); }catch(e){ REPORT=null; } }
+  else { try{ REPORT = await callApi("recompute", req); }catch(e){ REPORT=null; failure=e; } }
   // per-collapsed-system aggregate reports
   const ids = collapseState().rendered.map(s=>s.id);
   const sr={};
-  for(const id of ids){ try{ sr[id] = await callApi("recompute",{scope:"system",systemId:id}); }catch(e){} }
+  for(const id of ids){ try{ sr[id] = await callApi("recompute",{scope:"system",systemId:id}); }catch(e){ failure=failure||e; } }
   SYSTEM_REPORTS = sr;
   STALE = false; updateRunState();
   paintOverlay();
   renderReadout();
+  renderDock();
+  // A failed solve used to vanish silently (the readout just showed "—").
+  if(failure) toast("simulation failed — "+(failure.message||failure), true);
 }
 // "Run simulation" — the only path that recomputes the balance on demand.
 async function runSimulation(){
   const btn=$("#runBtn"); if(btn){ btn.disabled=true; }
-  try{ await recompute(); }
-  finally{ if(btn){ btn.disabled=false; } }
+  try{
+    commitActiveField();
+    await editsSettled();   // a value typed right before Run is part of the run
+    await recompute();
+  }
+  finally{ const b=$("#runBtn"); if(b){ b.disabled=false; } }
+}
+// Commit whatever field is being typed into (fields commit on blur / Enter).
+function commitActiveField(){
+  const a=document.activeElement;
+  if(a && (a.tagName==="INPUT"||a.tagName==="TEXTAREA") && typeof a.blur==="function") a.blur();
 }
 
 /* ---- autosave: dirty flag + 10-minute timer + explicit save (no per-edit write) ---- */
@@ -572,8 +742,9 @@ async function saveNow({quiet=false}={}){
   // Commit a field being typed into (inputs commit on change/blur) so its edit is
   // in the World before we persist — otherwise a value typed right before closing
   // would be lost.
-  const a=document.activeElement; if(a && a.tagName==="INPUT" && typeof a.blur==="function") a.blur();
+  commitActiveField();
   try{
+    await editsSettled();
     const res = await callApi("save_autosave");
     if(res && res.saved){
       DIRTY = false;
@@ -599,14 +770,101 @@ window.addEventListener("beforeunload", ()=>{ if(DIRTY) saveNow({quiet:true}); }
 document.addEventListener("visibilitychange", ()=>{ if(document.hidden && DIRTY) saveNow({quiet:true}); });
 
 function undo(){
-  const prev = HISTORY.pop(); updateUndo();
-  if(prev) replaceWorld(prev, {record:false});
+  // Queued behind any in-flight edit, so undo reverts the edit the user just made
+  // rather than racing it.
+  enqueue(async()=>{
+    const prev = HISTORY.pop(); updateUndo();
+    if(!prev) return;
+    try{ WORLD = await callApi("set_world", prev); }
+    catch(err){ toast(err.message,true); }
+    renderAll();
+    markStale();
+  });
 }
 
 /* ============================================================================
    Rendering — rail, graph, inspector, overlay
    ============================================================================ */
-function renderAll(){ reindex(); renderShell(); renderRail(); renderGraph(); renderInspector(); paintOverlay(); renderReadout(); }
+function renderAll(){
+  reindex();
+  // An undo/delete can remove the selected entity: drop the selection rather than
+  // leave an inspector showing "(gone)".
+  if(SEL && !currentEntity()) SEL=null;
+  renderShell(); renderRail(); renderGraph(); renderInspector(); paintOverlay(); renderReadout();
+  refreshPalette(); updateRunState(); renderDock();
+}
+
+/* ---- keep the user's place across re-renders ----
+   The rail, inspector, readout and palette are rebuilt from scratch on every edit.
+   Without this, each rebuild threw away scroll positions (the panel jumped back to
+   the top), the focused field (Tab into the next field, then lose it mid-typing),
+   the caret, and any text typed but not yet committed. captureUi/restoreUi carry
+   them across a rebuild of one container:
+   - scroll: every element tagged data-sk (a stable scroll key);
+   - focus: the focused control, located by its key — the chain of data-fk field
+     keys above it plus DOM indices — with its caret and, if the user had typed
+     something not yet committed, that text. A "+ set" button that was just pressed
+     hands focus to the input that replaced it. */
+let RENDERING = 0;   // >0 while a container is being rebuilt (blur must not commit)
+function uiKey(node, root){
+  const parts=[];
+  for(let n=node; n && n!==root; n=n.parentElement){
+    const p=n.parentElement; if(!p) return null;
+    parts.push(n.dataset && n.dataset.fk!=null ? "k:"+n.dataset.fk : String(Array.prototype.indexOf.call(p.children, n)));
+  }
+  return parts.reverse().join("/");
+}
+function fieldKeyOf(key){ const i=key.lastIndexOf("k:"); if(i<0) return null; const j=key.indexOf("/",i); return j<0?key:key.slice(0,j); }
+function captureUi(root){
+  if(!root) return null;
+  const st={scroll:{}, focus:null};
+  const scrollers=[...root.querySelectorAll("[data-sk]")]; if(root.dataset&&root.dataset.sk) scrollers.push(root);
+  for(const e of scrollers) st.scroll[e.dataset.sk]=[e.scrollTop, e.scrollLeft];
+  const a=document.activeElement;
+  if(a && a!==root && root.contains(a)){
+    const f={key:uiKey(a,root), tag:a.tagName, setBtn:a.classList.contains("set-btn")};
+    if(a.tagName==="INPUT"||a.tagName==="TEXTAREA"){
+      f.value=a.value; f.def=a.defaultValue; f.dirty=(a.type!=="checkbox" && a.value!==a.defaultValue);
+      try{ f.ss=a.selectionStart; f.se=a.selectionEnd; }catch(e){}
+    }
+    if(f.key!=null) st.focus=f;
+  }
+  return st;
+}
+function restoreUi(root, st){
+  if(!root || !st) return;
+  const scrollers=[...root.querySelectorAll("[data-sk]")]; if(root.dataset&&root.dataset.sk) scrollers.push(root);
+  for(const e of scrollers){ const s=st.scroll[e.dataset.sk]; if(s){ e.scrollTop=s[0]; e.scrollLeft=s[1]; } }
+  const f=st.focus;
+  if(!f) return;
+  const cur=document.activeElement;
+  if(cur && cur!==document.body && !root.contains(cur)) return;   // focus moved elsewhere on purpose
+  let target=null;
+  const focusables=[...root.querySelectorAll("input,select,textarea,button")];
+  if(f.setBtn){
+    const fk=fieldKeyOf(f.key);
+    if(fk) target=focusables.find(e=>{ const k=uiKey(e,root); return k && fieldKeyOf(k)===fk && (e.tagName==="INPUT"||e.tagName==="SELECT"); }) || null;
+  }
+  if(!target) target=focusables.find(e=>e.tagName===f.tag && uiKey(e,root)===f.key) || null;
+  if(!target) return;
+  // Restoring focus re-runs a combobox's focus handler; that must not reopen its
+  // list over the field the user is no longer typing in.
+  target._restoring=true;
+  try{ target.focus({preventScroll:true}); } finally{ target._restoring=false; }
+  if(f.dirty && target.defaultValue===f.def){
+    target.value=f.value;
+    if(target._comboInput) target.dispatchEvent(new Event("input"));
+  }
+  if(f.ss!=null){ try{ target.setSelectionRange(f.ss, f.se); }catch(e){} }
+  else if(f.setBtn && target.select){ try{ target.select(); }catch(e){} }
+}
+// Rebuild a container in place, keeping the user's place in it.
+function preserving(root, rebuild, keep=true){
+  const st = keep? captureUi(root) : null;
+  RENDERING++;
+  try{ rebuild(); } finally{ RENDERING--; }
+  if(st) restoreUi(root, st);
+}
 
 function renderShell(){
   const app=$("#app");
@@ -623,11 +881,12 @@ const RAIL_CAPPED = new Set(["items","recipes"]);
 
 function renderRail(){
   let rail = $("#rail");
-  // Preserve the scroll position across re-renders (a selection or edit rebuilds
-  // the rail; without this it would jump back to the top on every click).
-  const prevScrollEl = rail && rail.querySelector(".rail-scroll");
-  const prevScroll = prevScrollEl ? prevScrollEl.scrollTop : 0;
   if(!rail){ rail = el("aside",{class:"rail",id:"rail"}); $("#app").prepend(rail); }
+  // A selection or edit rebuilds the rail; keep its scroll, the search box's focus
+  // and caret, and the import panel's text where they were.
+  preserving(rail, ()=>buildRail(rail));
+}
+function buildRail(rail){
   rail.textContent="";
   rail.append(
     el("div",{class:"brand"},
@@ -635,7 +894,7 @@ function renderRail(){
       el("h1",null,"Process Simulation"),
       el("div",{class:"sub"},"rate-balance · node graph")),
   );
-  const scroll = el("div",{class:"rail-scroll"});
+  const scroll = el("div",{class:"rail-scroll","data-sk":"rail"});
   rail.append(scroll);
 
   scroll.append(el("div",{class:"rail-head"},
@@ -653,13 +912,14 @@ function renderRail(){
 
   // search
   const search = el("input",{class:"field-input mono",type:"text",placeholder:"search library…",value:railQuery,
-    oninput:e=>{ railQuery=e.target.value; renderRailSections(); }});
+    "data-fk":"rail-search",
+    oninput:e=>{ railQuery=e.target.value; e.target.defaultValue=railQuery; renderRailSections(); },
+    onkeydown:e=>{ if(e.key==="Escape"){ e.stopPropagation(); if(railQuery){ railQuery=""; e.target.value=""; e.target.defaultValue=""; renderRailSections(); } else e.target.blur(); } }});
   scroll.append(el("div",{class:"rail-search"}, search));
 
   const sectionsHost = el("div",{id:"railSections"});
   scroll.append(sectionsHost);
   renderRailSections();
-  scroll.scrollTop = prevScroll;
 }
 
 function railMatch(label,id){ const q=railQuery.trim().toLowerCase(); return q===""||(label||"").toLowerCase().includes(q)||(id||"").toLowerCase().includes(q); }
@@ -701,7 +961,7 @@ function renderRailSections(){
 function leaf(r, draggable){
   const seld = SEL && SEL.kind===r.kind && SEL.id===r.id;
   const node = el("div",{class:"leaf clickable"+(seld?" selected":"")+(draggable?" draggable":""),
-    onclick:()=>select(r.kind, r.id)},
+    onclick:()=>{ select(r.kind, r.id); revealOnCanvas(r.kind, r.id); }},
     el("span",{class:"dot",style:{background:r.dot}}),
     el("span",null,r.label),
     el("span",{class:"leaf-id"},r.id));
@@ -729,7 +989,7 @@ function renderGraph(){
     const vp=el("div",{id:"viewport"});
     vp.append(svg("svg",{id:"edges"}));
     canvas.append(vp);
-    stage.append(canvas, paletteEl(), legendEl(), controlsEl(), el("div",{id:"readout"}));
+    stage.append(canvas, paletteEl(), legendEl(), controlsEl(), el("div",{id:"readout"}), el("div",{id:"dock",class:"dock closed"}));
     // replace boot / insert as middle column
     const boot=$("#bootmsg"); if(boot) boot.remove();
     const app=$("#app");
@@ -932,6 +1192,7 @@ function fit(){
   for(const s of cs.rendered){ const fb=centroidOf([...flattenSystem(s.id).nodeIds]); pts.push({x:s.x!=null?s.x:fb.x,y:s.y!=null?s.y:fb.y,w:190,h:90}); }
   const vb=viewportBox();
   if(!pts.length){ view={x:vb.cx, y:vb.cy, k:1}; applyView(); return; }
+  if(!(vb.w>0 && vb.h>0)) return;
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   for(const p of pts){ minX=Math.min(minX,p.x); minY=Math.min(minY,p.y); maxX=Math.max(maxX,p.x+p.w); maxY=Math.max(maxY,p.y+p.h); }
   const w=maxX-minX, h=maxY-minY, pad=0.15;
@@ -955,9 +1216,12 @@ function paletteEl(){
   return host;
 }
 function refreshPalette(){
-  const host=$("#paletteCombo"); if(!host) return; host.textContent="";
+  const host=$("#paletteCombo"); if(!host) return;
   const opts=(WORLD.machineDefs||[]).map(d=>({value:d.id,label:d.name||d.id,hint:d.storage?"buffer":""}));
-  host.append(combo("", opts, id=>{ const d=BY.defs[id]; if(d) placeMachine(d); }, "+ place a machine…", {clearOnPick:true}));
+  preserving(host, ()=>{
+    host.textContent="";
+    host.append(combo("", opts, id=>{ const d=BY.defs[id]; if(d) placeMachine(d); }, "+ place a machine…", {clearOnPick:true}));
+  });
   const gb=$("#groupBtn");
   const cs=collapseState();
   const groupable=[...MULTI].filter(id=>!cs.hidden.has(id));
@@ -1156,11 +1420,14 @@ function endConnect(e){
   if(src.cat!==snk.cat){ toast("ends must share a category",true); return; }
   if(src.nodeId===snk.nodeId){ toast("cannot wire a node to itself",true); return; }
   const mkEnd=(end,role)=>{ const o={nodeId:end.nodeId,role:end.junction?"io":role}; if(end.port) o.port=end.port; return o; };
-  const id=freshId("pipe", idsOfKind("pipe"));
-  const pipe={id,category:src.cat,movementCapacity:defaultMovementCapacity(src.cat),overclock:1,
-    a:mkEnd(src,"out"), b:mkEnd(snk,"in")};
-  applyEdits([upsert("pipe",pipe)]);
-  select("pipe",id);
+  // Ids are allocated when the queued edit runs, so two quick gestures never
+  // claim the same id (the second would silently replace the first).
+  let id;
+  applyEdits(()=>{
+    id=freshId("pipe", idsOfKind("pipe"));
+    return [upsert("pipe",{id,category:src.cat,movementCapacity:defaultMovementCapacity(src.cat),overclock:1,
+      a:mkEnd(src,"out"), b:mkEnd(snk,"in")})];
+  }).then(()=>{ if(id) select("pipe",id); });
 }
 
 /* placement */
@@ -1172,10 +1439,11 @@ function placeMachine(def, scenePos){
     const step=(WORLD.nodes||[]).length%6;
     pos={x:base.x+step*28, y:base.y+step*28};
   }
-  const id=freshId(def.id, idsOfKind("node"));
-  const node={id,machineDefId:def.id,x:Math.round(pos.x),y:Math.round(pos.y)};
-  applyEdits([upsert("node",node)]);
-  select("node",id);
+  let id;
+  applyEdits(()=>{
+    id=freshId(def.id, idsOfKind("node"));
+    return [upsert("node",{id,machineDefId:def.id,x:Math.round(pos.x),y:Math.round(pos.y)})];
+  }).then(()=>{ if(id) select("node",id); });
 }
 function placeJunction(cat, scenePos){
   let pos=scenePos;
@@ -1185,9 +1453,11 @@ function placeJunction(cat, scenePos){
     const step=(WORLD.pipeNodes||[]).length%6;
     pos={x:base.x+step*24, y:base.y+step*24};
   }
-  const id=freshId("junction", idsOfKind("pipeNode"));
-  applyEdits([upsert("pipeNode",{id,category:cat,x:Math.round(pos.x),y:Math.round(pos.y)})]);
-  select("pipeNode",id);
+  let id;
+  applyEdits(()=>{
+    id=freshId("junction", idsOfKind("pipeNode"));
+    return [upsert("pipeNode",{id,category:cat,x:Math.round(pos.x),y:Math.round(pos.y)})];
+  }).then(()=>{ if(id) select("pipeNode",id); });
 }
 
 /* selection */
@@ -1197,16 +1467,39 @@ function clearSel(){ SEL=null; MULTI.clear(); renderAll(); }
 // Shift-click a node to add/remove it from the multi-selection (≥2 → "Group").
 function toggleMulti(id){ if(MULTI.has(id)) MULTI.delete(id); else MULTI.add(id); SEL=null; renderAll(); }
 
-/* delete selected via keyboard */
+/* keyboard: undo, escape, delete */
+// Where the last pointer press landed. Delete/Backspace act on the selection only
+// when the user's last gesture was on the canvas or the library list — not after
+// clicking a control in the inspector (a "+ set" or "unset" button is replaced by
+// the re-render, focus falls to <body>, and a Backspace meant for a field used to
+// delete the whole selected machine).
+let LAST_PRESS = "canvas";
+document.addEventListener("pointerdown", e=>{
+  const t=e.target;
+  LAST_PRESS = (t.closest&&t.closest("#canvas"))? "canvas" : (t.closest&&t.closest(".rail .leaf"))? "rail" : "other";
+}, true);
+const isTyping = t => !!t && (t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.tagName==="SELECT"||t.isContentEditable);
 window.addEventListener("keydown",e=>{
-  const tag=(e.target&&e.target.tagName)||"";
+  if(e.defaultPrevented) return;
+  const typing=isTyping(e.target);
   if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==="z"||e.key==="Z")){
-    if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT") return;
+    if(typing) return;                                // the field's own text undo
     e.preventDefault(); undo(); return;
   }
-  if(e.key==="Escape"){ clearSel(); return; }
+  if((e.key==="b"||e.key==="B") && !typing && !e.ctrlKey && !e.metaKey && !e.altKey && $("#dock")){
+    e.preventDefault(); toggleDock(); return;         // the balance sheet
+  }
+  if(e.key==="Escape"){
+    if(typing || $("#projectDialog")) return;         // fields/dialogs handle their own Escape
+    if(COLMENU_OPEN){ COLMENU_OPEN=false; renderDock(true); return; }
+    if(connectState) return;
+    clearSel(); return;
+  }
   if((e.key==="Delete"||e.key==="Backspace")&&SEL){
-    if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT") return;
+    if(typing) return;
+    const a=document.activeElement;
+    if(a && a!==document.body && !(a.closest&&a.closest("#canvas,.rail .leaf"))) return;
+    if(LAST_PRESS==="other") return;
     e.preventDefault(); deleteSelected();
   }
 });
@@ -1231,11 +1524,11 @@ function groupSelected(){
   const cs=collapseState();
   const ids=[...MULTI].filter(id=>!cs.hidden.has(id));
   if(ids.length<2) return;
-  const id=freshSystemId();
   const {x,y}=centroidOf(ids);
   MULTI.clear();
-  applyEdits([upsert("system",{id,memberNodeIds:ids,collapsed:true,x,y})]);
-  select("system",id);
+  let id;
+  applyEdits(()=>{ id=freshSystemId(); return [upsert("system",{id,memberNodeIds:ids,collapsed:true,x,y})]; })
+    .then(()=>{ if(id) select("system",id); });
 }
 function toggleCollapse(sysId){
   const s=BY.systems[sysId]; if(!s) return;
@@ -1286,8 +1579,12 @@ function paintOverlay(){
 function cssEsc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/["\\]/g,"\\$&"); }
 
 function renderReadout(){
-  const host=$("#readout"); if(!host) return; host.textContent="";
-  const panel=el("div",{class:"readout"});
+  const host=$("#readout"); if(!host) return;
+  preserving(host, ()=>buildReadout(host));
+}
+function buildReadout(host){
+  host.textContent="";
+  const panel=el("div",{class:"readout","data-sk":"readout"});
   panel.append(el("div",{class:"eyebrow"},"Balance"));
   // scope switch
   const sw=el("div",{class:"scope-switch"});
@@ -1303,16 +1600,20 @@ function renderReadout(){
   }
   panel.append(roRow("nodes", String((rep.nodeIds||[]).length)));
   panel.append(roRow("net energy", rep.netEnergy!=null?fmtEnergy(rep.netEnergy):"—"));
-  // feedstock in
-  panel.append(ioSection("Feedstock in", rep.externalInputs));
-  panel.append(ioSection("Actual yield", rep.externalOutputs));
+  const nRes=Object.keys(rep.itemLedger||{}).length;
+  panel.append(roRow("resources", String(nRes)));
+  // The readout is a glance: the top few of each list. Everything else — every
+  // resource, machine and bottleneck, sortable and filterable — is in the balance
+  // sheet the "more" links open.
+  panel.append(ioSection("Feedstock in", rep.externalInputs, ()=>openDock({tab:"resources", view:"in"})));
+  panel.append(ioSection("Actual yield", rep.externalOutputs, ()=>openDock({tab:"resources", view:"out"})));
   // bottlenecks
   const bn=rep.bottlenecks||[];
-  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},"Bottlenecks"));
+  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},"Bottlenecks"+(bn.length?` (${bn.length})`:"")));
   if(!bn.length) sec.append(el("div",{class:"ro-empty"},"none"));
   else{
     const list=el("div",{class:"ro-list"});
-    bn.slice(0,8).forEach(b=>{
+    bn.slice(0,RO_TOP).forEach(b=>{
       const nm=(BY.defs[BY.nodes[b.nodeId]?.machineDefId]?.name)||b.nodeId;
       const it=(BY.items[b.itemId]?.name)||b.itemId;
       list.append(el("div",{class:"ro-item bneck",onclick:()=>select("node",b.nodeId)},
@@ -1320,26 +1621,551 @@ function renderReadout(){
         el("span",{class:"bad"}, "−"+fmtShort(b.shortfall))));
     });
     sec.append(list);
+    if(bn.length>RO_TOP) sec.append(el("button",{class:"ro-more",onclick:()=>openDock({tab:"bottlenecks"})},`+${bn.length-RO_TOP} more`));
   }
   panel.append(sec);
+  panel.append(el("button",{class:"tool-btn ro-open",title:"Every resource, machine and bottleneck in this scope (B)",
+    onclick:()=>openDock({})},"▤ Open balance sheet"));
   host.append(panel);
 }
+const RO_TOP=5;
 function fmtShort(v){ const {v:val,s}=scaleMag(v); return val+s; }
 function roRow(k,v){ return el("div",{class:"ro-row"}, el("span",{class:"k"},k), el("span",{class:"v"},v)); }
-function ioSection(label, map){
+function ioSection(label, map, onMore){
   const keys=Object.keys(map||{});
-  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},label));
+  const sec=el("div",{class:"ro-sec"}, el("div",{class:"lab"},label+(keys.length?` (${keys.length})`:"")));
   if(!keys.length){ sec.append(el("div",{class:"ro-empty"},"none")); return sec; }
   const list=el("div",{class:"ro-list"});
-  keys.sort((a,b)=>Math.abs(map[b])-Math.abs(map[a])).slice(0,10).forEach(k=>{
+  keys.sort((a,b)=>Math.abs(map[b])-Math.abs(map[a])).slice(0,RO_TOP).forEach(k=>{
     const it=BY.items[k]; const nm=(it&&it.name)||k;
-    list.append(el("div",{class:"ro-item"}, el("span",null,nm), el("span",null, fmtRateFor(it&&it.category, map[k]))));
+    list.append(el("div",{class:"ro-item bneck",title:"show in the balance sheet",onclick:()=>openDock({tab:"resources",focus:k})},
+      el("span",null,nm), el("span",null, fmtRateFor(it&&it.category, map[k]))));
   });
-  sec.append(list); return sec;
+  sec.append(list);
+  if(keys.length>RO_TOP && onMore) sec.append(el("button",{class:"ro-more",onclick:onMore},`+${keys.length-RO_TOP} more`));
+  return sec;
 }
 function setScope(sc){
   if(sc==="system"&&!SYSTEM_ID){ SYSTEM_ID=(WORLD.systems&&WORLD.systems[0]&&WORLD.systems[0].id)||null; }
   SCOPE=sc; renderReadout(); recompute();
+}
+
+/* ============================================================================
+   Balance sheet — a resizable dock along the bottom of the stage
+   ============================================================================
+   The readout is a glance; a real chain touches hundreds of resources. The sheet
+   lists all of them for the current scope (world / process / node / system), off
+   the engine's per-resource ledger (REPORT.itemLedger):
+
+   - Resources: made / used / net, need and capacity at 100% duty, production
+     missing to run every user flat out, feedstock in, yield out, shortfall, maker
+     and user counts, and a coverage bar. Sort by any column, search, filter by
+     category and by state (short, under-supplied, imported, product, intermediate,
+     balanced), hide columns, switch rates between /s, /min and /h. Click a row to
+     expand who makes and who uses it (click one to select it on the canvas);
+     hovering a row outlines its makers (solid) and users (dashed) on the canvas.
+   - Machines: every machine's duty, run band, recipes, limiting inputs, products.
+   - Bottlenecks: every limiting shortfall, ranked, with its share of the need.
+   Copy (TSV) and CSV export take the current filtered view. State persists. */
+const DOCK_DEFAULT = {
+  open:false, tab:"resources", h:340, max:false, unit:"s",
+  q:"", cats:["solid","liquid","energy"], view:"all", hidden:[],
+  mq:"", mview:"all", bq:"",
+  sort:{resources:{key:"short",dir:-1}, machines:{key:"duty",dir:1}, bottlenecks:{key:"short",dir:-1}},
+};
+let DOCK = loadDock();
+const DOCK_OPEN_ROWS = new Set();     // expanded resource rows
+let DOCK_STAMP = null;                // skip rebuilding an unchanged sheet
+let DOCK_SHOWN_SEL = null;
+const EPS = 1e-9;
+function loadDock(){
+  const d = structuredClone(DOCK_DEFAULT);
+  try{
+    const j = JSON.parse(localStorage.getItem("ps.dock")||"null");
+    if(j && typeof j==="object"){ Object.assign(d, j); d.sort = {...DOCK_DEFAULT.sort, ...(j.sort||{})}; }
+  }catch(e){}
+  return d;
+}
+function saveDock(){ try{ localStorage.setItem("ps.dock", JSON.stringify(DOCK)); }catch(e){} }
+function setDock(patch){ Object.assign(DOCK, patch); saveDock(); renderDock(true); }
+// Open the sheet, optionally on a tab / filter, or scrolled to one resource.
+function openDock({tab, view, focus}={}){
+  const patch = {open:true};
+  if(tab) patch.tab = tab;
+  if(view){ patch.view = view; patch.q = ""; }
+  if(focus){
+    patch.tab = "resources"; patch.view = "all"; patch.q = "";
+    const cat = ((REPORT&&REPORT.itemLedger&&REPORT.itemLedger[focus])||{}).category;
+    if(cat && !DOCK.cats.includes(cat)) patch.cats = [...DOCK.cats, cat];
+    DOCK_OPEN_ROWS.add(focus);
+  }
+  setDock(patch);
+  if(focus){
+    const row = $(`#dock tr.row[data-item="${cssEsc(focus)}"]`);
+    if(row && row.scrollIntoView) row.scrollIntoView({block:"nearest"});
+  }
+}
+function toggleDock(){ setDock({open:!DOCK.open}); }
+
+/* ---- units: material rates per s / min / h; energy always EU/t (as elsewhere) */
+const UNIT_MUL = {s:1, min:60, h:3600};
+function unitLabel(cat){
+  if(cat==="energy") return "EU/t";
+  const per = "/"+DOCK.unit;
+  return cat==="liquid"? "mB"+per : per;
+}
+function inUnit(cat, perSec){ return cat==="energy"? toPerTick(perSec) : perSec*UNIT_MUL[DOCK.unit]; }
+function fmtCell(cat, perSec){
+  if(perSec==null) return "—";
+  const v = inUnit(cat, perSec);
+  if(Math.abs(v) < 1e-9) return "·";
+  const {v:val, s} = scaleMag(v);
+  return (v<0&&!String(val).startsWith("-")?"−":"")+String(val).replace("-","−")+s;
+}
+function exportNum(cat, perSec){ return perSec==null? "" : String(clean(inUnit(cat, perSec))); }
+
+/* ---- data ---- */
+function nodeLabel(nid){ const n=BY.nodes[nid]; return (n && BY.defs[n.machineDefId] && BY.defs[n.machineDefId].name) || (n && n.machineDefId) || nid; }
+function itemLabel(id){ const it=BY.items[id]; return (it && it.name) || id; }
+function ledgerRows(){
+  const L = (REPORT && REPORT.itemLedger) || {};
+  return Object.values(L).map(r=>{
+    const it = BY.items[r.itemId];
+    const cat = r.category || (it && it.category) || "solid";
+    const supply = r.capacity + r.feedstock;
+    const missing = r.isTag ? 0 : Math.max(0, r.demand - supply);
+    const cover = r.demand > EPS ? Math.min(1, (r.produced + r.feedstock) / r.demand) : null;
+    const internal = r.producers.length>0 && r.consumers.length>0;
+    const flags = [];
+    if(r.shortfall > EPS) flags.push("short");
+    if(r.feedstock > EPS) flags.push("in");
+    if(r.yield > EPS) flags.push("out");
+    return {...r, cat, name:itemLabel(r.itemId), tag:!!r.isTag, net:r.produced - r.consumed,
+      missing, cover, internal, flags, makers:r.producers.length, users:r.consumers.length};
+  });
+}
+const RES_VIEWS = [
+  ["all","all", ()=>true],
+  ["short","short", r=>r.shortfall>EPS],
+  ["under","under-supplied", r=>r.missing>EPS],
+  ["in","imported", r=>r.feedstock>EPS],
+  ["out","products", r=>r.yield>EPS],
+  ["mid","intermediates", r=>r.internal],
+  ["ok","balanced", r=>r.shortfall<=EPS && r.missing<=EPS && r.feedstock<=EPS && r.yield<=EPS],
+];
+const RES_COLS = [
+  {k:"name", h:"resource", l:true, get:r=>r.name.toLowerCase(), title:"click a row for its makers and users"},
+  {k:"unit", h:"unit", l:true, get:r=>unitLabel(r.cat)},
+  {k:"made", h:"made", get:r=>r.produced, title:"produced at the solved duty cycles"},
+  {k:"used", h:"used", get:r=>r.consumed, title:"consumed at the solved duty cycles"},
+  {k:"net", h:"net", get:r=>r.net, title:"made − used (feedstock covers a negative net, yield takes a positive one)"},
+  {k:"need", h:"need @100%", get:r=>r.demand, title:"what every user would draw running flat out"},
+  {k:"cap", h:"can make @100%", get:r=>r.capacity, title:"what every maker would produce running flat out"},
+  {k:"missing", h:"missing", get:r=>r.missing, title:"production (or feedstock) missing to run every user at 100%"},
+  {k:"in", h:"feedstock", get:r=>r.feedstock, title:"fed in across the scope boundary"},
+  {k:"out", h:"yield", get:r=>r.yield, title:"leaves the scope (product / surplus)"},
+  {k:"short", h:"short", get:r=>r.shortfall, title:"shortfall at the machines starved of it"},
+  {k:"makers", h:"makers", get:r=>r.makers},
+  {k:"users", h:"users", get:r=>r.users},
+  {k:"cover", h:"coverage", get:r=>r.cover==null?2:r.cover, title:"share of the full-rate need actually supplied"},
+  {k:"state", h:"state", l:true, get:r=>r.flags.join(" "), title:"short · imported · product"},
+];
+function machineRows(){
+  if(!REPORT) return [];
+  const bals = REPORT.balances||{}, duty = REPORT.nodeDuty||{};
+  return (REPORT.nodeIds||[]).map(nid=>{
+    const n = BY.nodes[nid]||{}, b = bals[nid]||{inputs:{},outputs:{}};
+    const limits = Object.values(b.inputs||{}).filter(x=>x.status==="shortfall").map(x=>x.itemId);
+    const makes = Object.values(b.outputs||{}).filter(x=>x.rate>EPS).sort((a,c)=>c.rate-a.rate).map(x=>x.itemId);
+    const recipes = nodeRecipeIds(n).map(id=>(BY.recipes[id]&&BY.recipes[id].name)||id);
+    return {nid, name:nodeLabel(nid), recipes, duty:duty[nid]==null?1:duty[nid], status:b.status||"ok",
+      limits, makes, uses:Object.keys(b.inputs||{})};
+  });
+}
+const MACH_VIEWS = [["all","all",()=>true],["stalled","stalled",m=>m.status==="stalled"],["throttled","throttled",m=>m.status==="throttled"],["ok","full",m=>m.status==="ok"]];
+const MACH_COLS = [
+  {k:"name", h:"machine", l:true, get:m=>m.name.toLowerCase()},
+  {k:"nid", h:"node", l:true, get:m=>m.nid},
+  {k:"duty", h:"duty", get:m=>m.duty},
+  {k:"status", h:"state", l:true, get:m=>({stalled:0,throttled:1,ok:2})[m.status]??3},
+  {k:"recipes", h:"recipes", l:true, get:m=>m.recipes.join(", ").toLowerCase()},
+  {k:"limits", h:"limited by", l:true, get:m=>m.limits.length},
+  {k:"makes", h:"makes", l:true, get:m=>m.makes.length},
+];
+function bottleneckRows(){
+  if(!REPORT) return [];
+  const bals = REPORT.balances||{};
+  return (REPORT.bottlenecks||[]).map((b,i)=>{
+    const need = ((bals[b.nodeId]||{}).inputs||{})[b.itemId];
+    const cat = (BY.items[b.itemId]||{}).category || "solid";
+    return {rank:i+1, nid:b.nodeId, name:nodeLabel(b.nodeId), item:b.itemId, itemName:itemLabel(b.itemId), cat,
+      short:b.shortfall, need:need?need.demand:null, pct:need&&need.demand>EPS? b.shortfall/need.demand : null};
+  });
+}
+const BN_COLS = [
+  {k:"rank", h:"#", get:b=>b.rank},
+  {k:"name", h:"machine", l:true, get:b=>b.name.toLowerCase()},
+  {k:"nid", h:"node", l:true, get:b=>b.nid},
+  {k:"itemName", h:"short of", l:true, get:b=>b.itemName.toLowerCase()},
+  {k:"short", h:"short", get:b=>b.short},
+  {k:"need", h:"need", get:b=>b.need==null?-1:b.need},
+  {k:"pct", h:"% of need", get:b=>b.pct==null?-1:b.pct},
+];
+function sortRows(rows, cols, tab){
+  const st = DOCK.sort[tab] || {}; const col = cols.find(c=>c.k===st.key) || cols[0]; const dir = st.dir || 1;
+  return rows.slice().sort((a,b)=>{
+    const x=col.get(a), y=col.get(b);
+    const c = (typeof x==="number" && typeof y==="number")? x-y : cmp(String(x),String(y));
+    return c*dir || cmp(a.name||"", b.name||"");
+  });
+}
+function sortBy(tab, key, cols){
+  const cur = DOCK.sort[tab] || {};
+  const col = cols.find(c=>c.k===key);
+  const dir = cur.key===key ? -cur.dir : (col&&col.l ? 1 : -1);   // numbers: largest first
+  setDock({sort:{...DOCK.sort, [tab]:{key, dir}}});
+}
+function filteredResources(){
+  const q = DOCK.q.trim().toLowerCase();
+  const view = (RES_VIEWS.find(v=>v[0]===DOCK.view)||RES_VIEWS[0])[2];
+  const all = ledgerRows();
+  const base = all.filter(r=>DOCK.cats.includes(r.cat) && (!q || r.name.toLowerCase().includes(q) || r.itemId.toLowerCase().includes(q)));
+  return {all, base, rows: sortRows(base.filter(view), RES_COLS, "resources")};
+}
+function filteredMachines(){
+  const q = DOCK.mq.trim().toLowerCase();
+  const view = (MACH_VIEWS.find(v=>v[0]===DOCK.mview)||MACH_VIEWS[0])[2];
+  const hit = m => !q || m.name.toLowerCase().includes(q) || m.nid.toLowerCase().includes(q)
+    || m.recipes.some(r=>r.toLowerCase().includes(q)) || m.makes.concat(m.uses).some(i=>itemLabel(i).toLowerCase().includes(q)||i.includes(q));
+  const all = machineRows(); const base = all.filter(hit);
+  return {all, base, rows: sortRows(base.filter(view), MACH_COLS, "machines")};
+}
+function filteredBottlenecks(){
+  const q = DOCK.bq.trim().toLowerCase();
+  const all = bottleneckRows();
+  const base = all.filter(b=>!q || b.name.toLowerCase().includes(q) || b.nid.includes(q) || b.itemName.toLowerCase().includes(q) || b.item.includes(q));
+  return {all, base, rows: sortRows(base, BN_COLS, "bottlenecks")};
+}
+
+/* ---- canvas highlight while hovering a resource ---- */
+function highlightNodes(makers, users){
+  const vp=$("#viewport"); if(!vp) return;
+  const mk=new Set(makers||[]), us=new Set(users||[]), any=mk.size||us.size;
+  vp.querySelectorAll(".node").forEach(d=>{
+    const id=d.getAttribute("data-id");
+    d.classList.toggle("hl-make", mk.has(id));
+    d.classList.toggle("hl-use", !mk.has(id) && us.has(id));
+    d.classList.toggle("hl-dim", !!any && !mk.has(id) && !us.has(id));
+  });
+}
+// Fit the canvas around a set of nodes (a resource's makers and users).
+function frameNodes(ids){
+  const pts = ids.map(id=>BY.nodes[id]).filter(n=>n && n.x!=null && n.y!=null);
+  if(!pts.length) return;
+  const vb=viewportBox();
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const n of pts){ minX=Math.min(minX,n.x); minY=Math.min(minY,n.y); maxX=Math.max(maxX,n.x+NODE_W); maxY=Math.max(maxY,n.y+140); }
+  const visH = vb.h - (DOCK.open ? dockHeight() : 0);
+  const w=maxX-minX, h=maxY-minY;
+  const k=Math.min(1.5, Math.max(0.2, Math.min(vb.w*0.8/w, visH*0.8/h)));
+  view={k, x: vb.cx-(minX+w/2)*k, y: visH/2-(minY+h/2)*k};
+  applyView();
+}
+
+/* ---- export ---- */
+function sheetTable(){
+  if(DOCK.tab==="machines"){
+    const {rows}=filteredMachines();
+    return [["machine","node","duty %","state","recipes","limited by","makes"],
+      ...rows.map(m=>[m.name,m.nid,String(clean(m.duty*100)),m.status,m.recipes.join("; "),m.limits.map(itemLabel).join("; "),m.makes.map(itemLabel).join("; ")])];
+  }
+  if(DOCK.tab==="bottlenecks"){
+    const {rows}=filteredBottlenecks();
+    return [["rank","machine","node","short of","unit","short","need","% of need"],
+      ...rows.map(b=>[String(b.rank),b.name,b.nid,b.itemName,unitLabel(b.cat),exportNum(b.cat,b.short),exportNum(b.cat,b.need),b.pct==null?"":String(clean(b.pct*100))])];
+  }
+  const {rows}=filteredResources();
+  return [["resource","id","category","unit","made","used","net","need @100%","can make @100%","missing","feedstock","yield","short","makers","users","coverage %","state"],
+    ...rows.map(r=>[r.name,r.itemId,r.cat,unitLabel(r.cat),exportNum(r.cat,r.produced),exportNum(r.cat,r.consumed),exportNum(r.cat,r.net),
+      exportNum(r.cat,r.demand),exportNum(r.cat,r.capacity),exportNum(r.cat,r.missing),exportNum(r.cat,r.feedstock),exportNum(r.cat,r.yield),
+      exportNum(r.cat,r.shortfall),String(r.makers),String(r.users),r.cover==null?"":String(clean(r.cover*100)),r.flags.join(" ")])];
+}
+async function copySheet(){
+  const text = sheetTable().map(r=>r.map(c=>String(c).replace(/[\t\n]/g," ")).join("\t")).join("\n");
+  let ok=false;
+  try{ await navigator.clipboard.writeText(text); ok=true; }catch(e){}
+  if(!ok){
+    const ta=el("textarea",{style:{position:"fixed",left:"-9999px"}}); ta.value=text; document.body.append(ta); ta.select();
+    try{ ok=document.execCommand("copy"); }catch(e){} ta.remove();
+  }
+  toast(ok? `copied ${text.split("\n").length-1} rows — paste into a spreadsheet` : "copy failed", !ok);
+}
+function downloadCsv(){
+  const csv = sheetTable().map(r=>r.map(c=>{ const s=String(c); return /[",\n]/.test(s)? '"'+s.replace(/"/g,'""')+'"' : s; }).join(",")).join("\n");
+  const a=el("a",{href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:`balance-${DOCK.tab}-${SCOPE}.csv`});
+  document.body.append(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/* ---- rendering ---- */
+function dockHeight(){
+  const stage=$("#stage"); const max = stage? stage.clientHeight - 40 : 600;
+  return DOCK.max ? max : Math.max(150, Math.min(max, DOCK.h));
+}
+function scopeLabel(){
+  if(SCOPE==="world") return "whole world";
+  if(SCOPE==="system") return "system · "+((BY.systems[SYSTEM_ID]||{}).name||SYSTEM_ID||"—");
+  const id = SEL&&SEL.kind==="node"? SEL.id : null;
+  return SCOPE+" · "+(id? nodeLabel(id)+" "+id : "select a machine");
+}
+function renderDock(force){
+  const dock=$("#dock"); if(!dock) return;
+  const selKey = SEL? SEL.kind+":"+SEL.id : "";
+  const stamp = [REPORT, STALE, selKey, JSON.stringify(DOCK), SCOPE, DOCK_OPEN_ROWS.size];
+  if(!force && DOCK_STAMP && stamp.every((x,i)=>x===DOCK_STAMP[i])) return;
+  DOCK_STAMP = stamp;
+  preserving(dock, ()=>buildDock(dock));
+  const stage=$("#stage");
+  if(stage) stage.style.setProperty("--dock-h", dock.offsetHeight+"px");
+  // A resource selected elsewhere (library, inspector) scrolls into view here.
+  if(DOCK.open && DOCK.tab==="resources" && SEL && SEL.kind==="item" && DOCK_SHOWN_SEL!==selKey){
+    const row=dock.querySelector(`tr.row[data-item="${cssEsc(SEL.id)}"]`);
+    if(row && row.scrollIntoView) row.scrollIntoView({block:"nearest"});
+  }
+  DOCK_SHOWN_SEL = selKey;
+}
+function buildDock(dock){
+  dock.textContent="";
+  dock.className = "dock"+(DOCK.open?"":" closed");
+  dock.style.height = DOCK.open? dockHeight()+"px" : "";
+  const res = REPORT? ledgerRows() : [];
+  const nShort = res.filter(r=>r.shortfall>EPS).length, nUnder = res.filter(r=>r.missing>EPS).length;
+  const sum = el("div",{class:"dock-sum"},
+    el("span",null, `${res.length} resources`),
+    REPORT? el("span",null, `${(REPORT.nodeIds||[]).length} machines`) : null,
+    nShort? el("span",{class:"bad"}, `${nShort} short`) : null,
+    nUnder? el("span",null, `${nUnder} under-supplied`) : null);
+  if(!DOCK.open){
+    const bar = el("div",{class:"dock-bar",title:"Open the balance sheet (B)",onclick:()=>setDock({open:true})},
+      el("span",{class:"dock-title"},"▤ Balance sheet"), el("span",{class:"dock-scope"},scopeLabel()), sum,
+      el("span",{class:"dock-spacer"}), el("span",{class:"dock-btn"},"open ▴"));
+    dock.append(bar);
+    return;
+  }
+  const grip = el("div",{class:"dock-grip",title:"drag to resize · double-click to maximize"});
+  grip.addEventListener("pointerdown", startDockResize);
+  grip.addEventListener("dblclick", ()=>setDock({max:!DOCK.max}));
+  dock.append(grip);
+  const ledger = REPORT? Object.keys(REPORT.itemLedger||{}).length : 0;
+  const tabs = el("div",{class:"dock-tabs"},
+    [["resources","resources",ledger],["machines","machines",REPORT?(REPORT.nodeIds||[]).length:0],["bottlenecks","bottlenecks",REPORT?(REPORT.bottlenecks||[]).length:0]]
+      .map(([k,lbl,n])=>el("button",{class:DOCK.tab===k?"on":"",onclick:()=>setDock({tab:k})}, lbl, el("span",{class:"n"},String(n)))));
+  const unit = el("span",{class:"seg",title:"material rates per second / minute / hour (energy stays EU/t)"},
+    ["s","min","h"].map(u=>el("button",{class:DOCK.unit===u?"on":"",onclick:()=>setDock({unit:u})},"/"+u)));
+  dock.append(el("div",{class:"dock-bar"},
+    el("span",{class:"dock-title"},"▤ Balance sheet"), el("span",{class:"dock-scope"},scopeLabel()),
+    tabs, STALE? el("span",{class:"dock-stale"},"● out of date — press Run") : null,
+    el("span",{class:"dock-spacer"}),
+    unit,
+    el("button",{class:"dock-btn",title:"copy the filtered table (tab-separated, pastes into a spreadsheet)",onclick:copySheet},"⧉ copy"),
+    el("button",{class:"dock-btn",title:"download the filtered table as CSV",onclick:downloadCsv},"⤓ csv"),
+    el("button",{class:"dock-btn"+(DOCK.max?" on":""),title:DOCK.max?"restore height":"maximize",onclick:()=>setDock({max:!DOCK.max})},DOCK.max?"▾":"▴"),
+    el("button",{class:"dock-btn",title:"close (B)",onclick:()=>setDock({open:false})},"✕")));
+  if(!REPORT){
+    dock.append(el("div",{class:"dock-body"}, el("div",{class:"dock-empty"},
+      SCOPE==="node"||SCOPE==="process"? "select a machine to see its "+SCOPE+"'s balance" : SCOPE==="system"? "select a system" : "press Run to fill the balance sheet")));
+    return;
+  }
+  if(DOCK.tab==="machines") buildMachines(dock);
+  else if(DOCK.tab==="bottlenecks") buildBottlenecks(dock);
+  else buildResources(dock);
+}
+function searchBox(key, placeholder){
+  const inp = el("input",{class:"field-input mono",type:"text",placeholder,value:DOCK[key],spellcheck:"false",autocomplete:"off","data-fk":"dock-"+key,
+    oninput:e=>{ DOCK[key]=e.target.value; e.target.defaultValue=e.target.value; saveDock(); renderDock(true); },
+    onkeydown:e=>{ if(e.key==="Escape"){ e.stopPropagation(); if(DOCK[key]){ DOCK[key]=""; saveDock(); renderDock(true); } else e.target.blur(); } }});
+  return inp;
+}
+function headRow(cols, tab, hidden){
+  const st = DOCK.sort[tab]||{};
+  return el("tr",null, cols.filter(c=>!hidden.includes(c.k)).map(c=>el("th",{class:(c.l?"l ":"")+(st.key===c.k?"sorted":""),title:c.title||"sort",
+    onclick:()=>sortBy(tab, c.k, cols)}, c.h, st.key===c.k? (st.dir>0?" ▲":" ▼") : "")));
+}
+function numTd(cat, v, cls){
+  const txt = fmtCell(cat, v);
+  return el("td",{class:txt==="·"? "zero" : (cls||""), title: v==null? "" : String(clean(inUnit(cat,v)))+" "+unitLabel(cat)}, txt);
+}
+function buildResources(dock){
+  const {all, base, rows} = filteredResources();
+  const tools = el("div",{class:"dock-tools"});
+  tools.append(searchBox("q","search resources…"));
+  for(const c of ["solid","liquid","energy"]){
+    const on = DOCK.cats.includes(c);
+    tools.append(el("button",{class:"fchip"+(on?" on":""),title:"show "+c,
+      onclick:()=>setDock({cats: on? DOCK.cats.filter(x=>x!==c) : [...DOCK.cats, c]})},
+      el("span",{class:"dot",style:{background:catColor(c)}}), c, el("span",{class:"n"}, String(all.filter(r=>r.cat===c).length))));
+  }
+  tools.append(el("span",{style:{width:"6px"}}));
+  for(const [k,lbl,f] of RES_VIEWS){
+    tools.append(el("button",{class:"fchip"+(DOCK.view===k?" on":""),onclick:()=>setDock({view:k})}, lbl, el("span",{class:"n"}, String(base.filter(f).length))));
+  }
+  tools.append(el("span",{class:"dock-spacer"}));
+  tools.append(columnMenu());
+  dock.append(tools);
+  const hidden = DOCK.hidden||[];
+  const cols = RES_COLS.filter(c=>!hidden.includes(c.k));
+  const body = el("div",{class:"dock-body","data-sk":"dock-resources"});
+  if(!rows.length){ body.append(el("div",{class:"dock-empty"}, all.length? "no resource matches these filters" : "nothing flows in this scope")); }
+  else{
+    const tb = el("tbody");
+    for(const r of rows){
+      const open = DOCK_OPEN_ROWS.has(r.itemId);
+      const seld = SEL && SEL.kind==="item" && SEL.id===r.itemId;
+      const tr = el("tr",{class:"row"+(open?" open":"")+(seld?" selected":""),"data-item":r.itemId,
+        onclick:()=>{ if(open) DOCK_OPEN_ROWS.delete(r.itemId); else DOCK_OPEN_ROWS.add(r.itemId); renderDock(true); },
+        onmouseenter:()=>highlightNodes(r.producers.map(p=>p.nodeId), r.consumers.map(c=>c.nodeId)),
+        onmouseleave:()=>highlightNodes()});
+      for(const c of cols) tr.append(resCell(c.k, r, open));
+      tb.append(tr);
+      if(open) tb.append(el("tr",{class:"detail"}, el("td",{colspan:String(cols.length)}, resourceDetail(r))));
+    }
+    body.append(el("table",{class:"sheet"}, el("thead",null, headRow(RES_COLS,"resources",hidden)), tb));
+  }
+  dock.append(body);
+  dock.append(el("div",{class:"dock-foot"},
+    el("span",null, `showing ${rows.length} of ${all.length}`),
+    el("span",null, "click a row for makers & users · hover to outline them on the canvas · click a header to sort")));
+}
+function resCell(k, r, open){
+  const c = r.cat;
+  switch(k){
+    case "name": return el("td",{class:"l"}, el("div",{class:"rname"},
+      el("span",{class:"caret"+(open?" open":"")},"▸"),
+      el("span",{class:"dot",style:{background:r.tag?"var(--ink-faint)":catColor(c)}}),
+      el("span",{class:"nm"}, (r.tag?"# ":"")+r.name), el("span",{class:"id"}, r.itemId)));
+    case "unit": return el("td",{class:"l zero"}, unitLabel(c));
+    case "made": return numTd(c, r.produced);
+    case "used": return numTd(c, r.consumed);
+    case "net": return numTd(c, r.net, r.net>EPS? "blue" : r.net< -EPS? "warn" : "");
+    case "need": return numTd(c, r.demand);
+    case "cap": return numTd(c, r.capacity);
+    case "missing": return numTd(c, r.missing, "warn");
+    case "in": return numTd(c, r.feedstock);
+    case "out": return numTd(c, r.yield, "blue");
+    case "short": return numTd(c, r.shortfall, "bad");
+    case "makers": return el("td",{class:r.makers?"":"zero"}, String(r.makers||"·"));
+    case "users": return el("td",{class:r.users?"":"zero"}, String(r.users||"·"));
+    case "cover": {
+      if(r.cover==null) return el("td",{class:"zero"},"—");
+      const pct = Math.round(r.cover*100);
+      const col = r.cover>=0.999? "var(--s-ref)" : r.cover>0? "var(--s-learn)" : "var(--s-bad)";
+      return el("td",{title:pct+"% of the full-rate need is supplied"}, el("span",{class:"cover"}, el("i",{style:{width:(r.cover*100)+"%",background:col}})), " "+pct+"%");
+    }
+    case "state": return el("td",{class:"l"}, r.flags.length? r.flags.map(f=>el("span",{class:"flag "+f}, {short:"short",in:"imported",out:"product"}[f])) : el("span",{class:"flag ok"}, r.internal?"balanced":"—"));
+  }
+  return el("td");
+}
+function resourceDetail(r){
+  const c=r.cat;
+  const pick = nid => { select("node", nid); revealOnCanvas("node", nid); };
+  const makers = el("div",{class:"det-list"}, r.producers.length? r.producers.map(p=>{
+      const d = p.capacity>EPS? p.rate/p.capacity : 1;
+      return el("div",{class:"det-row",title:"select on the canvas",onclick:e=>{ e.stopPropagation(); pick(p.nodeId); }},
+        el("span",{class:"who"}, nodeLabel(p.nodeId), el("span",{class:"id"}, p.nodeId+(p.itemId?" · makes "+itemLabel(p.itemId):""))),
+        el("span",null, fmtCell(c,p.rate)+" "+unitLabel(c)),
+        el("span",{style:{color:"var(--ink-faint)"}}, Math.round(d*100)+"% of "+fmtCell(c,p.capacity)));
+    }) : el("div",{class:"ro-empty"}, r.feedstock>EPS? "no maker in scope — fed in as feedstock" : "no maker in scope"));
+  const users = el("div",{class:"det-list"}, r.consumers.length? r.consumers.map(u=>
+      el("div",{class:"det-row",title:"select on the canvas",onclick:e=>{ e.stopPropagation(); pick(u.nodeId); }},
+        el("span",{class:"who"}, nodeLabel(u.nodeId), el("span",{class:"id"}, u.nodeId)),
+        el("span",null, fmtCell(c,u.rate)+" / "+fmtCell(c,u.demand)+" "+unitLabel(c)),
+        u.shortfall? el("span",{class:"bad"}, "short "+fmtCell(c,u.shortfall)) : el("span",{style:{color:"var(--ink-faint)"}},"full"))
+    ) : el("div",{class:"ro-empty"}, r.yield>EPS? "no user in scope — leaves as yield" : "no user in scope"));
+  const ids = [...r.producers.map(p=>p.nodeId), ...r.consumers.map(u=>u.nodeId)];
+  return el("div",{onclick:e=>e.stopPropagation()},
+    el("div",{class:"det"},
+      el("div",null, el("h4",null, `made by (${r.producers.length})`, el("span",null, fmtCell(c,r.produced)+" of "+fmtCell(c,r.capacity)+" "+unitLabel(c))), makers),
+      el("div",null, el("h4",null, `used by (${r.consumers.length})`, el("span",null, fmtCell(c,r.consumed)+" of "+fmtCell(c,r.demand)+" "+unitLabel(c))), users)),
+    el("div",{class:"det-actions"},
+      BY.items[r.itemId]? el("button",{class:"dock-btn",onclick:()=>select("item", r.itemId)},"inspect item") : null,
+      ids.length? el("button",{class:"dock-btn",onclick:()=>frameNodes(ids)},"⌖ frame on canvas") : null,
+      el("button",{class:"dock-btn",onclick:()=>{ DOCK_OPEN_ROWS.delete(r.itemId); renderDock(true); }},"collapse")));
+}
+let COLMENU_OPEN=false;
+function columnMenu(){
+  const wrap = el("span",{style:{position:"relative"}});
+  wrap.append(el("button",{class:"dock-btn"+(COLMENU_OPEN?" on":""),onclick:()=>{ COLMENU_OPEN=!COLMENU_OPEN; renderDock(true); }},"columns ▾"));
+  if(COLMENU_OPEN){
+    const hidden = DOCK.hidden||[];
+    const pop = el("div",{class:"combo-pop up",style:{left:"auto",right:"0",width:"200px",padding:"4px 0"}});
+    for(const c of RES_COLS){
+      if(c.k==="name") continue;
+      pop.append(el("label",{class:"combo-opt"}, el("input",{type:"checkbox",checked:!hidden.includes(c.k),
+        onchange:e=>setDock({hidden: e.target.checked? hidden.filter(x=>x!==c.k) : [...hidden, c.k]})}), c.h));
+    }
+    pop.append(el("div",{class:"combo-opt",onclick:()=>setDock({hidden:[]})},"show all"));
+    wrap.append(pop);
+  }
+  return wrap;
+}
+function buildMachines(dock){
+  const {all, base, rows} = filteredMachines();
+  const tools = el("div",{class:"dock-tools"}, searchBox("mq","search machines, recipes, items…"));
+  for(const [k,lbl,f] of MACH_VIEWS) tools.append(el("button",{class:"fchip"+(DOCK.mview===k?" on":""),onclick:()=>setDock({mview:k})}, lbl, el("span",{class:"n"}, String(base.filter(f).length))));
+  dock.append(tools);
+  const body = el("div",{class:"dock-body","data-sk":"dock-machines"});
+  if(!rows.length) body.append(el("div",{class:"dock-empty"}, all.length? "no machine matches" : "no machines in this scope"));
+  else{
+    const tb = el("tbody");
+    for(const m of rows){
+      const seld = SEL && SEL.kind==="node" && SEL.id===m.nid;
+      tb.append(el("tr",{class:"row"+(seld?" selected":""),"data-node":m.nid,title:"select on the canvas",
+        onclick:()=>{ select("node", m.nid); revealOnCanvas("node", m.nid); },
+        onmouseenter:()=>highlightNodes([m.nid],[]), onmouseleave:()=>highlightNodes()},
+        el("td",{class:"l"}, el("span",{style:{color:"var(--ink)"}}, m.name)),
+        el("td",{class:"l zero"}, m.nid),
+        el("td",{class:m.duty<0.999?(m.duty<=EPS?"bad":"warn"):"good"}, Math.round(m.duty*100)+"%"),
+        el("td",{class:"l"}, el("span",{class:"flag "+m.status}, {ok:"full",throttled:"throttled",stalled:"stalled"}[m.status]||m.status)),
+        el("td",{class:"l",title:m.recipes.join("\n")}, m.recipes.length>2? m.recipes.slice(0,2).join(", ")+` +${m.recipes.length-2}` : m.recipes.join(", ")||"—"),
+        el("td",{class:"l bad"}, m.limits.map(itemLabel).join(", ")),
+        el("td",{class:"l",title:m.makes.map(itemLabel).join("\n")}, m.makes.slice(0,3).map(itemLabel).join(", ")+(m.makes.length>3?` +${m.makes.length-3}`:""))));
+    }
+    body.append(el("table",{class:"sheet"}, el("thead",null, headRow(MACH_COLS,"machines",[])), tb));
+  }
+  dock.append(body);
+  dock.append(el("div",{class:"dock-foot"}, el("span",null, `showing ${rows.length} of ${all.length}`), el("span",null,"click a machine to select it on the canvas")));
+}
+function buildBottlenecks(dock){
+  const {all, rows} = filteredBottlenecks();
+  dock.append(el("div",{class:"dock-tools"}, searchBox("bq","search machines or items…")));
+  const body = el("div",{class:"dock-body","data-sk":"dock-bottlenecks"});
+  if(!rows.length) body.append(el("div",{class:"dock-empty"}, all.length? "no bottleneck matches" : "no bottlenecks — every machine gets what it needs"));
+  else{
+    const tb = el("tbody");
+    for(const b of rows){
+      tb.append(el("tr",{class:"row",title:"select on the canvas",onclick:()=>{ select("node", b.nid); revealOnCanvas("node", b.nid); },
+        onmouseenter:()=>highlightNodes([],[b.nid]), onmouseleave:()=>highlightNodes()},
+        el("td",null, String(b.rank)),
+        el("td",{class:"l"}, el("span",{style:{color:"var(--ink)"}}, b.name)),
+        el("td",{class:"l zero"}, b.nid),
+        el("td",{class:"l"}, el("span",{class:"bneck",style:{textDecoration:"underline dotted"},title:"show in resources",
+          onclick:e=>{ e.stopPropagation(); openDock({focus:b.item}); }}, b.itemName)),
+        numTd(b.cat, b.short, "bad"),
+        numTd(b.cat, b.need),
+        el("td",{class:"warn"}, b.pct==null?"—":Math.round(b.pct*100)+"%")));
+    }
+    body.append(el("table",{class:"sheet"}, el("thead",null, headRow(BN_COLS,"bottlenecks",[])), tb));
+  }
+  dock.append(body);
+  dock.append(el("div",{class:"dock-foot"}, el("span",null, `${rows.length} limiting shortfalls`)));
+}
+function startDockResize(e){
+  e.preventDefault();
+  const dock=$("#dock"), stage=$("#stage");
+  const y0=e.clientY, h0=dock.offsetHeight, max=stage.clientHeight-40;
+  const move=ev=>{ const h=Math.max(150, Math.min(max, h0+(y0-ev.clientY))); dock.style.height=h+"px"; stage.style.setProperty("--dock-h", h+"px"); };
+  const up=()=>{ window.removeEventListener("pointermove",move); DOCK.h=dock.offsetHeight; DOCK.max=false; saveDock(); renderDock(true); };
+  window.addEventListener("pointermove",move);
+  window.addEventListener("pointerup",up,{once:true});
 }
 
 /* ============================================================================
@@ -1349,12 +2175,25 @@ function renderInspector(){
   let insp=$("#inspector");
   if(!SEL){ if(insp) insp.remove(); return; }
   if(!insp){ insp=el("aside",{class:"inspector",id:"inspector"}); $("#app").append(insp); }
+  // Re-rendering the same entity (after an edit) keeps the scroll position, focus,
+  // caret and any half-typed value; selecting a different entity starts at the top.
+  const selKey=SEL.kind+":"+SEL.id;
+  const same = insp.dataset.sel===selKey;
+  insp.dataset.sel=selKey;
+  preserving(insp, ()=>buildInspector(insp), same);
+  if(!same && FOCUS_NEXT){
+    const t=insp.querySelector(FOCUS_NEXT); FOCUS_NEXT=null;
+    if(t){ t.focus({preventScroll:true}); if(t.select) t.select(); }
+  }
+}
+let FOCUS_NEXT=null;   // a selector to focus in the next freshly-selected inspector
+function buildInspector(insp){
   insp.textContent="";
   const kindLabel={item:"Item",recipe:"Recipe",machineDef:"Machine def",node:"Machine node",pipe:"Pipe",pipeNode:"Pipe junction",system:"System"}[SEL.kind];
   insp.append(el("div",{class:"insp-head"},
     el("div",null, el("span",{class:"eyebrow"},kindLabel), el("div",{class:"insp-id mono"}, selTitle())),
     el("button",{class:"insp-x",title:"Close",onclick:clearSel},"×")));
-  const body=el("div",{class:"insp-body"});
+  const body=el("div",{class:"insp-body","data-sk":"insp"});
   insp.append(body);
   const ent = currentEntity();
   if(!ent){ body.append(el("div",{class:"stack-empty"},"(gone)")); return; }
@@ -1372,39 +2211,126 @@ function currentEntity(){
 }
 
 /* save an entity edit + optional rename */
-function saveEntity(kind, entity){ applyEdits([upsert(kind,entity)]); }
-function renameAndSave(kind, oldId, newId){
-  if(!newId||oldId===newId) return;
-  const taken=idsOfKind(kind); if(taken.has(newId)){ toast("id already exists",true); return; }
-  const w=renameEntity(WORLD, kind, oldId, newId);
-  if(SEL&&SEL.kind===kind&&SEL.id===oldId) SEL={kind,id:newId};
-  replaceWorld(w);
+// An inspector edit hands over the whole entity it built from what it rendered.
+// Only the fields it actually changed are sent: they are diffed against the entity
+// as rendered and re-applied onto the entity as it stands when the queued edit runs,
+// so a second edit made before the first returned can't overwrite it.
+function saveEntity(kind, entity){
+  const base = findEntity(kind, entity.id);
+  if(!base) return applyEdits([upsert(kind, entity)]);
+  const patch = diffPatch(base, entity);
+  if(!patch.length) return Promise.resolve();
+  return applyEdits(()=>{
+    const latest = findEntity(kind, entity.id);
+    return [upsert(kind, latest? applyPatch(latest, patch) : entity)];
+  });
+}
+function renameAndSave(kind, oldId, rawId){
+  const newId = rawId==null? "" : slugify(rawId);
+  if(!String(rawId||"").trim()){ toast("id is required",true); return false; }
+  if(oldId===newId) return true;
+  const taken=idsOfKind(kind); if(taken.has(newId)){ toast(`id "${newId}" already exists`,true); return false; }
+  replaceWorld(()=>{
+    if(SEL&&SEL.kind===kind&&SEL.id===oldId){
+      SEL={kind,id:newId};
+      const insp=$("#inspector"); if(insp) insp.dataset.sel=kind+":"+newId;   // same entity: keep scroll
+    }
+    return renameEntity(WORLD, kind, oldId, newId);
+  });
+  return true;
 }
 
 /* ---- field kit ---- */
 function field(label, control, hint, unit){
-  const f=el("div",{class:"field"});
+  const f=el("div",{class:"field","data-fk":label});
   f.append(el("span",{class:"field-label mono"}, label, unit?el("span",{class:"field-unit"},unit):null, typeof control==="object"&&control._labelExtra?control._labelExtra:null));
   f.append(control);
   if(hint) f.append(el("span",{class:"field-hint"},hint));
   return f;
 }
-// Inspector inputs commit on `change` (blur / Enter), not per-keystroke: a
-// keystroke that called onChange would saveEntity → renderAll → rebuild the
-// inspector, destroying the very <input> being typed in and dropping focus +
-// caret. Committing on change lets the user type a whole value first. (Live
-// filter boxes — the rail/recipe search — keep their own oninput handlers; they
-// only re-render a sub-list, not the input itself.)
-function textInput(value,onChange,placeholder){
-  return el("input",{class:"field-input",type:"text",value:value||"",placeholder:placeholder||"",
-    onchange:e=>onChange(e.target.value)});
+// Inspector inputs commit on blur / Enter, not per keystroke: a keystroke that
+// saved would rebuild the inspector under the user mid-word. A commit happens only
+// when the text differs from what was rendered (defaultValue); Escape reverts the
+// field and leaves it. A commit callback returning false rejects the text: the
+// field reverts, flashes invalid, and the reason is toasted. (Live filter boxes —
+// the rail search, combobox queries — keep their own oninput handlers.)
+function bindCommit(inp, commit){
+  const doCommit=()=>{
+    if(RENDERING) return;                       // torn down by a re-render, not left by the user
+    if(inp.value===inp.defaultValue) return;
+    const ok=commit(inp.value);
+    if(ok===false){ inp.value=inp.defaultValue; flagInvalid(inp); }
+    else inp.defaultValue=inp.value;            // committed: blur after Enter is a no-op
+  };
+  inp.addEventListener("keydown",e=>{
+    if(e.key==="Enter" && inp.tagName!=="TEXTAREA"){ e.preventDefault(); doCommit(); }
+    else if(e.key==="Escape"){ e.stopPropagation(); inp.value=inp.defaultValue; inp.blur(); }
+  });
+  inp.addEventListener("blur",doCommit);
+  return inp;
 }
+function flagInvalid(inp){
+  inp.classList.remove("invalid"); void inp.offsetWidth; inp.classList.add("invalid");
+  setTimeout(()=>inp.classList.remove("invalid"), 1600);
+}
+function textInput(value,onChange,placeholder,{required=false,label="value"}={}){
+  const inp=el("input",{class:"field-input",type:"text",value:value||"",placeholder:placeholder||""});
+  return bindCommit(inp, raw=>{
+    if(required && raw.trim()===""){ toast(label+" is required",true); return false; }
+    return onChange(raw);
+  });
+}
+// Numbers render as clean decimals: unit conversions (EU/s ↔ EU/t) must not leak
+// float noise like 1.1000000000000003 into a field.
+const clean = v => (typeof v==="number" && Number.isFinite(v))? Number(v.toPrecision(12)) : v;
+const fmtNum = v => v==null||v===""? "" : String(clean(Number(v)));
+function parseNumber(raw){
+  let s=String(raw).trim().replace(/[\s_]/g,"");
+  if(s==="") return {empty:true};
+  if(/^[-+]?\d*,\d+$/.test(s)) s=s.replace(",",".");    // a decimal comma (1,5)
+  const n=Number(s);
+  if(!Number.isFinite(n) || /^[-+]?$/.test(s)) return {error:`"${String(raw).trim()}" is not a number`};
+  return {value:n};
+}
+// Numeric fields are text inputs parsed here, not <input type=number>: a number
+// input reports "" for partial entries such as "0." or "-", silently steps its value
+// under the mouse wheel, ignores min/max on typed values, and rejects a decimal
+// comma. Rules: `min`/`max` inclusive, `gt` exclusive lower bound, `integer`, and
+// emptiness → `onClear` (optional field: unset) or rejection ("required").
 function numberInput(value,onChange,opts){
   opts=opts||{};
-  const inp=el("input",{class:"field-input",type:"number",value:value==null?"":value,
-    min:opts.min, max:opts.max, step:opts.step||"any",
-    onchange:e=>{ const v=e.target.value; if(v==="") return; const n=Number(v); if(!Number.isNaN(n)) onChange(n); }});
-  return inp;
+  const inp=el("input",{class:"field-input num",type:"text",value:fmtNum(value),
+    inputmode:(opts.min!=null&&opts.min>=0)||opts.gt!=null? "decimal" : "text",
+    spellcheck:"false", autocomplete:"off", placeholder:opts.placeholder||""});
+  const check=v=>{
+    if(opts.integer && !Number.isInteger(v)) return "must be a whole number";
+    if(opts.gt!=null && !(v>opts.gt)) return "must be greater than "+opts.gt;
+    if(opts.min!=null && v<opts.min) return "must be at least "+opts.min;
+    if(opts.max!=null && v>opts.max) return "must be at most "+opts.max;
+    return null;
+  };
+  // ArrowUp / ArrowDown step the value like a spinner (committed on blur / Enter).
+  inp.addEventListener("keydown",e=>{
+    if(e.key!=="ArrowUp" && e.key!=="ArrowDown") return;
+    e.preventDefault();
+    const p=parseNumber(inp.value); const step=Number(opts.step)||1;
+    let v=(p.value!=null? p.value : 0) + (e.key==="ArrowUp"? step : -step);
+    if(opts.min!=null) v=Math.max(opts.min, v);
+    if(opts.max!=null) v=Math.min(opts.max, v);
+    inp.value=fmtNum(v);
+  });
+  return bindCommit(inp, raw=>{
+    const p=parseNumber(raw);
+    const what=opts.label||"value";
+    if(p.empty){
+      if(opts.onClear){ opts.onClear(); return; }
+      toast(what+" is required",true); return false;
+    }
+    if(p.error){ toast(p.error,true); return false; }
+    const bad=check(p.value);
+    if(bad){ toast(what+" "+bad,true); return false; }
+    onChange(clean(p.value));
+  });
 }
 function selectInput(value,options,onChange){
   const s=el("select",{class:"field-input",onchange:e=>onChange(e.target.value)});
@@ -1418,12 +2344,13 @@ function checkbox(checked,onChange,label){
   if(checked) row.querySelector("input").checked=true;
   return row;
 }
-function optionalNumber(label, value, {onSet,onClear,fallback=0,min,max,step,unit,hint}){
+function optionalNumber(label, value, {onSet,onClear,fallback=0,min,max,gt,integer,step,unit,hint}){
   if(value==null){
     return field(label,
       el("button",{class:"set-btn",onclick:()=>onSet(fallback)}, "+ set"), hint, unit);
   }
-  const ctrl=numberInput(value,onSet,{min,max,step});
+  // Optional: clearing the field unsets it (same as the "unset" button).
+  const ctrl=numberInput(value,onSet,{min,max,gt,integer,step,onClear,label});
   const f=field(label, ctrl, hint, unit);
   f.querySelector(".field-label").append(el("button",{class:"clear-btn",title:"Unset",onclick:onClear},"unset"));
   return f;
@@ -1443,12 +2370,15 @@ function combo(value, options, onChange, placeholder, opts){
   opts=opts||{};
   const byVal=new Map(options.map(o=>[o.value,o]));
   const cur=byVal.get(value);
-  const wrap=el("div",{class:"combo"});
+  // keyed by its placeholder so focus finds it again after chips are added above it
+  const wrap=el("div",{class:"combo","data-fk":"combo:"+(opts.key||placeholder||"")});
+  const shown = cur? cur.label : (value? String(value) : "");
   const input=el("input",{class:"field-input mono",type:"text",placeholder:placeholder||"",
-    value: cur? (cur.label):""});
-  const pop=el("div",{class:"combo-pop",style:{display:"none"}});
+    value: shown, spellcheck:"false", autocomplete:"off"});
+  input._comboInput=true;
+  const pop=el("div",{class:"combo-pop",style:{display:"none"},"data-sk":"combo"});
   wrap.append(input,pop);
-  let active=-1, filtered=options;
+  let active=-1, filtered=options, picked=false;
   function render(q){
     pop.textContent="";
     const ql=(q||"").toLowerCase();
@@ -1463,18 +2393,61 @@ function combo(value, options, onChange, placeholder, opts){
       pop.append(row);
     });
   }
-  function open(){ render(""); pop.style.display=""; }
+  const isOpen=()=>pop.style.display!=="none";
+  // Open downward unless that would run off the bottom of the panel/window the
+  // combobox sits in (it was clipped below the inspector's last field) — then up.
+  function place(){
+    pop.classList.remove("up");
+    let clip=window.innerHeight, top=0;
+    for(let a=wrap.parentElement; a; a=a.parentElement){
+      const o=getComputedStyle(a).overflowY;
+      if(o==="auto"||o==="scroll"||o==="hidden"){ const r=a.getBoundingClientRect(); clip=Math.min(clip,r.bottom); top=Math.max(top,r.top); break; }
+    }
+    const r=input.getBoundingClientRect(), need=Math.min(240, pop.scrollHeight||240);
+    if(clip-r.bottom < need+6 && r.top-top > clip-r.bottom) pop.classList.add("up");
+  }
+  function open(){ render(""); pop.style.display=""; place(); }
   function close(){ pop.style.display="none"; active=-1; }
-  function pick(o){ onChange(o.value); if(opts.clearOnPick){ input.value=""; } else { input.value=o.label; } close(); input.blur(); }
-  input.addEventListener("focus",()=>{ input.select?input.select():0; open(); });
-  input.addEventListener("input",()=>{ active=-1; render(input.value); pop.style.display=""; });
-  input.addEventListener("keydown",e=>{
-    if(e.key==="ArrowDown"){ e.preventDefault(); active=Math.min(filtered.length-1,active+1); render(input.value); }
-    else if(e.key==="ArrowUp"){ e.preventDefault(); active=Math.max(0,active-1); render(input.value); }
-    else if(e.key==="Enter"){ if(filtered[active]) { e.preventDefault(); pick(filtered[active]); } }
-    else if(e.key==="Escape"){ close(); }
+  // The field always shows the current value's label unless a pick was made: text
+  // typed to search and then abandoned must not linger as if it were the value.
+  function revert(){ input.value=shown; input.defaultValue=shown; }
+  function pick(o){
+    picked=true;
+    if(opts.clearOnPick){ input.value=""; } else { input.value=o.label; }
+    input.defaultValue=input.value;
+    close();
+    // An "add another" combobox (members, allowed recipes, the palette) keeps the
+    // caret so the next one can be typed straight away; a value picker is done.
+    if(!opts.clearOnPick) input.blur();
+    onChange(o.value);
+  }
+  function scrollActive(){ const a=pop.querySelector(".combo-opt.active"); if(a&&a.scrollIntoView) a.scrollIntoView({block:"nearest"}); }
+  input.addEventListener("focus",()=>{
+    if(input._restoring) return;           // focus restored after a re-render: stay closed
+    picked=false; try{ input.select(); }catch(e){} open();
   });
-  input.addEventListener("blur",()=>setTimeout(close,120));
+  input.addEventListener("input",()=>{ picked=false; active=-1; render(input.value); if(!isOpen()){ pop.style.display=""; place(); } });
+  input.addEventListener("keydown",e=>{
+    if(e.key==="ArrowDown"){ e.preventDefault(); if(!isOpen()){ open(); } active=Math.min(Math.min(filtered.length,200)-1,active+1); render(input.value); scrollActive(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); active=Math.max(0,active-1); render(input.value); scrollActive(); }
+    else if(e.key==="Enter"){
+      e.preventDefault();
+      // Enter takes the highlighted option, else the first match of what was typed.
+      const o = filtered[active] || (input.value.trim() && filtered.length? filtered[0] : null);
+      if(o && isOpen()) pick(o);
+    }
+    else if(e.key==="Escape"){
+      // Escape belongs to the combobox: close the list / abandon the search, never
+      // close the inspector behind it.
+      e.stopPropagation(); e.preventDefault();
+      if(isOpen()){ close(); revert(); } else { revert(); input.blur(); }
+    }
+    else if(e.key==="Tab"){ close(); }
+  });
+  input.addEventListener("blur",()=>setTimeout(()=>{
+    if(RENDERING) return;
+    close(); if(!picked) revert();
+  },120));
   return wrap;
 }
 function itemOptions(items){ return items.map(i=>({value:i.id,label:(i.isTag?"# ":"")+(i.name||i.id),dot:i.isTag?"var(--ink-faint)":catColor(i.category)})); }
@@ -1482,8 +2455,15 @@ function itemOptions(items){ return items.map(i=>({value:i.id,label:(i.isTag?"# 
 /* ---- id editor (rename) ---- */
 function idEditor(kind, entity){
   const wrap=el("div",{class:"inline-row"});
-  const inp=el("input",{class:"field-input mono",type:"text",value:entity.id});
-  const btn=el("button",{class:"tool-btn",title:"Rename id everywhere",onclick:()=>renameAndSave(kind, entity.id, slugify(inp.value))},"↻ name");
+  const inp=el("input",{class:"field-input mono",type:"text",value:entity.id,spellcheck:"false",autocomplete:"off"});
+  // Enter renames; leaving the field without pressing Enter / the button keeps the
+  // old id (a rename rewrites references everywhere, so it is never implicit).
+  const go=()=>{ if(renameAndSave(kind, entity.id, inp.value)===false){ inp.value=entity.id; flagInvalid(inp); } };
+  inp.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){ e.preventDefault(); go(); }
+    else if(e.key==="Escape"){ e.stopPropagation(); inp.value=entity.id; inp.blur(); }
+  });
+  const btn=el("button",{class:"tool-btn",title:"Rename id everywhere",onclick:go},"↻ name");
   wrap.append(inp,btn);
   return wrap;
 }
@@ -1492,13 +2472,13 @@ function idEditor(kind, entity){
 const CAT_OPTS=[{value:"solid",label:"solid"},{value:"liquid",label:"liquid"},{value:"energy",label:"energy"}];
 function itemInspector(body, it){
   body.append(field("id", idEditor("item",it), "derived from the name; edit to rename everywhere"));
-  body.append(field("name", textInput(it.name, v=>saveEntity("item", withField(it,"name",v)))));
+  body.append(field("name", textInput(it.name, v=>saveEntity("item", withField(it,"name",v.trim())), "", {required:true,label:"name"})));
   body.append(field("category", selectInput(it.category, CAT_OPTS, v=>saveEntity("item", withField(it,"category",v)))));
   body.append(optional("fuel energy (eu)", it.eu!=null, {
     onAdd:()=>saveEntity("item", withField(it,"eu",1000)),
     onClear:()=>saveEntity("item", withoutField(it,"eu")),
     hint:"stored EU per unit; set only for fuels",
-    child:numberInput(it.eu, v=>saveEntity("item", withField(it,"eu",v)), {min:0})
+    child:numberInput(it.eu, v=>saveEntity("item", withField(it,"eu",v)), {min:0,label:"fuel energy",onClear:()=>saveEntity("item", withoutField(it,"eu"))})
   }));
   body.append(optional("tag resource", !!it.isTag, {
     onAdd:()=>saveEntity("item", withField(it,"isTag",true)),
@@ -1523,7 +2503,7 @@ function tagMembersEditor(it){
 function recipeInspector(body, r){
   body.append(field("id", idEditor("recipe",r), "derived from the name"));
   body.append(field("name", textInput(r.name, v=>saveEntity("recipe", v.trim()===""?withoutField(r,"name"):withField(r,"name",v)), "(unnamed)")));
-  body.append(field("cycle time", numberInput(r.timeSeconds, v=>saveEntity("recipe", withField(r,"timeSeconds",v)), {min:0,step:0.05}), null, "s"));
+  body.append(field("cycle time", numberInput(r.timeSeconds, v=>saveEntity("recipe", withField(r,"timeSeconds",v)), {gt:0,step:0.05,label:"cycle time"}), null, "s"));
   body.append(optionalNumber("energy draw", r.euPerTick, {
     onSet:v=>saveEntity("recipe", withField(r,"euPerTick",v)),
     onClear:()=>saveEntity("recipe", withoutField(r,"euPerTick")),
@@ -1545,7 +2525,7 @@ function stackListEditor(label, r, key){
   const setRows=next=>saveEntity("recipe", withField(r,key,next));
   rows.forEach((s,i)=>{
     const resId=s.itemId!=null?s.itemId:(s.tag!=null?s.tag:"");
-    const row=el("div",{class:"slot-group"});
+    const row=el("div",{class:"slot-group","data-fk":key+"["+i+"]"});
     row.append(el("div",{class:"slot-row"},
       combo(resId, itemOptions(WORLD.items||[]), id=>{
         const it=BY.items[id];
@@ -1556,12 +2536,18 @@ function stackListEditor(label, r, key){
       el("button",{class:"row-del",onclick:()=>setRows(rows.filter((_,j)=>j!==i))},"×")));
     row.append(el("div",{class:"slot-row"},
       el("span",{class:"slot-x mono"},"qty"),
-      numberInput(s.quantity, v=>setRows(rows.map((x,j)=>j===i?{...x,quantity:v}:x)), {min:0,step:0.5}),
-      el("span",{class:"slot-x mono"},"prob"),
-      numberInput(s.probability==null?"":s.probability, v=>setRows(rows.map((x,j)=>j===i?{...x,probability:v}:x)), {min:0,max:1,step:0.05})));
+      numberInput(s.quantity, v=>setRows(rows.map((x,j)=>j===i?{...x,quantity:v}:x)), {gt:0,step:1,label:"quantity"}),
+      el("span",{class:"slot-x mono",title:"chance per cycle, 0–1; blank = always (0 = catalyst, not consumed)"},"prob"),
+      numberInput(s.probability, v=>setRows(rows.map((x,j)=>j===i?{...x,probability:v}:x)),
+        {min:0,max:1,step:0.05,label:"probability",placeholder:"always",
+         onClear:()=>setRows(rows.map((x,j)=>j===i?withoutField(x,"probability"):x))})));
     f.append(row);
   });
-  f.append(el("button",{class:"row-add",onclick:()=>setRows([...rows,{itemId:(WORLD.items&&WORLD.items[0]&&WORLD.items[0].id)||"",quantity:1}])}, "+ add "+label.replace(/s$/,"")));
+  f.append(el("button",{class:"row-add",onclick:()=>{
+    const first=WORLD.items&&WORLD.items[0];
+    if(!first){ toast("create an item first",true); return; }
+    setRows([...rows,{itemId:first.id,quantity:1}]);
+  }}, "+ add "+label.replace(/s$/,"")));
   return f;
 }
 
@@ -1605,7 +2591,7 @@ function defInspector(body, def){
     body.append(optionalNumber("max draw", def.maxEuPerTick, {
       onSet:v=>saveEntity("machineDef",withField(def,"maxEuPerTick",v)),
       onClear:()=>saveEntity("machineDef",withoutField(def,"maxEuPerTick")),
-      fallback:32,min:0,unit:"EU/t",hint:"ceiling — clamps overclock to what the tier can feed"}));
+      fallback:32,gt:0,unit:"EU/t",hint:"ceiling — clamps overclock to what the tier can feed"}));
   }
   if(source==="liquid"||source==="fuel"){
     body.append(field(source==="fuel"?"fuel":"source liquid", combo(def.sourceItemId||"", itemOptions(sourceItems), v=>saveEntity("machineDef",withField(def,"sourceItemId",v)), sourceItems.length?"consumed for energy…":"no matching items")));
@@ -1621,7 +2607,7 @@ function defInspector(body, def){
       if(def.inputItemId) body.append(optionalNumber("output per material", def.materialRatio, {
         onSet:v=>saveEntity("machineDef",withField(def,"materialRatio",v)),
         onClear:()=>saveEntity("machineDef",withoutField(def,"materialRatio")),
-        fallback:1,min:0,hint:"output units per unit of material; unset = 1:1"}));
+        fallback:1,gt:0,hint:"output units per unit of material; unset = 1:1"}));
       body.append(field("produces", combo(def.outputItemId||"", itemOptions(outputItems), v=>saveEntity("machineDef",withField(def,"outputItemId",v)), outputItems.length?"pick output…":"no liquid/energy items")));
       body.append(optionalNumber("output rate", def.maxFluidRate!=null?toPerTick(def.maxFluidRate):null, {
         onSet:v=>saveEntity("machineDef",withField(def,"maxFluidRate",toPerSecond(v))),
@@ -1646,7 +2632,7 @@ function defInspector(body, def){
   }, "this machine is a buffer")));
   if(def.storage){
     body.append(field("stores", selectInput(def.storage.category, CAT_OPTS, v=>saveEntity("machineDef",withField(def,"storage",{...def.storage,category:v})))));
-    body.append(field("capacity", numberInput(def.storage.capacity, v=>saveEntity("machineDef",withField(def,"storage",{...def.storage,capacity:v})), {min:0}), "per unit; parallel count multiplies it", UNIT_CAT[def.storage.category]));
+    body.append(field("capacity", numberInput(def.storage.capacity, v=>saveEntity("machineDef",withField(def,"storage",{...def.storage,capacity:v})), {min:0,label:"capacity"}), "per unit; parallel count multiplies it", UNIT_CAT[def.storage.category]));
   }
 
   body.append(allowedRecipesEditor(def));
@@ -1676,18 +2662,18 @@ function slotListEditor(def){
   const set=next=>saveEntity("machineDef", withField(def,"slots",next));
   rows.forEach((s,i)=>{
     const unit=UNIT_CAT[s.category], total=(s.slots||0)*(s.stackSize||0);
-    const g=el("div",{class:"slot-group"});
+    const g=el("div",{class:"slot-group","data-fk":"slot["+i+"]"});
     g.append(el("div",{class:"slot-row"},
       el("span",{class:"slot-cat-dot",style:{background:catColor(s.category)}}),
       selectInput(s.category, CAT_OPTS, v=>set(rows.map((x,j)=>j===i?{...x,category:v}:x))),
       selectInput(s.direction, DIR_OPTS, v=>set(rows.map((x,j)=>j===i?{...x,direction:v}:x))),
       el("button",{class:"row-del",onclick:()=>set(rows.filter((_,j)=>j!==i))},"×")));
     g.append(el("div",{class:"slot-row"},
-      numberInput(s.slots, v=>set(rows.map((x,j)=>j===i?{...x,slots:v}:x)), {min:0}),
+      numberInput(s.slots, v=>set(rows.map((x,j)=>j===i?{...x,slots:v}:x)), {min:0,integer:true,label:"slots"}),
       el("span",{class:"slot-x mono"},"slots ×"),
-      numberInput(s.stackSize, v=>set(rows.map((x,j)=>j===i?{...x,stackSize:v}:x)), {min:0}),
+      numberInput(s.stackSize, v=>set(rows.map((x,j)=>j===i?{...x,stackSize:v}:x)), {min:0,label:"stack size"}),
       el("span",{class:"slot-unit mono"},unit),
-      el("span",{class:"slot-total mono"},"= "+total+" "+unit)));
+      el("span",{class:"slot-total mono"},"= "+fmtNum(total)+" "+unit)));
     f.append(g);
   });
   f.append(el("button",{class:"row-add",onclick:()=>set([...rows,{category:"solid",direction:"in",slots:1,stackSize:64}])}, "+ add slot group"));
@@ -1725,7 +2711,8 @@ function nodeInspector(body, n){
     body.append(optionalNumber("overclock", n.overclock, {
       onSet:v=>saveEntity("node",withField(n,"overclock",v)),
       onClear:()=>saveEntity("node",withoutField(n,"overclock")),
-      fallback:1,min:def&&def.overclockMin,max:def&&def.overclockMax,step:0.25,hint:"default 1"}));
+      fallback:1,min:def&&def.overclockMin!=null?def.overclockMin:undefined,max:def&&def.overclockMax!=null?def.overclockMax:undefined,
+      gt:def&&def.overclockMin!=null?undefined:0,step:0.25,hint:"default 1"}));
   }
   const pf=el("div",{class:"field"});
   pf.append(el("span",{class:"field-label mono"},"power"));
@@ -1733,9 +2720,9 @@ function nodeInspector(body, n){
   pf.append(el("span",{class:"field-hint"},"electric machines ramp to their tier's maximum draw. On, the node ignores its overclock and runs each recipe at the EU/t its tier can feed (maxEuPerTick ÷ the recipe's EU/t). No effect on a def without a power ceiling."));
   body.append(pf);
   body.append(optionalNumber("parallel count", n.count, {
-    onSet:v=>saveEntity("node",withField(n,"count",Math.round(v))),
+    onSet:v=>saveEntity("node",withField(n,"count",v)),
     onClear:()=>saveEntity("node",withoutField(n,"count")),
-    fallback:1,min:1,step:1,hint:"default 1"}));
+    fallback:1,min:1,integer:true,step:1,hint:"default 1"}));
 
   const bf=el("div",{class:"field"});
   bf.append(el("span",{class:"field-label mono"},"boundary"));
@@ -1756,9 +2743,13 @@ function recipeFinder(n, pool){
   // A node may run several recipes at once; its I/O and energy are the sum. The
   // bound recipes are listed (each removable), with a finder to add more.
   const ids = nodeRecipeIds(n);
-  const f=el("div",{class:"field"});
+  const f=el("div",{class:"field","data-fk":"recipe"});
   f.append(el("span",{class:"field-label mono"}, ids.length>1?"recipes":"recipe"));
-  const state={adding: ids.length===0};
+  // The finder's state (open, filters) outlives the re-render a pick causes, so
+  // binding several recipes doesn't mean reopening and re-filtering after each.
+  let state=FINDER_STATE.get(n.id);
+  if(!state){ state={adding: ids.length===0, input:"", output:""}; FINDER_STATE.set(n.id, state); }
+  if(!ids.length) state.adding=true;
   function paint(){
     [...f.querySelectorAll(".recipe-dyn")].forEach(x=>x.remove());
     const dyn=el("div",{class:"recipe-dyn"});
@@ -1774,7 +2765,7 @@ function recipeFinder(n, pool){
       if(!pool.length) dyn.append(el("span",{class:"stack-empty mono"},"no recipes available for this machine"));
       else dyn.append(finderBody(n, pool, ids, rid=>{
         if(!ids.includes(rid)) saveEntity("node", setNodeRecipes(n, ids.concat([rid])));
-      }));
+      }, state));
       if(ids.length) dyn.append(el("button",{class:"clear-btn",style:{marginTop:"6px"},onclick:()=>{state.adding=false;paint();}},"done"));
     } else {
       dyn.append(el("button",{class:"clear-btn",onclick:()=>{state.adding=true;paint();}},"+ add recipe"));
@@ -1797,11 +2788,12 @@ function recipeSummary(r){
     el("div",{class:"recipe-io"}, el("span",{class:"recipe-io-label mono"},"in"), el("div",{class:"recipe-chips"}, chips(r.inputs))),
     el("div",{class:"recipe-io"}, el("span",{class:"recipe-io-label mono"},"out"), el("div",{class:"recipe-chips"}, chips(r.outputs))));
 }
-function finderBody(n, pool, boundIds, onPick){
+const FINDER_STATE = new Map();   // nodeId → {adding, input, output}
+function finderBody(n, pool, boundIds, onPick, state){
   boundIds = boundIds || [];
   onPick = onPick || (r=>{});
   const wrap=el("div");
-  const state={input:"",output:""};
+  state = state || {input:"",output:""};
   function resourceOptions(side){
     const ids=new Set();
     for(const r of pool) for(const s of (r[side]||[])){ const id=stackRes(s); if(!id) continue; ids.add(id); (BY.items[id]?.members||[]).forEach(m=>ids.add(m)); }
@@ -1820,7 +2812,7 @@ function finderBody(n, pool, boundIds, onPick){
     [...wrap.querySelectorAll(".finder-dyn")].forEach(x=>x.remove());
     const dyn=el("div",{class:"finder-dyn"});
     const list=matches();
-    const lst=el("div",{class:"recipe-list"});
+    const lst=el("div",{class:"recipe-list","data-sk":"recipe-list"});
     if(!list.length) lst.append(el("div",{class:"combo-empty"},"no matching recipe"));
     list.slice(0,60).forEach(r=>{
       lst.append(el("div",{class:"recipe-opt",onclick:()=>onPick(r.id)}, recipeOneLine(r)));
@@ -1828,8 +2820,8 @@ function finderBody(n, pool, boundIds, onPick){
     dyn.append(lst);
     wrap.append(dyn);
   }
-  wrap.append(field("filter by input", combo("", [{value:"",label:"— any —"}].concat(resourceOptions("inputs")), v=>{ state.input=v; repaint(); }, "any input…")));
-  wrap.append(field("filter by output", combo("", [{value:"",label:"— any —"}].concat(resourceOptions("outputs")), v=>{ state.output=v; repaint(); }, "any output…")));
+  wrap.append(field("filter by input", combo(state.input||"", [{value:"",label:"— any —"}].concat(resourceOptions("inputs")), v=>{ state.input=v; repaint(); }, "any input…")));
+  wrap.append(field("filter by output", combo(state.output||"", [{value:"",label:"— any —"}].concat(resourceOptions("outputs")), v=>{ state.output=v; repaint(); }, "any output…")));
   wrap.append(el("span",{class:"field-hint"},"pick an input and/or output; add several to run them in one block"));
   repaint();
   return wrap;
@@ -1848,7 +2840,12 @@ function pipeInspector(body, p){
   if(p.category==="liquid"){
     body.append(field("transfer rate", el("span",{class:"static-val dim"},"unlimited"), "fluid pipes carry an unlimited rate"));
   } else {
-    body.append(field("transfer rate", numberInput(p.movementCapacity, v=>saveEntity("pipe",withField(p,"movementCapacity",v)), {min:0}), "caps sustained flow (× overclock)"));
+    // Energy shows per tick like every other energy figure in the UI (stored per s).
+    const perTick = p.category==="energy";
+    body.append(field("transfer rate",
+      numberInput(perTick? toPerTick(p.movementCapacity) : p.movementCapacity,
+        v=>saveEntity("pipe",withField(p,"movementCapacity",perTick? toPerSecond(v) : v)), {min:0,label:"transfer rate"}),
+      "caps sustained flow (× overclock)", perTick? "EU/t" : "items/s"));
     body.append(optionalNumber("overclock", p.overclock, {
       onSet:v=>saveEntity("pipe",withField(p,"overclock",v)), onClear:()=>saveEntity("pipe",withoutField(p,"overclock")),
       fallback:1,min:0,step:0.25,hint:"scales movement capacity"}));
@@ -1860,7 +2857,7 @@ function pipeInspector(body, p){
 function pipeEnd(title, p, key){
   const end=p[key];
   const nm=(BY.defs[BY.nodes[end.nodeId]?.machineDefId]?.name)||end.nodeId;
-  const box=el("div",{class:"slot-group"});
+  const box=el("div",{class:"slot-group","data-fk":"end-"+key});
   box.append(el("div",{class:"field-label mono"}, title+" · ", el("span",{style:{color:"var(--ink-faint)"}},nm)));
   const setEnd=ne=>saveEntity("pipe", withField(p,key,ne));
   box.append(field("role", selectInput(end.role, ROLE_OPTS, role=>{
@@ -1870,11 +2867,11 @@ function pipeEnd(title, p, key){
     setEnd(ne);
   })));
   if(inserts(end.role)) box.append(optionalNumber("insert priority", end.insertPriority, {
-    onSet:v=>setEnd(withField(end,"insertPriority",Math.round(v))), onClear:()=>setEnd(withoutField(end,"insertPriority")),
-    min:-128,max:127,step:1,hint:"higher fills first"}));
+    onSet:v=>setEnd(withField(end,"insertPriority",v)), onClear:()=>setEnd(withoutField(end,"insertPriority")),
+    min:-128,max:127,integer:true,step:1,hint:"higher fills first"}));
   if(extracts(end.role)) box.append(optionalNumber("extract priority", end.extractPriority, {
-    onSet:v=>setEnd(withField(end,"extractPriority",Math.round(v))), onClear:()=>setEnd(withoutField(end,"extractPriority")),
-    min:-128,max:127,step:1,hint:"lower drains first"}));
+    onSet:v=>setEnd(withField(end,"extractPriority",v)), onClear:()=>setEnd(withoutField(end,"extractPriority")),
+    min:-128,max:127,integer:true,step:1,hint:"lower drains first"}));
   return box;
 }
 
@@ -1926,15 +2923,52 @@ function systemInspector(body, s){
    ============================================================================ */
 function createEntity(kind){
   const name = kind==="item"?"New item":kind==="recipe"?"New recipe":"New machine";
-  const id=idFromName(kind,name);
-  const entity = kind==="item"?{id,name,category:"solid"} : kind==="recipe"?{id,name,timeSeconds:1} : {id,name};
-  applyEdits([upsert(kind,entity)]);
-  select(kind,id);
+  let id;
+  // Show the new entry: open its library section, clear a search that would hide
+  // it, select it, and put the caret in its name so typing names it.
+  const sec={item:"items",recipe:"recipes",machineDef:"machineDefs"}[kind];
+  if(sec) railOpen[sec]=true;
+  if(railQuery && !railMatch(name,slugify(name))) railQuery="";
+  applyEdits(()=>{
+    id=idFromName(kind,name);
+    return [upsert(kind, kind==="item"?{id,name,category:"solid"} : kind==="recipe"?{id,name,timeSeconds:1} : {id,name})];
+  }).then(()=>{
+    if(!id) return;
+    FOCUS_NEXT='[data-fk="name"] input';
+    select(kind,id);
+    const leafEl=[...document.querySelectorAll("#railSections .leaf.selected")][0];
+    if(leafEl && leafEl.scrollIntoView) leafEl.scrollIntoView({block:"nearest"});
+  });
 }
 
+/* Centre the canvas on a node / system / junction picked from the library list
+   when it is off screen (a click on a visible one leaves the view alone). */
+function revealOnCanvas(kind, id){
+  const pos = kind==="node"? BY.nodes[id] : kind==="system"? BY.systems[id] : kind==="pipeNode"? BY.junctions[id] : null;
+  if(!pos || !$("#canvas")) return;
+  const cs=collapseState();
+  let target = pos;
+  if(kind==="node" && cs.hidden.has(id)){ const sid=cs.proxyForNode.get(id); target=BY.systems[sid]||pos; }
+  if(target.x==null||target.y==null) return;
+  const domSel = kind==="node"&&!cs.hidden.has(id)? `.node[data-id="${cssEsc(id)}"]` : kind==="pipeNode"? `.junction[data-junction="${cssEsc(id)}"]` : null;
+  const dom = domSel? $(domSel) : null;
+  const vb=viewportBox();
+  if(dom){
+    const r=dom.getBoundingClientRect(), c=$("#canvas").getBoundingClientRect();
+    if(r.left>=c.left && r.right<=c.right && r.top>=c.top && r.bottom<=c.bottom) return;
+  }
+  const w = kind==="pipeNode"? 0 : NODE_W, h = kind==="pipeNode"? 0 : 120;
+  view.x = vb.cx - (target.x + w/2)*view.k;
+  view.y = vb.cy - (target.y + h/2)*view.k;
+  applyView();
+}
+
+// Kept outside the section: the rail is rebuilt on every selection/edit, which
+// used to collapse the panel and throw away the typed paths.
+const IMPORT_UI = {open:false, text:"", msg:"", bad:false, busy:false};
 function miImportSection(){
-  const sec=el("div",{class:"rail-section"});
-  const open={v:false};
+  const sec=el("div",{class:"rail-section","data-fk":"import"});
+  const open={get v(){ return IMPORT_UI.open; }, set v(x){ IMPORT_UI.open=x; }};
   const head=el("div",{class:"rail-section-head"},
     el("p",{class:"eyebrow quiet",style:{margin:0}},"Import recipes"),
     el("button",{class:"rail-add",title:"Import machine/item/recipe data from files or folders",onclick:()=>{ open.v=!open.v; render(); }},"+"));
@@ -1947,55 +2981,76 @@ function miImportSection(){
     // of individual MI-format recipe JSON files (from any mod with the same
     // structure). The backend gathers every machine recipe among them.
     const inp=el("textarea",{class:"field-input mono",rows:"3",spellcheck:"false",
-      placeholder:"one path per line —\nextracted jar dir, recipe folder,\nor individual recipe .json files"});
-    const msg=el("span",{class:"mi-msg"});
-    const btn=el("button",{class:"tool-btn",onclick:run},"Import");
+      placeholder:"one path per line —\nextracted jar dir, recipe folder,\nor individual recipe .json files",
+      oninput:e=>{ IMPORT_UI.text=e.target.value; }});
+    inp.value=IMPORT_UI.text; inp.defaultValue=IMPORT_UI.text;
+    const msg=el("span",{class:"mi-msg"+(IMPORT_UI.bad?" bad":"")}, IMPORT_UI.msg);
+    const btn=el("button",{class:"tool-btn",disabled:IMPORT_UI.busy,onclick:run}, IMPORT_UI.busy?"Importing…":"Import");
+    const setMsg=(t,bad)=>{ IMPORT_UI.msg=t; IMPORT_UI.bad=!!bad; const m=$("#rail .mi-msg"); if(m){ m.textContent=t; m.className="mi-msg"+(bad?" bad":""); } };
     async function run(){
-      const paths=inp.value.split("\n").map(s=>s.trim()).filter(Boolean);
-      if(!paths.length) return;
-      btn.disabled=true; btn.textContent="Importing…"; msg.className="mi-msg"; msg.textContent="";
-      try{
-        snapshot();
-        const res=await callApi("import_recipe_files", paths, {});
-        WORLD=res.world; reindex();
-        const st=res.stats||{};
-        msg.className="mi-msg"; msg.textContent=`Imported ${st.recipesImported||0} recipes · ${st.items||0} items · ${st.machineDefs||0} machines`;
-        // Import is a deliberate, catalog-sized change: it's already persisted by
-        // the backend, so clear the dirty flag and run the sim once.
-        DIRTY=false; renderAll(); await recompute();
-      }catch(err){ msg.className="mi-msg bad"; msg.textContent=err.message; }
-      finally{ btn.disabled=false; btn.textContent="Import"; }
+      const paths=IMPORT_UI.text.split("\n").map(s=>s.trim()).filter(Boolean);
+      if(!paths.length){ setMsg("enter at least one path", true); return; }
+      IMPORT_UI.busy=true; btn.disabled=true; btn.textContent="Importing…"; setMsg("");
+      await enqueue(async()=>{
+        try{
+          const before=structuredClone(WORLD);
+          const res=await callApi("import_recipe_files", paths, {});
+          HISTORY.push(before); if(HISTORY.length>100) HISTORY.shift();
+          WORLD=res.world;
+          const st=res.stats||{};
+          setMsg(`Imported ${st.recipesImported||0} recipes · ${st.items||0} items · ${st.machineDefs||0} machines`);
+          // Import is a deliberate, catalog-sized change: it's already persisted by
+          // the backend, so clear the dirty flag and run the sim once.
+          DIRTY=false; IMPORT_UI.busy=false; renderAll(); await recompute();
+        }catch(err){ setMsg(err.message, true); }
+        finally{ IMPORT_UI.busy=false; const b=$("#rail .mi-body .tool-btn"); if(b){ b.disabled=false; b.textContent="Import"; } }
+      });
     }
     bodyHost.append(el("div",{class:"mi-body"}, inp, btn, msg,
       el("span",{class:"field-hint"},"paths are on the machine running the backend. folders are scanned recursively; the imported catalog is saved into the project (no re-import needed).")));
   }
+  render();
   return sec;
 }
 
 function openProjectDialog(){
-  const overlay=el("div",{style:{position:"fixed",inset:0,zIndex:60,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.5)"},
-    onclick:e=>{ if(e.target===overlay) overlay.remove(); }});
-  const box=el("div",{style:{width:"420px",background:"var(--panel)",border:"1px solid var(--line-2)",borderRadius:"12px",padding:"18px"}});
+  if($("#projectDialog")) return;
+  const close=()=>{ overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  const onKey=e=>{ if(e.key==="Escape"){ e.stopPropagation(); e.preventDefault(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  const overlay=el("div",{id:"projectDialog",style:{position:"fixed",inset:0,zIndex:60,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.5)"},
+    onclick:e=>{ if(e.target===overlay) close(); }});
+  const box=el("div",{style:{width:"min(420px, calc(100vw - 32px))",background:"var(--panel)",border:"1px solid var(--line-2)",borderRadius:"12px",padding:"18px"}});
   box.append(el("p",{class:"eyebrow"},"Project"));
-  const inp=el("input",{class:"field-input mono",type:"text",placeholder:"path/to/project.psim.json",style:{marginTop:"8px"}});
+  const inp=el("input",{class:"field-input mono",type:"text",placeholder:"path/to/project.psim.json",style:{marginTop:"8px"},spellcheck:"false",autocomplete:"off",
+    value:PROJECT_PATH||""});
   box.append(inp);
   const msg=el("span",{class:"mi-msg",style:{display:"block",marginTop:"8px"}});
+  const say=(t,bad)=>{ msg.className="mi-msg"+(bad?" bad":""); msg.textContent=t; };
+  const path=()=>{ const p=inp.value.trim(); if(!p){ say("enter a project path", true); flagInvalid(inp); inp.focus(); } return p; };
   const row=el("div",{style:{display:"flex",gap:"8px",marginTop:"12px"}});
-  row.append(el("button",{class:"tool-btn",onclick:async()=>{
-    const p=inp.value.trim(); if(!p) return;
-    try{ WORLD=await callApi("load_project",p); reindex(); HISTORY.length=0; updateUndo(); SEL=null; renderAll(); await recompute(); fit(); overlay.remove(); }
-    catch(err){ msg.className="mi-msg bad"; msg.textContent=err.message; }
+  row.append(el("button",{class:"tool-btn",onclick:()=>{
+    const p=path(); if(!p) return;
+    enqueue(async()=>{
+      try{
+        WORLD=await callApi("load_project",p); PROJECT_PATH=p;
+        HISTORY.length=0; updateUndo(); SEL=null; FINDER_STATE.clear(); DIRTY=false;
+        renderAll(); close(); fit(); await recompute();
+      }catch(err){ say(err.message, true); }
+    });
   }},"Load"));
   row.append(el("button",{class:"tool-btn",onclick:async()=>{
-    const p=inp.value.trim(); if(!p) return;
-    try{ await callApi("save_project",p); msg.className="mi-msg"; msg.textContent="saved "+p; }
-    catch(err){ msg.className="mi-msg bad"; msg.textContent=err.message; }
+    const p=path(); if(!p) return;
+    commitActiveField();
+    try{ await editsSettled(); await callApi("save_project",p); PROJECT_PATH=p; say("saved "+p); }
+    catch(err){ say(err.message, true); }
   }},"Save"));
-  row.append(el("button",{class:"tool-btn",style:{marginLeft:"auto"},onclick:()=>overlay.remove()},"Close"));
+  row.append(el("button",{class:"tool-btn",style:{marginLeft:"auto"},onclick:close},"Close"));
   box.append(row,msg);
   box.append(el("span",{class:"field-hint",style:{marginTop:"8px"}},"paths are on the machine running the backend; the working world also autosaves"));
-  overlay.append(box); document.body.append(overlay); inp.focus();
+  overlay.append(box); document.body.append(overlay); inp.focus(); inp.select();
 }
+let PROJECT_PATH="";
 
 let toastT=null;
 function toast(text, bad){
@@ -2039,19 +3094,14 @@ async function boot(){
     BOOTING=false;
   }
   if(!WORLD || typeof WORLD!=="object") WORLD={};
-  for(const k of ["items","recipes","machineDefs","nodes","pipes","systems"]) if(!WORLD[k]) WORLD[k]=[];
+  for(const k of ["items","recipes","machineDefs","nodes","pipes","pipeNodes","systems"]) if(!WORLD[k]) WORLD[k]=[];
   reindex();
   renderAll();
-  refreshPalette();
   fit();
   await recompute();
   window.addEventListener("resize", ()=>applyView());
 }
 
-// Hook render to also refresh the palette (defs may have changed) and restore the
-// Run/Save indicator state onto the freshly-rebuilt rail.
-const _renderAll = renderAll;
-renderAll = function(){ _renderAll(); refreshPalette(); updateRunState(); };
 
 window.addEventListener("pywebviewready", boot);
 window.addEventListener("load", boot);

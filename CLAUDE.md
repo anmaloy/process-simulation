@@ -42,7 +42,19 @@ A buildless client-side UI over a thin Python backend.
   Booting early on `{}` opens a blank app over a fully restored backend.
   `tests/test_ui_boot.py` pins this (needs Node + Playwright; skipped otherwise).
 - **Tests:** pytest for engine, model, IO, api, and app/server. The UI is
-  validated by driving `server.py` (the real engine) in a headless browser.
+  validated by driving `server.py` (the real engine) in a headless browser:
+  `tests/test_ui_interactions.py` runs the scenarios in `tests/ui_interactions.js`
+  (scroll/focus/half-typed text surviving re-renders, concurrent edits, number
+  entry and validation, Escape/Delete, comboboxes, rename, create, undo, canvas
+  gestures). Add a scenario there for any UI regression. Needs Node + Playwright;
+  skipped otherwise.
+- **UI editing rules** (`ui/index.html`): every edit goes through the serialized
+  edit queue (`applyEdits` / `saveEntity`, which sends a patch of only the changed
+  fields onto the latest entity) — never build an upsert from a closure and send it
+  directly. Panels are rebuilt via `preserving(...)`, which keeps `data-sk` scroll
+  positions and the focused control (located by `data-fk` keys). Numeric fields are
+  text inputs parsed by `numberInput` (`min`/`max`/`gt`/`integer`; empty → `onClear`
+  if optional, else rejected) — not `<input type=number>`.
 
 Styling target: `STYLE_GUIDE.md` (`:root` tokens, pasted verbatim). Fonts ship as
 local `woff2` under `ui/fonts/` (offline-first). The architecture mirrors a simple
@@ -58,6 +70,10 @@ per-kind inspectors with sparse-field discipline (item / recipe / machineDef /
 node / pipe / pipeNode / system), the input/output recipe finder, the balance
 overlay (status bar + chip + duty %, flow-weighted/dashed edges, floating readout
 with a world/process/node/system scope switcher and ranked bottlenecks), the
+**balance sheet** dock (`B`; resources / machines / bottlenecks tables for the
+current scope off `itemLedger` — sort, search, category/state filters, column
+toggles, /s·/min·/h, expandable maker/user breakdown, canvas outline on hover,
+copy/CSV; state persisted in `localStorage`), the
 collapsible/searchable library rail, systems (shift-select → Group,
 collapse/expand), undo (Ctrl+Z), recipe import, project save/load, and the
 **Run** / **Save** controls.
@@ -132,8 +148,11 @@ camelCase wire format.
 - **`recompute` scopes:** `world` (default), `node` (`nodeId` — a single machine),
   `process` (`nodeId` — its connected component via `trace_process`), `system`
   (`systemId`). Payload is `ScopeReport.to_dict()` (external I/O, per-node
-  balances, net energy, ranked bottlenecks, and `pipeFlows` — per-pipe resolved
-  flow + a starved-edge `shortfall` flag).
+  balances, net energy, ranked bottlenecks, `pipeFlows` — per-pipe resolved
+  flow + a starved-edge `shortfall` flag — and `itemLedger`: per resource,
+  `produced`/`consumed` at the solved duty, `capacity`/`demand` at 100% duty,
+  `feedstock`, `yield`, `shortfall`, and the `producers`/`consumers` node lists;
+  a tag row lists its members' producers).
 - **`on_conflict`** is a `ConflictPolicy`: `rename` (default), `skip`, `update`,
   `error`. `update` overwrites the World's entity of a colliding id **in place**
   (reported in `updatedIds`). Both importers default to `update` — MI entities are
