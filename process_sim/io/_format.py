@@ -72,13 +72,23 @@ def write_json(path: str | Path, data: Any) -> None:
     """
 
     path = Path(path)
+    # Defensive: the caller normally creates the directory, but a save must not
+    # fail just because it is missing (a deleted/synced folder, a first write).
+    path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, indent=2) + "\n"
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
             f.flush()
-            os.fsync(f.fileno())
+            # fsync is a durability hint (survive a power loss), not part of
+            # correctness: os.replace already gives readers all-or-nothing. On
+            # some Windows/network filesystems fsync raises, which must not abort
+            # an otherwise-good save, so it is best-effort.
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
         os.replace(tmp, path)
     finally:
         try:

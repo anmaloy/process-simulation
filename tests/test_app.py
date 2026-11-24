@@ -92,8 +92,32 @@ def test_save_autosave_is_noop_when_clean(tmp_path: Path) -> None:
     autosave = tmp_path / "autosave.psim.json"
     api = app.build_api(None, autosave)
     # Nothing changed yet → nothing to write.
-    assert api.save_autosave()["data"]["saved"] is False
+    data = api.save_autosave()["data"]
+    assert data["saved"] is False
+    assert data["dirty"] is False
+    assert "error" not in data  # clean, not a failure
     assert not autosave.is_file()
+
+
+def test_save_autosave_surfaces_write_failure(tmp_path: Path) -> None:
+    # A write failure (here: the autosave path is a directory, so the write
+    # raises) must be reported — saved False, still dirty, with an error — not
+    # look like a clean "nothing to save". This is what makes a read-only / locked
+    # app folder visible instead of silently losing every edit on reload.
+    autosave = tmp_path / "autosave.psim.json"
+    autosave.mkdir()  # occupy the path with a directory so save_project fails
+    api = app.build_api(None, autosave)
+    api.apply_edit(
+        {
+            "op": "upsert",
+            "kind": "item",
+            "entity": {"id": "ore", "name": "Ore", "category": "solid"},
+        }
+    )
+    data = api.save_autosave()["data"]
+    assert data["saved"] is False
+    assert data["dirty"] is True  # stays dirty so the next save retries
+    assert data.get("error")  # a reason is surfaced
 
 
 def test_corrupt_autosave_is_ignored(tmp_path: Path) -> None:

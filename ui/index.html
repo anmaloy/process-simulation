@@ -564,12 +564,26 @@ let DIRTY = false;
 function markDirty(){ DIRTY = true; const s=$("#saveState"); if(s){ s.textContent="unsaved"; s.className="save-state dirty"; } }
 async function saveNow({quiet=false}={}){
   if(!hasBackend()) return;
+  // Commit a field being typed into (inputs commit on change/blur) so its edit is
+  // in the World before we persist — otherwise a value typed right before closing
+  // would be lost.
+  const a=document.activeElement; if(a && a.tagName==="INPUT" && typeof a.blur==="function") a.blur();
   try{
     const res = await callApi("save_autosave");
-    DIRTY = false;
-    const s=$("#saveState"); if(s){ s.textContent="saved"; s.className="save-state"; }
-    if(!quiet && res && res.saved===false) toast("already saved");
-    else if(!quiet) toast("saved");
+    if(res && res.saved){
+      DIRTY = false;
+      const s=$("#saveState"); if(s){ s.textContent="saved"; s.className="save-state"; }
+      if(!quiet) toast("saved");
+    } else if(res && res.dirty){
+      // A real write failure — keep DIRTY so the timer/close retries, and show why.
+      const s=$("#saveState"); if(s){ s.textContent="save failed"; s.className="save-state dirty"; }
+      toast("save failed — "+(res.error||"could not write autosave")+(res.path?" ("+res.path+")":""), true);
+    } else {
+      // Nothing to save (already clean).
+      DIRTY = false;
+      const s=$("#saveState"); if(s){ s.textContent="saved"; s.className="save-state"; }
+      if(!quiet) toast("already saved");
+    }
   }catch(err){ if(!quiet) toast(err.message,true); }
 }
 // Timer flush: every 10 minutes, write only if something changed.
