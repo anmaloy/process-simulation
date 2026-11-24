@@ -20,15 +20,20 @@ from .errors import (
     UnsupportedVersionError,
 )
 from .library import (
+    LIBRARY_KINDS,
     ConflictPolicy,
     ImportResult,
     Library,
     export_library,
     import_library,
     library_from_dict,
+    library_ids,
     library_to_dict,
     load_library,
+    merge_libraries,
+    remove_from_library,
     save_library,
+    sync_library,
 )
 from .mi_import import (
     CABLE_TIER_EU,
@@ -70,6 +75,11 @@ __all__ = [
     "library_from_dict",
     "save_library",
     "load_library",
+    "LIBRARY_KINDS",
+    "library_ids",
+    "sync_library",
+    "remove_from_library",
+    "merge_libraries",
     # Modern Industrialization import
     "DEFAULT_MACHINE_TYPES",
     "CABLE_TIER_EU",

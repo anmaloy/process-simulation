@@ -42,6 +42,11 @@ __all__ = [
     "library_from_dict",
     "save_library",
     "load_library",
+    "LIBRARY_KINDS",
+    "library_ids",
+    "sync_library",
+    "remove_from_library",
+    "merge_libraries",
 ]
 
 
@@ -249,6 +254,88 @@ def import_library(
         skipped_ids=skipped,
         updated_ids=updated,
     )
+
+
+# --------------------------------------------------------------------------- #
+# A persisted catalog as an editable copy
+# --------------------------------------------------------------------------- #
+#
+# An imported catalog (the MI jar, read once) is saved as a library file in the
+# app folder. That file is *our* copy, not a cache of the source: the user's
+# edits to its items/recipes/machine defs are written back into it, and it never
+# overwrites the World's (possibly edited) entities when merged in.
+
+#: Wire entity kind → the Library/World attribute that holds it.
+LIBRARY_KINDS: dict[str, str] = {
+    "item": "items",
+    "recipe": "recipes",
+    "machineDef": "machine_defs",
+}
+
+
+def library_ids(library: Library, kind: str) -> set[str]:
+    """The ids of ``kind`` entities held by ``library``."""
+
+    return {e.id for e in getattr(library, LIBRARY_KINDS[kind])}
+
+
+def sync_library(library: Library, world: World, ids: set[str] | None = None) -> bool:
+    """Copy the World's version of each entity the library holds into it.
+
+    Only entities the library already holds are touched (a World-only entity is
+    the user's own, not part of the catalog); one the World lacks is left as is.
+    ``ids`` narrows the sync to those ids (an edit touches one). Returns whether
+    anything changed.
+    """
+
+    changed = False
+    for attr in LIBRARY_KINDS.values():
+        held: list[Any] = getattr(library, attr)
+        current = {e.id: e for e in getattr(world, attr)}
+        for i, entity in enumerate(held):
+            if ids is not None and entity.id not in ids:
+                continue
+            live = current.get(entity.id)
+            if live is not None and live.to_dict() != entity.to_dict():
+                held[i] = copy.deepcopy(live)
+                changed = True
+    return changed
+
+
+def remove_from_library(library: Library, kind: str, entity_id: str) -> bool:
+    """Drop the ``kind`` entity ``entity_id`` from the library; return if found."""
+
+    if kind not in LIBRARY_KINDS:
+        return False
+    held: list[Any] = getattr(library, LIBRARY_KINDS[kind])
+    kept = [e for e in held if e.id != entity_id]
+    if len(kept) == len(held):
+        return False
+    held[:] = kept
+    return True
+
+
+def merge_libraries(
+    base: Library, incoming: Library, *, overwrite: bool = False
+) -> Library:
+    """Merge ``incoming`` into ``base`` by id (a re-import into a saved copy).
+
+    New ids are appended. A colliding id keeps ``base``'s (possibly edited)
+    entity unless ``overwrite`` is set. Returns a new Library named after
+    ``incoming`` (falling back to ``base``)."""
+
+    out = Library(name=incoming.name if incoming.name is not None else base.name)
+    for attr in LIBRARY_KINDS.values():
+        mine: list[Any] = [copy.deepcopy(e) for e in getattr(base, attr)]
+        index = {e.id: i for i, e in enumerate(mine)}
+        for entity in getattr(incoming, attr):
+            if entity.id not in index:
+                index[entity.id] = len(mine)
+                mine.append(copy.deepcopy(entity))
+            elif overwrite:
+                mine[index[entity.id]] = copy.deepcopy(entity)
+        setattr(out, attr, mine)
+    return out
 
 
 # --------------------------------------------------------------------------- #

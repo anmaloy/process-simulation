@@ -13,9 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from backend import build_api
 from process_sim.api import Api
 from process_sim.engine import compute_world
 from process_sim.io import (
+    load_library,
     CABLE_TIER_EU,
     MACHINE_CATALOG,
     import_mi_library,
@@ -581,9 +583,8 @@ def test_sample_mi_project_loads_and_balances():
 
 def test_api_import_mi_dir_is_idempotent(mi_root):
     """Re-importing the same jar must not duplicate — MI ids are stable, so the
-    default policy ``update`` refreshes entities in place (no renaming, no new
-    rows). (Guards the autosave-doubling bug: the import persists across launches,
-    so a second import adds nothing and simply re-applies the same data.)"""
+    default policy ``skip`` keeps the existing (possibly edited) copy and adds
+    nothing (no renaming, no new rows, no overwrite)."""
 
     api = Api()
     opts = {"machineTypes": ["macerator", "mixer"]}
@@ -595,14 +596,14 @@ def test_api_import_mi_dir_is_idempotent(mi_root):
 
     assert after == counts  # nothing added the second time
     assert second["idRemap"] == {}  # nothing renamed
-    assert second["updatedIds"]  # existing entities refreshed in place
-    assert not second["skippedIds"]  # update refreshes rather than skipping
+    assert second["skippedIds"]  # existing entities kept as they are
+    assert not second["updatedIds"]  # the source never overwrites the copy
 
 
 def test_api_import_mi_dir_refreshes_corrected_reference_data(mi_root):
-    """A re-import updates a reference entity in place, so a correction reaches a
-    project already built on the old data (the fuel-eu fix is the motivating
-    case). Simulate a stale value, then confirm the re-import overwrites it."""
+    """An explicit ``update`` re-import refreshes a reference entity in place, so
+    a correction reaches a project already built on the old data (the fuel-eu fix
+    is the motivating case). Simulate a stale value, then confirm it overwrites."""
 
     api = Api()
     api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})
@@ -616,7 +617,8 @@ def test_api_import_mi_dir_refreshes_corrected_reference_data(mi_root):
         next(i for i in api.get_world()["data"]["items"] if i["id"] == tid)["eu"] == 1.0
     )
     # Re-importing refreshes it back to the jar's (corrected) value, in place.
-    res = api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})["data"]
+    opts = {"machineTypes": ["macerator"], "onConflict": "update"}
+    res = api.import_mi_dir(str(mi_root), opts)["data"]
     assert tid in res["updatedIds"]
     assert next(i for i in res["world"]["items"] if i["id"] == tid)["eu"] == good
 
@@ -863,3 +865,93 @@ def test_smelting_furnaces_bronze_steel_electric(tmp_path):
     # Smelting has no eu, so a base draw is set; all three run the same recipe.
     assert bronze.base_energy_consumption is not None
     assert bronze.allowed_recipe_ids == electric.allowed_recipe_ids == [fr[0].id]
+
+
+# --------------------------------------------------------------------------- #
+# The imported catalog is the app's own editable copy: read once, edits stick.
+# --------------------------------------------------------------------------- #
+
+
+def _edited_recipe(api):
+    world = api.get_world()["data"]
+    recipe = next(r for r in world["recipes"] if r.get("outputs"))
+    recipe["outputs"][0]["quantity"] = 99
+    assert api.apply_edit({"op": "upsert", "kind": "recipe", "entity": recipe})["ok"]
+    return recipe["id"]
+
+
+def _wire_recipe(world, rid):
+    return next((r for r in world["recipes"] if r["id"] == rid), None)
+
+
+def test_edited_catalog_recipe_survives_relaunch(mi_root, tmp_path):
+    """The reported bug: edit an imported recipe, save, relaunch → the edit must
+    stay (the saved catalog copy used to overwrite it on every startup)."""
+
+    autosave, libdir = tmp_path / "autosave.psim.json", tmp_path / "libs"
+    api = Api(autosave_path=autosave, library_dir=libdir)
+    api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})
+    rid = _edited_recipe(api)
+    assert api.save_autosave()["data"]["saved"] is True
+
+    relaunched = build_api(None, autosave, libdir)
+    got = _wire_recipe(relaunched.get_world()["data"], rid)
+    assert got["outputs"][0]["quantity"] == 99
+
+
+def test_edits_are_written_into_the_catalog_copy(mi_root, tmp_path):
+    """The catalog file itself holds the edit, so a fresh World (no autosave, or
+    a project without the catalog) gets the edited recipe, not the source's."""
+
+    autosave, libdir = tmp_path / "autosave.psim.json", tmp_path / "libs"
+    api = Api(autosave_path=autosave, library_dir=libdir)
+    api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})
+    rid = _edited_recipe(api)
+    api.save_autosave()
+
+    (lib_path,) = libdir.glob("*.psim-lib.json")
+    lib = load_library(lib_path)
+    assert next(r for r in lib.recipes if r.id == rid).outputs[0].quantity == 99
+    fresh = Api(library_dir=libdir)  # empty World + the catalog copy
+    assert _wire_recipe(fresh.get_world()["data"], rid)["outputs"][0]["quantity"] == 99
+
+
+def test_reimport_does_not_revert_edits(mi_root, tmp_path):
+    libdir = tmp_path / "libs"
+    api = Api(autosave_path=tmp_path / "a.psim.json", library_dir=libdir)
+    api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})
+    rid = _edited_recipe(api)
+    api.save_autosave()
+    res = api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator", "mixer"]})
+    assert _wire_recipe(res["data"]["world"], rid)["outputs"][0]["quantity"] == 99
+    (lib_path,) = libdir.glob("*.psim-lib.json")
+    lib = load_library(lib_path)
+    assert next(r for r in lib.recipes if r.id == rid).outputs[0].quantity == 99
+    assert any(r.machine_type == "mixer" for r in lib.recipes)  # new ones added
+
+
+def test_removed_catalog_recipe_stays_removed(mi_root, tmp_path):
+    autosave, libdir = tmp_path / "autosave.psim.json", tmp_path / "libs"
+    api = Api(autosave_path=autosave, library_dir=libdir)
+    api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})
+    rid = api.get_world()["data"]["recipes"][0]["id"]
+    api.apply_edit({"op": "remove", "kind": "recipe", "id": rid})
+    api.save_autosave()
+    relaunched = build_api(None, autosave, libdir)
+    assert _wire_recipe(relaunched.get_world()["data"], rid) is None
+
+
+def test_set_world_undo_syncs_catalog_copy(mi_root, tmp_path):
+    autosave, libdir = tmp_path / "autosave.psim.json", tmp_path / "libs"
+    api = Api(autosave_path=autosave, library_dir=libdir)
+    api.import_mi_dir(str(mi_root), {"machineTypes": ["macerator"]})
+    before = api.get_world()["data"]
+    rid = _edited_recipe(api)
+    api.set_world(before)  # undo
+    api.save_autosave()
+    fresh = Api(library_dir=libdir)
+    original = _wire_recipe(before, rid)["outputs"][0]["quantity"]
+    assert (
+        _wire_recipe(fresh.get_world()["data"], rid)["outputs"][0]["quantity"]
+        == original
+    )
