@@ -26,14 +26,21 @@ A buildless client-side UI over a thin Python backend.
     `window.pywebview.api.<method>(...)`.
   - `server.py` — a **stdlib HTTP server** (`POST /api/<method>`, body
     `{"args":[...]}`) for any browser on the LAN. Run exactly one process.
-- **Persistence:** the working World autosaves to
-  `~/.process_sim/autosave.psim.json` (`PROCESS_SIM_HOME` overrides the dir).
-  Autosave is **on a timer / explicit save, not per-edit** (see Performance).
-  Project files are JSON (the whole World). An **imported catalog** is also saved
-  to `~/.process_sim/libraries/*.psim-lib.json` and merged into the World at
-  startup and on project load (`ConflictPolicy.UPDATE`), so the machine catalog is
-  always available without re-importing. `export_standalone.py` bakes the World
-  into a single view-only HTML.
+- **Persistence:** the working World autosaves to a **repo-local**
+  `.process_sim/autosave.psim.json` (next to `backend.py`, gitignored;
+  `PROCESS_SIM_HOME` overrides the dir). Autosave is **on a timer / explicit save,
+  not per-edit** (see Performance). Project files are JSON (the whole World). An
+  **imported catalog** is also saved to `.process_sim/libraries/*.psim-lib.json`
+  and merged into the World at startup and on project load
+  (`ConflictPolicy.UPDATE`), so the machine catalog is always available without
+  re-importing. `export_standalone.py` bakes the World into a single view-only HTML.
+- **UI boot:** the page boots **once**, from the backend (`get_world`) when a
+  bridge/HTTP backend exists, else from the baked `#world-data` (standalone
+  export). In the desktop app the page is `file://` and pywebview injects
+  `window.pywebview.api` *after* `load`, so with neither present `boot()` must
+  **wait** (`pywebviewready`, plus a poll) — never fall back to an empty World.
+  Booting early on `{}` opens a blank app over a fully restored backend.
+  `tests/test_ui_boot.py` pins this (needs Node + Playwright; skipped otherwise).
 - **Tests:** pytest for engine, model, IO, api, and app/server. The UI is
   validated by driving `server.py` (the real engine) in a headless browser.
 

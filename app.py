@@ -10,10 +10,11 @@ Run with::
     python app.py                # open the app (needs a system web engine)
     python app.py project.psim.json   # open with a project loaded
 
-The working World is auto-saved to ``~/.process_sim/autosave.psim.json`` after
-every change (``PROCESS_SIM_HOME`` overrides the directory), so the app resumes
-where you left off. An explicit project file on the command line wins over the
-autosave.
+The working World is saved to a repo-local ``.process_sim/autosave.psim.json``
+on a timer, on an explicit Save, and when the window closes (``PROCESS_SIM_HOME``
+overrides the directory), and an imported catalog is kept under
+``.process_sim/libraries/``, so the app resumes where you left off with no
+re-import. An explicit project file on the command line wins over the autosave.
 
 Everything except the actual window creation is import-safe and unit-tested
 without a display: ``webview`` is imported lazily inside :func:`main`.
