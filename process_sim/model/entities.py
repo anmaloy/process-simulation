@@ -278,6 +278,14 @@ class MachineNode(Serializable):
     - ``assume_outputs`` (manual extraction): the outputs are removed by hand, so
       they are counted as the system's product (yield) rather than an internal
       feed, even where a pipe also carries them.
+
+    ``max_power`` runs the machine at its power-tier ceiling: instead of the
+    node's own ``overclock``, each recipe runs at the greatest overclock the
+    def's ``max_eu_per_tick`` can feed (``max_eu_per_tick ÷ eu_per_tick``).
+    Electric machines ramp to their tier's maximum draw, so this is their
+    "normal" throughput — a convenience so a tier's full rate need not be typed
+    as an overclock on every node. With no ceiling (or no per-tick draw to
+    measure against) it has no effect and ``overclock`` governs. Default off.
     """
 
     id: str
@@ -288,6 +296,7 @@ class MachineNode(Serializable):
     count: int = 1
     assume_inputs: bool = False
     assume_outputs: bool = False
+    max_power: bool = False
     x: float | None = None
     y: float | None = None
 
@@ -311,6 +320,7 @@ class MachineNode(Serializable):
             count=d.get("count", 1),
             assume_inputs=d.get("assumeInputs", False),
             assume_outputs=d.get("assumeOutputs", False),
+            max_power=d.get("maxPower", False),
             x=d.get("x"),
             y=d.get("y"),
         )

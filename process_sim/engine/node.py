@@ -132,7 +132,7 @@ def compute_node(
         recipes = list(recipe)
 
     def _clamp(eu_per_tick: float | None) -> float:
-        """Clamp the node's overclock to the machine's power-tier ceiling.
+        """Resolve the node's effective overclock against its power-tier ceiling.
 
         Modern-Industrialization-style: a machine cannot overclock past the
         EU/tick its tier/upgrades feed, so the effective overclock satisfies
@@ -140,12 +140,18 @@ def compute_node(
         together, so a clamped machine simply runs its recipe slower. A machine
         with no ceiling (or no per-tick draw to measure against) overclocks
         freely. This clamp is silent — it is the real rate, not an error state.
+
+        ``node.max_power`` runs the machine *at* that ceiling: electric machines
+        ramp to their tier's maximum draw, so the "normal" throughput is
+        ``max_eu_per_tick ÷ eu_per_tick`` rather than the node's typed overclock.
+        It is an override (it can raise the rate as well as cap it); with no
+        ceiling to measure against, ``overclock`` still governs.
         """
 
         oc = node.overclock
         if cap is not None and eu_per_tick is not None and eu_per_tick > 0:
             max_oc = cap / eu_per_tick
-            if oc > max_oc:
+            if node.max_power or oc > max_oc:
                 return max_oc
         return oc
 
