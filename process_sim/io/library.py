@@ -66,7 +66,12 @@ class ConflictPolicy(StrEnum):
     - ``RENAME`` (default): give the incoming entity a fresh id and rewrite every
       reference to it within the library.
     - ``SKIP``: drop the incoming entity; references to it resolve to the World's
-      existing entity of the same id.
+      existing entity of the same id. The kept entity is **extended** — never
+      changed otherwise — with references to entities this same import newly
+      adds: a skipped machine def gains the import's *new* recipe ids, a skipped
+      tag gains its *new* member items. Something new can't have been removed by
+      the user, so this never reverts an edit; without it a re-import's new
+      recipes would exist with no machine able to run them.
     - ``UPDATE``: overwrite the World's existing entity **in place** with the
       incoming one (same id). Used to *refresh* canonical reference data — a
       re-import of a mod jar then propagates corrected values (a fixed fuel ``eu``,
@@ -89,13 +94,15 @@ class ImportResult:
     ``world`` is the merged World (the input is never mutated). ``id_remap`` maps
     each renamed entity's old id to its new one; ``skipped_ids`` lists ids dropped
     under :attr:`ConflictPolicy.SKIP`; ``updated_ids`` lists ids overwritten in
-    place under :attr:`ConflictPolicy.UPDATE`.
+    place under :attr:`ConflictPolicy.UPDATE`; ``extended_ids`` lists skipped
+    machine defs / tags that gained newly-imported recipe ids / members.
     """
 
     world: World
     id_remap: dict[str, str] = field(default_factory=dict)
     skipped_ids: set[str] = field(default_factory=set)
     updated_ids: set[str] = field(default_factory=set)
+    extended_ids: set[str] = field(default_factory=set)
 
 
 # --------------------------------------------------------------------------- #
@@ -238,6 +245,28 @@ def import_library(
     kept_recipes = [r for r in world.recipes if r.id not in updated]
     kept_defs = [d for d in world.machine_defs if d.id not in updated]
 
+    # Under SKIP, a kept def/tag still gains what this import newly brings.
+    extended: set[str] = set()
+    if on_conflict is ConflictPolicy.SKIP and skipped:
+        added_recipes = {r.id for r in new_recipes}
+        added_items = {i.id for i in new_items}
+        incoming_defs = {d.id: d for d in library.machine_defs if d.id in skipped}
+        incoming_tags = {i.id: i for i in library.items if i.id in skipped and i.is_tag}
+        kept_defs = [
+            _extend(
+                d,
+                "allowed_recipe_ids",
+                incoming_defs.get(d.id),
+                added_recipes,
+                extended,
+            )
+            for d in kept_defs
+        ]
+        kept_items = [
+            _extend(i, "members", incoming_tags.get(i.id), added_items, extended)
+            for i in kept_items
+        ]
+
     merged = World(
         name=world.name,
         items=[*kept_items, *new_items],
@@ -253,7 +282,26 @@ def import_library(
         id_remap={**item_remap, **recipe_remap, **def_remap},
         skipped_ids=skipped,
         updated_ids=updated,
+        extended_ids=extended,
     )
+
+
+def _extend(
+    entity: Any, attr: str, incoming: Any, added: set[str], extended: set[str]
+) -> Any:
+    """``entity`` with ``incoming``'s new references (ids in ``added``) appended
+    to its ``attr`` list — a copy when anything changes, else the same object."""
+
+    if incoming is None:
+        return entity
+    have = list(getattr(entity, attr) or [])
+    extra = [x for x in (getattr(incoming, attr) or []) if x in added and x not in have]
+    if not extra:
+        return entity
+    clone = copy.deepcopy(entity)
+    setattr(clone, attr, have + extra)
+    extended.add(entity.id)
+    return clone
 
 
 # --------------------------------------------------------------------------- #
@@ -325,16 +373,35 @@ def merge_libraries(
     ``incoming`` (falling back to ``base``)."""
 
     out = Library(name=incoming.name if incoming.name is not None else base.name)
+    added: dict[str, set[str]] = {}
+    kept: dict[str, list[tuple[int, Any]]] = {}
     for attr in LIBRARY_KINDS.values():
         mine: list[Any] = [copy.deepcopy(e) for e in getattr(base, attr)]
         index = {e.id: i for i, e in enumerate(mine)}
+        added[attr] = set()
+        kept[attr] = []
         for entity in getattr(incoming, attr):
             if entity.id not in index:
                 index[entity.id] = len(mine)
                 mine.append(copy.deepcopy(entity))
+                added[attr].add(entity.id)
             elif overwrite:
                 mine[index[entity.id]] = copy.deepcopy(entity)
+            else:
+                kept[attr].append((index[entity.id], entity))
         setattr(out, attr, mine)
+    # A kept (possibly edited) def/tag still gains the references this merge
+    # newly adds — the same rule as ``import_library``'s SKIP.
+    scratch: set[str] = set()
+    for i, inc in kept["machine_defs"]:
+        out.machine_defs[i] = _extend(
+            out.machine_defs[i], "allowed_recipe_ids", inc, added["recipes"], scratch
+        )
+    for i, inc in kept["items"]:
+        if inc.is_tag:
+            out.items[i] = _extend(
+                out.items[i], "members", inc, added["items"], scratch
+            )
     return out
 
 

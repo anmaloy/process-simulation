@@ -65,6 +65,7 @@ from typing import Any
 
 from .engine import compute_scope, compute_system, compute_world, trace_process
 from .io import (
+    EXPORT_RELPATH,
     LIBRARY_KINDS,
     ConflictPolicy,
     Library,
@@ -73,6 +74,8 @@ from .io import (
     import_library,
     import_mi_library,
     import_mi_sources,
+    import_pack,
+    install_exporter,
     library_from_dict,
     library_ids,
     library_to_dict,
@@ -593,6 +596,67 @@ class Api:
         payload["stats"] = imported.stats
         return _ok(payload)
 
+    def import_pack(
+        self, path: str, options: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Import every machine recipe of a whole modpack instance.
+
+        ``path`` is the launcher's instance folder or its game dir (the folder
+        holding ``mods/``). Reads every mod jar, the vanilla/NeoForge jars from the
+        launcher's libraries, and the pack's own ``kubejs/`` data, merged the way
+        the game layers datapacks; when the in-game runtime export exists (see
+        :meth:`install_pack_exporter`) it supplies the authoritative recipe set,
+        tags and names instead. Merged into the World and persisted as a catalog
+        exactly like :meth:`import_mi_dir` (default ``skip``: adds only what is
+        new, never reverts edits; existing machines gain the pack's new recipes).
+
+        ``options``: ``exportPath`` (a pack export elsewhere), ``machineTypes``,
+        ``name`` (default: the instance name), ``onConflict``. ``stats`` adds the
+        pack fields documented on :func:`~process_sim.io.import_pack`.
+        """
+
+        options = options or {}
+        machine_types = options.get("machineTypes")
+        try:
+            policy = ConflictPolicy(options.get("onConflict", "skip"))
+            imported = import_pack(
+                path,
+                export_path=options.get("exportPath"),
+                machine_types=(
+                    tuple(machine_types) if machine_types is not None else None
+                ),
+                name=options.get("name"),
+            )
+            result = import_library(self._world, imported.library, on_conflict=policy)
+        except (FileNotFoundError, *_EXPECTED_ERRORS) as exc:
+            return _err(exc)
+        self._world = result.world
+        self._save_library(
+            imported.library,
+            _slug(imported.library.name),
+            overwrite=policy is ConflictPolicy.UPDATE,
+        )
+        self._persist()
+        payload = self._import_payload(result)
+        payload["stats"] = imported.stats
+        return _ok(payload)
+
+    def install_pack_exporter(self, path: str) -> dict[str, Any]:
+        """Install the KubeJS runtime exporter into a modpack instance.
+
+        Copies ``tools/kubejs/process_sim_export.js`` into the instance's
+        ``local/kubejs/local_server_scripts``; loading a world (or ``/reload``)
+        then writes the pack export :meth:`import_pack` reads. Returns
+        ``{"path": <installed script>, "exportPath": <where the export lands>}``.
+        """
+
+        try:
+            dest = install_exporter(path)
+        except (OSError, *_EXPECTED_ERRORS) as exc:
+            return _err(exc)
+        game_dir = dest.parents[3]
+        return _ok({"path": str(dest), "exportPath": str(game_dir / EXPORT_RELPATH)})
+
     @staticmethod
     def _import_payload(result: Any) -> dict[str, Any]:
         return {
@@ -600,4 +664,5 @@ class Api:
             "idRemap": dict(result.id_remap),
             "skippedIds": sorted(result.skipped_ids),
             "updatedIds": sorted(result.updated_ids),
+            "extendedIds": sorted(result.extended_ids),
         }

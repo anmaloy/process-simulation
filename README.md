@@ -40,6 +40,26 @@ python server.py             # http://localhost:8000
 Editing the UI is just editing `ui/index.html` and refreshing — there is nothing
 to build or reinstall.
 
+## Importing a modpack
+
+Open **Import recipes → Modpack**, paste the launcher's instance folder (e.g.
+`…/PrismLauncher/instances/<pack>`), and press **Import**. Every mod jar, the
+vanilla and NeoForge data, and the pack's own `kubejs/` data are read and merged
+the way the game does it.
+
+Packs that change recipes with KubeJS scripts (most kitchen-sink and expert packs)
+have recipes and materials that exist only inside the running game. For those:
+
+1. Press **Install exporter** (copies `tools/kubejs/process_sim_export.js` into the
+   instance's `local/kubejs/local_server_scripts/`).
+2. Launch the pack and load any world (or run `/reload`). The server log shows
+   `[process-sim] exported N recipes …`.
+3. Press **Import** again. The import now matches the game exactly.
+
+Re-importing only adds what is new (existing machines gain the new recipes) and
+never undoes your edits. Re-export after updating the pack; the import tells you
+when the export is older than the pack's mods or scripts.
+
 ## Status
 
 Working. The headless engine/model/IO are complete and pytest-covered, and the UI

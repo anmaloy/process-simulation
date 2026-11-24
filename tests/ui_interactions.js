@@ -385,9 +385,23 @@ scenario("undo_restores_and_drops_dead_selection", async (t) => {
 /* ---------------------------------------------------------------- panels */
 scenario("import_panel_survives_rerender", async (t) => {
   await t.page.locator(".rail-add[title^='Import']").click();
+  await t.page.locator(".mi-body .seg button", { hasText: "Files" }).click();
   await t.page.locator(".mi-body textarea").fill("/some/path\n/other");
   await t.ev(() => select("node", "mac_node_1")); await t.idle();
   t.eq(await t.page.locator(".mi-body textarea").inputValue().catch(() => "(gone)"), "/some/path\n/other", "panel open, text kept");
+});
+
+scenario("pack_import_panel_keeps_path_and_reports_errors", async (t) => {
+  await t.page.locator(".rail-add[title^='Import']").click();
+  const pack = t.page.locator(".mi-body input.field-input");
+  await pack.fill("/no/such/instance");
+  await t.ev(() => select("node", "mac_node_1")); await t.idle();
+  t.eq(await pack.inputValue().catch(() => "(gone)"), "/no/such/instance", "modpack path kept across re-render");
+  await t.page.locator(".mi-body .mi-run").click(); await t.idle();
+  const msg = await t.page.locator(".mi-msg").textContent();
+  t.eq(/not a modpack instance/.test(msg), true, "a bad instance path is reported: " + msg);
+  t.eq(await t.page.locator(".mi-msg.bad").count(), 1, "shown as an error");
+  t.eq(await t.page.locator(".mi-body .mi-run").isDisabled(), false, "import button re-enabled");
 });
 
 scenario("rail_search_keeps_focus_across_render", async (t) => {

@@ -79,7 +79,8 @@ current scope off `itemLedger` — sort, search, category/state filters, column
 toggles, /s·/min·/h, expandable maker/user breakdown, canvas outline on hover,
 copy/CSV; state persisted in `localStorage`), the
 collapsible/searchable library rail, systems (shift-select → Group,
-collapse/expand), undo (Ctrl+Z), recipe import, project save/load, and the
+collapse/expand), undo (Ctrl+Z), recipe import (a whole modpack instance, or
+files), project save/load, and the
 **Run** / **Save** controls.
 
 Energy is the carrier-tiers model (routed fuel → steam → electricity, per-recipe
@@ -141,6 +142,12 @@ camelCase wire format.
 | `import_library_file(path, on_conflict="rename")` | path string, policy | `{world, idRemap, skippedIds, updatedIds}` |
 | `import_recipe_files(paths, options)` | list of paths, `{machineTypes?, name?, onConflict?}` | `{world, …, stats}` |
 | `import_mi_dir(path, options)` | path string, `{machineTypes?, name?, onConflict?}` | `{world, …, stats}` |
+| `import_pack(path, options)` | instance/game dir, `{exportPath?, machineTypes?, name?, onConflict?}` | `{world, …, stats}` |
+| `install_pack_exporter(path)` | instance/game dir | `{path, exportPath}` |
+
+Every import payload (`import_library*`, `import_recipe_files`, `import_mi_dir`,
+`import_pack`) is `{world, idRemap, skippedIds, updatedIds, extendedIds}` (+ `stats`
+for the recipe importers).
 
 - **`edit`** is `{"op":"upsert","kind":<kind>,"entity":{...}}` (replaces the entity
   of that id in place, else appends) or `{"op":"remove","kind":<kind>,"id":<id>}`.
@@ -159,17 +166,67 @@ camelCase wire format.
   a tag row lists its members' producers).
 - **`on_conflict`** is a `ConflictPolicy`: `rename` (default), `skip`, `update`,
   `error`. `update` overwrites the World's entity of a colliding id **in place**
-  (reported in `updatedIds`). Both importers default to `skip` — re-importing is
-  idempotent (no duplication, nothing renamed), only **adds** new entities, and
-  **never reverts the user's edits** (in the World or the saved catalog copy).
-  `onConflict:"update"` is the explicit opt-in to refresh existing entities from
-  the source, overwriting edits in both.
+  (reported in `updatedIds`). The recipe importers default to `skip` —
+  re-importing is idempotent (no duplication, nothing renamed), only **adds** new
+  entities, and **never reverts the user's edits** (in the World or the saved
+  catalog copy). A skipped machine def / tag is still **extended** with references
+  to entities the same import *newly adds* (new recipe ids / new member items,
+  reported in `extendedIds`) — otherwise a re-import's new recipes would exist with
+  no machine able to run them; something new can't have been removed by the user,
+  so this never undoes an edit. `onConflict:"update"` is the explicit opt-in to
+  refresh existing entities from the source, overwriting edits in both.
 
 ### Importing recipes
 
-Two entry points share one parser and one persistence path (the imported catalog
-is both saved to the library folder and baked into the autosaved World, so it
-auto-loads on later launches with **no re-import**):
+Three entry points share one parser (`mi_import.build_import` over an in-memory
+`RecipeSource`) and one persistence path (the imported catalog is both saved to
+the library folder and baked into the autosaved World, so it auto-loads on later
+launches with **no re-import**). The UI's import panel has a **Modpack** mode
+(`import_pack` + "Install exporter") and a **Files** mode (`import_recipe_files`).
+
+- **`import_pack`** (`io/pack_import.py`) imports a **whole modpack instance** —
+  the default and the one to reach for. Single-jar import fails on real packs for
+  general reasons, all handled here:
+  - *Data spans jars* (a recipe in one mod names a tag another mod or NeoForge
+    defines; names live in each mod's lang). It reads every `mods/*.jar` straight
+    from the zip, plus the **vanilla client jar and NeoForge universal jar** found
+    in the launcher's `libraries/` (versions from `mmc-pack.json` /
+    `minecraftinstance.json`; the instance's ancestors first, then the usual
+    launcher homes), then the pack's `kubejs/` data/assets and any
+    `datapacks/` / `global_packs/` / `config/openloader/data/` packs — merged in
+    that order like the game layers datapacks (recipes by id, later wins; tags
+    merged honouring `replace`, optional entries of absent mods dropped; lang;
+    `furnace_fuels` / MI `fluid_fuels` data maps).
+  - *Load conditions*: `neoforge:conditions` are evaluated against the jars' mod
+    ids (`mod_loaded`, `not`/`and`/`or`, `item_exists`, `tag_empty`); a mod's own
+    config-flag conditions are assumed on; a recipe whose **type** belongs to an
+    absent mod is dropped (the game can't load it).
+  - *Rich ingredients* (`io/ingredients.py`): vanilla arrays and NeoForge
+    `compound` / `difference` / `intersection` / `components` / fluid
+    `single`/`tag` ingredients. A multi-option input becomes one synthetic
+    tag-like item `any:<expr>` (e.g. `any:#c:dusts/nickel|#c:ingots/nickel`) whose
+    `members` are the resolved set — the engine's tag semantics then apply.
+  - *Scripted content* (KubeJS adds/removes/edits recipes, registers items and MI
+    materials whose recipes MI generates in game): not in any file, so the
+    **runtime export** is authoritative when present. `tools/kubejs/
+    process_sim_export.js` (installed by `install_pack_exporter` into
+    `local/kubejs/local_server_scripts/`, outside the pack's own `kubejs/`) runs
+    on world load / `/reload` and writes `local/process_sim/pack_export.json`:
+    the final recipe JSON (`originalRecipes` not removed + `addedRecipes`, read in
+    `afterRecipes` so script order doesn't matter, filtered to ids the game
+    loaded), resolved item/fluid tags, and display names. With it, recipes and tags
+    come from the export (static tags fill gaps; names overlay lang; fuels still
+    from the jars). `stats` reports `usedExport`, `exportStale` (a jar/script is
+    newer than the export), `exporterInstalled`, `baseJars`, `mods`, `composites`,
+    and `emptyTags` (referenced tags with no known members).
+  - Recipe ids are the game's, except MI's, which keep the `mi:<path>` ids the
+    jar importer always used, so a pack import over an MI catalog only adds. The
+    pack import also accepts Create-style `ingredients`→`results` recipes (mixed
+    item/fluid lists, `chance`, `processing_time`); a machine type none of whose
+    recipes carries `eu` gets a **passive** def (no energy port). A bare type name
+    two mods share is qualified `<ns>/<type>` for the second.
+
+The two file-based importers:
 
 - **`import_mi_dir`** reads an **extracted Modern Industrialization jar directory**
   (`io/mi_import.py`). By default it discovers and imports **every** powered-machine
@@ -253,10 +310,11 @@ export_standalone.py # bake the World into one view-only HTML
 process_sim/
   engine/            # rate-balance computation, pure Python
   model/             # dataclasses: Item, Recipe, MachineDef, MachineNode, Pipe, System, World
-  io/                # load/save projects, library + MI import
+  io/                # load/save projects, library, MI/file import, pack_import
   api.py             # the JSON API surface — thin
 ui/index.html        # the entire UI
 ui/fonts/            # local woff2 (offline)
+tools/kubejs/        # in-game pack exporter script (installed into an instance)
 examples/            # a sample project
 tests/               # pytest
 ```

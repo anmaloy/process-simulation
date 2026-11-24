@@ -44,6 +44,13 @@ from .mi_import import (
     import_mi_library,
     import_mi_sources,
 )
+from .pack_import import (
+    EXPORT_RELPATH,
+    EXPORTER_INSTALL_RELPATH,
+    find_game_dir,
+    import_pack,
+    install_exporter,
+)
 from .project import (
     load_project,
     project_from_dict,
@@ -88,4 +95,10 @@ __all__ = [
     "MiImport",
     "import_mi_library",
     "import_mi_sources",
+    # whole-modpack import
+    "EXPORT_RELPATH",
+    "EXPORTER_INSTALL_RELPATH",
+    "find_game_dir",
+    "import_pack",
+    "install_exporter",
 ]
