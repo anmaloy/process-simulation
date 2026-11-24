@@ -310,8 +310,13 @@ async function callApi(method, ...args){
   }
   return env; // tolerate a bare result
 }
+// The desktop bridge is ready only once its methods are attached: pywebview creates
+// `window.pywebview.api` and fills it in later, so an object alone is not enough.
+function bridgeReady(){
+  return !!(window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_world==="function");
+}
 function hasBackend(){
-  return (window.pywebview && window.pywebview.api) || location.protocol.startsWith("http");
+  return bridgeReady() || location.protocol.startsWith("http");
 }
 
 /* ============================================================================
@@ -2003,22 +2008,35 @@ function toast(text, bad){
 /* ============================================================================
    Boot
    ============================================================================ */
-let BOOTED=false;
+// Boot exactly once, from the right source. Three cases:
+//  - backend (desktop bridge or HTTP server): load the World the backend restored
+//    from the autosave + saved libraries;
+//  - standalone export: the World is baked into #world-data;
+//  - desktop app before its bridge exists: WAIT. The page is file:// and the
+//    `load` event fires before pywebview injects `window.pywebview.api` (WebView2
+//    injects it after navigation completes). Booting here used to take the
+//    standalone branch with an empty placeholder — the app opened blank although the
+//    backend had restored everything, and BOOTED then blocked the real boot on
+//    pywebviewready. So with neither a bridge nor baked data, do nothing and let
+//    pywebviewready (or the poll below) boot once the bridge is up.
+let BOOTED=false, BOOTING=false;
+function bakedWorld(){
+  const txt=($("#world-data").textContent||"").trim();
+  return (txt && !txt.startsWith("<!--"))? txt : null;
+}
 async function boot(){
-  if(BOOTED) return;
+  if(BOOTED || BOOTING) return;
+  const baked = hasBackend()? null : bakedWorld();
+  if(!hasBackend() && baked==null) return;  // desktop bridge not injected yet
+  BOOTING=true;
   try{
-    if(hasBackend()){
-      WORLD = await callApi("get_world");
-      BOOTED=true;
-    } else {
-      const txt=($("#world-data").textContent||"").trim();
-      WORLD = (txt && !txt.startsWith("<!--"))? JSON.parse(txt) : {};
-      BOOTED=true;
-    }
+    WORLD = baked!=null? JSON.parse(baked) : await callApi("get_world");
+    BOOTED=true;
   }catch(err){
-    if(BOOTED) return;
     const b=$("#bootmsg"); if(b) b.innerHTML='<p class="eyebrow">Bridge</p><div class="mono" style="color:var(--s-bad)">'+(err.message||err)+'</div>';
     return;
+  }finally{
+    BOOTING=false;
   }
   if(!WORLD || typeof WORLD!=="object") WORLD={};
   for(const k of ["items","recipes","machineDefs","nodes","pipes","systems"]) if(!WORLD[k]) WORLD[k]=[];
@@ -2035,9 +2053,22 @@ async function boot(){
 const _renderAll = renderAll;
 renderAll = function(){ _renderAll(); refreshPalette(); updateRunState(); };
 
-if(window.pywebview && window.pywebview.api) boot();
 window.addEventListener("pywebviewready", boot);
 window.addEventListener("load", boot);
+boot();
+// Belt and braces for the desktop app: if pywebviewready is missed (it can fire
+// between checks on some pywebview/WebView2 versions), poll for the bridge.
+(function waitForBridge(started){
+  if(BOOTED) return;
+  if(bridgeReady()) { boot(); }
+  if(Date.now()-started > 30000){
+    if(!BOOTED && !hasBackend() && bakedWorld()==null){
+      const b=$("#bootmsg"); if(b) b.innerHTML='<p class="eyebrow">Bridge</p><div class="mono" style="color:var(--s-bad)">The desktop bridge never connected. Restart the app.</div>';
+    }
+    return;
+  }
+  setTimeout(()=>waitForBridge(started), 100);
+})(Date.now());
 </script>
 </body>
 </html>
